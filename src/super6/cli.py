@@ -123,6 +123,130 @@ def cmd_tune_xi(args) -> int:
     return 0
 
 
+def cmd_watch(args) -> int:
+    """Schedule a round for automatic polling, and optionally run the loop."""
+    import os
+    import time
+
+    from . import cadence, scheduler, worker
+    from .config import FROZEN_PHASE1_V1
+    from .data.football_data import load_matches
+    from .round import load_round
+
+    rnd = load_round(Path(args.round))
+    api_key = os.environ.get("ODDS_API_KEY")
+    if not api_key:
+        print("ODDS_API_KEY is not set.", file=sys.stderr)
+        return 1
+
+    matches = load_matches(Path(args.data), _season_range(args), tuple(args.divisions))
+    router = _fit_router(matches, FROZEN_PHASE1_V1.xi, FROZEN_PHASE1_V1)
+
+    with scheduler.connect(Path(args.db)) as conn:
+        scheduler.schedule_round(
+            conn, rnd.round_number, str(Path(args.round).resolve()), rnd.deadline_at
+        )
+        interval = cadence.poll_interval(rnd.deadline_at)
+        if interval is None:
+            print("Deadline has passed — nothing to watch.")
+            return 0
+        print(
+            f"Round {rnd.round_number} scheduled. Deadline {rnd.deadline_at}, "
+            f"first poll now, cadence {interval}."
+        )
+        if not args.loop:
+            print("Run with --loop to start polling, or invoke `super6 tick` "
+                  "from cron/systemd.")
+            return 0
+
+        print("Polling. Ctrl-C to stop; state is persisted, so restarting resumes.")
+        try:
+            while True:
+                outcomes = worker.run_due_jobs(conn, api_key, lambda: router)
+                for o in outcomes:
+                    print(
+                        f"[{o.round_number}] {o.fixtures_covered}/6 covered, "
+                        f"{o.reforecast} reforecast, {len(o.events)} events, "
+                        f"next {o.next_run_at}"
+                    )
+                if not scheduler.list_jobs(conn) or all(
+                    j.status in {"DONE", "FAILED"} for j in scheduler.list_jobs(conn)
+                ):
+                    print("All jobs complete.")
+                    return 0
+                time.sleep(args.tick_seconds)
+        except KeyboardInterrupt:
+            print("\nStopped. Scheduled jobs remain persisted.")
+            return 0
+
+
+def cmd_tick(args) -> int:
+    """Run one scheduler pass — for cron/systemd rather than --loop."""
+    import os
+
+    from . import scheduler, worker
+    from .config import FROZEN_PHASE1_V1
+    from .data.football_data import load_matches
+
+    api_key = os.environ.get("ODDS_API_KEY")
+    if not api_key:
+        print("ODDS_API_KEY is not set.", file=sys.stderr)
+        return 1
+    matches = load_matches(Path(args.data), _season_range(args), tuple(args.divisions))
+    router = _fit_router(matches, FROZEN_PHASE1_V1.xi, FROZEN_PHASE1_V1)
+
+    with scheduler.connect(Path(args.db)) as conn:
+        outcomes = worker.run_due_jobs(conn, api_key, lambda: router)
+    if not outcomes:
+        print("No jobs due.")
+    for o in outcomes:
+        print(
+            f"[round {o.round_number}] {o.fixtures_covered}/6 covered, "
+            f"{o.reforecast} reforecast, next {o.next_run_at}"
+        )
+    return 0
+
+
+def cmd_jobs(args) -> int:
+    from . import scheduler
+
+    with scheduler.connect(Path(args.db)) as conn:
+        jobs = scheduler.list_jobs(conn)
+    if not jobs:
+        print("No scheduled jobs. Use `super6 watch --round ...`.")
+        return 0
+    print(f"{'ID':>3} {'ROUND':>5} {'STATUS':<8} {'NEXT RUN':<26} ATTEMPTS")
+    for j in jobs:
+        print(
+            f"{j.id:>3} {j.round_number or '-':>5} {j.status:<8} "
+            f"{j.next_run_at:<26} {j.attempt_count}"
+        )
+        if j.last_error:
+            print(f"      last error: {j.last_error}")
+    return 0
+
+
+def cmd_activity(args) -> int:
+    from . import events
+
+    log = events.load(Path(args.log))
+    if not log:
+        print("No activity recorded yet.")
+        return 0
+    if args.type:
+        log = [e for e in log if e.event_type in args.type]
+    if not args.all:
+        # §53: routine no-change events are hidden by default.
+        log = [e for e in log if e.event_type != "MARKET_SNAPSHOT"]
+    for event in log[-args.limit :]:
+        fixture = f"  {event.fixture}" if event.fixture else ""
+        print(f"{event.occurred_at}  [{event.severity}] {event.event_type}{fixture}")
+        if event.summary:
+            print(f"    {event.summary}")
+    print(f"\n{len(log)} event(s). Use --all to include routine snapshots.")
+    return 0
+
+
 def cmd_sources(args) -> int:
     from .sources.registry import (
         SourceNotApprovedError,
@@ -491,6 +615,30 @@ def main(argv: list[str] | None = None) -> int:
         help="fetch live market consensus before recording picks",
     )
     p.set_defaults(func=cmd_record)
+
+    p = sub.add_parser("watch", help="schedule automatic polling for a round (§9)")
+    common(p)
+    p.add_argument("--round", required=True)
+    p.add_argument("--db", default="data/scheduler.db")
+    p.add_argument("--loop", action="store_true", help="run the polling loop now")
+    p.add_argument("--tick-seconds", type=int, default=60)
+    p.set_defaults(func=cmd_watch)
+
+    p = sub.add_parser("tick", help="run one scheduler pass (for cron/systemd)")
+    common(p)
+    p.add_argument("--db", default="data/scheduler.db")
+    p.set_defaults(func=cmd_tick)
+
+    p = sub.add_parser("jobs", help="list scheduled polling jobs")
+    p.add_argument("--db", default="data/scheduler.db")
+    p.set_defaults(func=cmd_jobs)
+
+    p = sub.add_parser("activity", help="chronological activity feed (§53)")
+    p.add_argument("--log", default="data/events/activity.jsonl")
+    p.add_argument("--limit", type=int, default=30)
+    p.add_argument("--type", nargs="+", help="filter by event type")
+    p.add_argument("--all", action="store_true", help="include routine snapshots")
+    p.set_defaults(func=cmd_activity)
 
     p = sub.add_parser("sources", help="source registry (§18.1)")
     p.add_argument(

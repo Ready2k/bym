@@ -75,6 +75,36 @@ class ModelConfig:
 
 
 @dataclass(frozen=True)
+class MovementConfig:
+    """Market-movement materiality thresholds (Phase 2 Increment 2).
+
+    PROVISIONAL and operational only — these carry no model-training
+    claim. They exist to control *attention* (what gets reforecast,
+    logged, alerted), never to adjust probabilities. Real values should be
+    calibrated from the movement distribution observed prospectively
+    during 2026/27, not from football folklore.
+    """
+
+    # Absolute percentage-point change in consensus probability. Absolute
+    # pp is the primary human-facing number: relative change makes a
+    # 2%->3% move look like a crisis (+50%).
+    movement_threshold_pp: float = 3.0
+    urgent_movement_threshold_pp: float = 6.0
+
+    # Cross-bookmaker dispersion (max-min of de-vigged home probability)
+    # above which the market is treated as disagreeing with itself.
+    dispersion_threshold: float = 0.05
+    high_dispersion_threshold: float = 0.10
+
+    # Reference points for movement comparison, in hours before now.
+    reference_hours: tuple[float, ...] = (1.5, 6.0, 24.0)
+    # A stored snapshot counts as "N hours ago" if it falls within this
+    # tolerance of the target; otherwise that reference is unavailable
+    # rather than silently substituted with the nearest thing to hand.
+    reference_tolerance_hours: float = 2.0
+
+
+@dataclass(frozen=True)
 class DataConfig:
     # Football-Data.co.uk (§18): free historical results + odds corpus.
     base_url: str = "https://www.football-data.co.uk/mmz4281"
@@ -86,6 +116,7 @@ class DataConfig:
 
 DEFAULT_MODEL = ModelConfig()
 DEFAULT_DATA = DataConfig()
+DEFAULT_MOVEMENT = MovementConfig()
 
 # PHASE1_MODEL_V1 — the frozen quantitative core (MANIFEST.md), pinned
 # explicitly rather than tracking DEFAULT_MODEL.
