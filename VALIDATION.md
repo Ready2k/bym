@@ -70,6 +70,10 @@ There is no unspent holdout season remaining. Any future modelling change
 developed on data up to 2024/25 and tested on a genuinely new season
 (2026/27 as it is played), never re-tested on 2025/26.
 
+2026/27 is therefore **prospective evaluation only**: picks recorded
+before each deadline, scored afterwards, never reconstructed. Protocol and
+arms in results/prospective_2026_27.md.
+
 Every future ablation decision (Elo θ, market blending, per-division,
 promoted-team priors, …) gets appended to this table.
 

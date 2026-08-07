@@ -32,7 +32,7 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 
-from ..config import DEFAULT_MODEL, ModelConfig
+from ..config import DEFAULT_MODEL, FROZEN_PHASE1_V1, ModelConfig
 from ..model import dixon_coles, elo, market, priors
 from ..model.matrix import score_matrix
 from .metrics import BacktestMetrics, evaluate
@@ -300,12 +300,12 @@ def tune_xi(
 def run_frozen_model(
     matches: pd.DataFrame,
     test_season: int,
-    cfg: ModelConfig = DEFAULT_MODEL,
+    cfg: ModelConfig = FROZEN_PHASE1_V1,
 ) -> WalkForwardResult:
     """PHASE1_MODEL_V1 exactly as frozen — the configuration defined in
-    MANIFEST.md, with every hyperparameter taken from cfg rather than
-    passed in. Used for the single-shot final test on the holdout season
-    (VALIDATION.md); no tuning knobs are exposed here on purpose."""
+    MANIFEST.md, pinned to FROZEN_PHASE1_V1 so later Phase 2+ edits to
+    DEFAULT_MODEL cannot make this arm drift. No tuning knobs are exposed
+    here on purpose."""
     test_mask = matches["season"] == test_season
     promoted = None
     if cfg.use_promoted_priors:

@@ -86,3 +86,25 @@ class DataConfig:
 
 DEFAULT_MODEL = ModelConfig()
 DEFAULT_DATA = DataConfig()
+
+# PHASE1_MODEL_V1 — the frozen quantitative core (MANIFEST.md), pinned
+# explicitly rather than tracking DEFAULT_MODEL.
+#
+# DO NOT EDIT. Phase 2+ work will change DEFAULT_MODEL; if the frozen arm
+# followed those edits, the prospective 2026/27 comparison against the
+# always-on agent would silently compare Phase 2 against itself. Every
+# value below is written out literally so that a diff to this constant is
+# visible in review rather than inherited by accident.
+FROZEN_PHASE1_V1 = ModelConfig(
+    xi=0.003,
+    tail_tolerance=1e-5,
+    min_goals_grid=10,
+    max_goals_cap=20,
+    rho_bounds=(-0.2, 0.2),
+    lambda_floor=0.05,
+    lambda_ceiling=6.0,
+    market_blend_weight=0.5,
+    use_promoted_priors=True,
+    season_decay=1.0,
+    refit_every_days=7,
+)

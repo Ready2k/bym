@@ -72,6 +72,24 @@ src/super6/
     └── metrics.py       pts/fixture, exact %, Brier, log loss (§16)
 ```
 
+## Status
+
+**Phase 1 quantitative core: CLOSED.** Frozen as `PHASE1_MODEL_V1`
+(MANIFEST.md, tag `phase1-model-v1.0.1`). Holdout verdict on the untouched
+2025/26 season: **market-equivalent** — 7.47 pts/round vs the fair market
+benchmark's 7.42, paired CI [−0.470, +0.541], P(ahead) 0.543. §24's target
+is neither demonstrated nor refuted. Full write-up:
+[results/final_test_2025_26.md](results/final_test_2025_26.md).
+
+Known weakness: calibration is worse than the market out-of-sample (log
+loss 1.0397 vs 1.0322), reversing the validation finding. Recorded, not
+"fixed" — the holdout is spent and may not be tuned against.
+
+**Next: Phase 2 live intelligence, measured prospectively** through
+2026/27 — see [results/prospective_2026_27.md](results/prospective_2026_27.md).
+No Phase 2 or Phase 3 component may claim improvement until its arm
+demonstrates it there.
+
 ## Ablation ladder status (§28)
 
 Every decision is logged in [VALIDATION.md](VALIDATION.md) and frozen in
