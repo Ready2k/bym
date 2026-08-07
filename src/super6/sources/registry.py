@@ -92,6 +92,37 @@ def _seed() -> list[SourceRecord]:
             "account exists and the terms have been accepted.",
         ),
         SourceRecord(
+            source_id="api_football",
+            source_name="API-Football",
+            acquisition_method=AcquisitionMethod.API.value,
+            usage_status=UsageStatus.REVIEW_REQUIRED.value,
+            terms_url="https://www.api-football.com/terms",
+            terms_checked_at="2026-08-07",
+            refresh_limit="free tier: 100 requests/day, 10 requests/minute",
+            retention_policy="persist_internal_structured_events",
+            attribution_required=False,
+            purpose=[
+                "fixture_mapping",
+                "confirmed_lineups",
+                "injuries",
+                "suspensions",
+                "squads",
+                "player_resolution",
+            ],
+            notes="Structured availability source for Phase 2 Increment 3B. "
+            "Terms permit using the data to build applications and "
+            "fantasy-football projects but prohibit reselling the feed "
+            "directly — this private analytical system is a permitted "
+            "use. Provides confirmed XIs (typically 20-40 min before "
+            "kickoff) and injuries (Missing Fixture vs Questionable, "
+            "refreshed roughly every four hours). Does NOT provide "
+            "predicted/expected lineups; that gap is deliberately left "
+            "to manual entry or the later knowledge agent, since "
+            "Sportmonks' expected-lineups product is far outside the "
+            "GBP10 budget (§25). Promote to APPROVED only once an "
+            "account exists and the terms have been accepted.",
+        ),
+        SourceRecord(
             source_id="football_data_org",
             source_name="football-data.org",
             acquisition_method=AcquisitionMethod.API.value,
@@ -124,10 +155,26 @@ def _seed() -> list[SourceRecord]:
 
 
 def load_registry(path: Path = DEFAULT_REGISTRY_PATH) -> dict[str, SourceRecord]:
+    """Load the registry, merging in any seeded sources the stored file
+    does not yet know about.
+
+    The merge matters: a source added in a later release would otherwise
+    be invisible to an existing installation, and `assert_approved` would
+    reject it as unregistered with no way to fix that but hand-editing
+    JSON. New entries arrive at their seeded status (REVIEW_REQUIRED for
+    anything needing an account), and **stored statuses always win** — a
+    release must never silently re-approve, or un-approve, a source the
+    user has already decided about.
+    """
+    seeded = {r.source_id: r for r in _seed()}
     if not path.exists():
-        return {r.source_id: r for r in _seed()}
-    raw = json.loads(path.read_text())
-    return {r["source_id"]: SourceRecord(**r) for r in raw}
+        return seeded
+    stored = {
+        r["source_id"]: SourceRecord(**r) for r in json.loads(path.read_text())
+    }
+    for source_id, record in seeded.items():
+        stored.setdefault(source_id, record)
+    return stored
 
 
 def save_registry(

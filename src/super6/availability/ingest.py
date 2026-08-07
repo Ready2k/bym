@@ -26,7 +26,7 @@ from .model import (
     Resolution,
     SOURCE_TIER_RELIABILITY,
 )
-from .players import PlayerRef, resolve_player
+from .players import PlayerRef, PlayerResolution, resolve_player
 from .reconcile import resolve_state
 
 
@@ -56,12 +56,24 @@ def ingest_availability(
     round_number: int | None = None,
     importance: Importance = Importance.UNKNOWN,
     now: datetime | None = None,
+    source_player_id: str | None = None,
 ) -> IngestResult:
-    """Ingest one availability claim."""
+    """Ingest one availability claim.
+
+    `source_player_id` short-circuits name resolution: when the source
+    supplies a stable player identifier (API-Football does), that is a
+    better identity than any string match we could compute, and the
+    ambiguity problem simply does not arise.
+    """
     now = now or utcnow()
     emitted: list[ev.Event] = []
 
-    resolution = resolve_player(player_name, squad or [])
+    if source_player_id:
+        resolution = PlayerResolution(
+            Resolution.RESOLVED.value, source_player_id, player_name
+        )
+    else:
+        resolution = resolve_player(player_name, squad or [])
     if not resolution.resolved:
         emitted.append(
             ev.make_event(

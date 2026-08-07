@@ -1,5 +1,25 @@
 [
   {
+    "source_id": "api_football",
+    "source_name": "API-Football",
+    "acquisition_method": "API",
+    "usage_status": "REVIEW_REQUIRED",
+    "terms_url": "https://www.api-football.com/terms",
+    "terms_checked_at": "2026-08-07",
+    "refresh_limit": "free tier: 100 requests/day, 10 requests/minute",
+    "retention_policy": "persist_internal_structured_events",
+    "attribution_required": false,
+    "purpose": [
+      "fixture_mapping",
+      "confirmed_lineups",
+      "injuries",
+      "suspensions",
+      "squads",
+      "player_resolution"
+    ],
+    "notes": "Structured availability source for Phase 2 Increment 3B. Terms permit using the data to build applications and fantasy-football projects but prohibit reselling the feed directly \u2014 this private analytical system is a permitted use. Provides confirmed XIs (typically 20-40 min before kickoff) and injuries (Missing Fixture vs Questionable, refreshed roughly every four hours). Does NOT provide predicted/expected lineups; that gap is deliberately left to manual entry or the later knowledge agent, since Sportmonks' expected-lineups product is far outside the GBP10 budget (\u00a725). Promote to APPROVED only once an account exists and the terms have been accepted."
+  },
+  {
     "source_id": "football_data_co_uk",
     "source_name": "Football-Data.co.uk",
     "acquisition_method": "DATASET",

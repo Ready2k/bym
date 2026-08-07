@@ -287,20 +287,54 @@ def cmd_sources(args) -> int:
 
 
 def cmd_quota(args) -> int:
-    from .sources.odds_api import (
-        FREE_TIER_MONTHLY_CREDITS,
-        credits_used_this_month,
-        load_quota,
-    )
+    from .sources import api_football, quota as quota_mod
+    from .sources.odds_api import QUOTA as ODDS_QUOTA
 
-    used = credits_used_this_month(Path(args.quota))
-    print(f"The Odds API credits this month: {used}/{FREE_TIER_MONTHLY_CREDITS}")
-    quota = load_quota(Path(args.quota))
-    for month in sorted(quota):
-        entry = quota[month]
-        reported = entry.get("api_reported_remaining")
-        extra = f", API reports {reported} remaining" if reported is not None else ""
-        print(f"  {month}: {entry.get('used', 0)} used{extra}")
+    for spec in (ODDS_QUOTA, api_football.QUOTA):
+        path = Path(args.quota) if args.quota else spec.path
+        if args.quota and spec is api_football.QUOTA:
+            path = spec.path  # --quota targets the odds file only
+        used = quota_mod.used(spec, path)
+        print(
+            f"{spec.source_id}: {used}/{spec.limit} per {spec.period}"
+            + (" — CONSTRAINED" if quota_mod.constrained(spec, path=path) else "")
+        )
+        state = quota_mod.load(path)
+        for period in sorted(k for k in state if k != "recent_calls"):
+            entry = state[period]
+            reported = entry.get("api_reported_remaining")
+            extra = f", API reports {reported} remaining" if reported is not None else ""
+            print(f"    {period}: {entry.get('used', 0)} used{extra}")
+    return 0
+
+
+def cmd_coverage(args) -> int:
+    """Detect and persist what API-Football covers for a season (§18.1)."""
+    import os
+
+    from . import db as db_mod
+    from .availability.worker import detect_coverage
+    from .sources.registry import SourceNotApprovedError
+
+    api_key = os.environ.get("API_FOOTBALL_KEY")
+    if not api_key:
+        print("API_FOOTBALL_KEY is not set.", file=sys.stderr)
+        return 1
+
+    with db_mod.connect(Path(args.db)) as conn:
+        for division in args.divisions:
+            try:
+                coverage = detect_coverage(conn, division, args.season, api_key)
+            except SourceNotApprovedError as exc:
+                print(f"{exc}", file=sys.stderr)
+                return 1
+            except KeyError:
+                print(f"No league id for division {division}", file=sys.stderr)
+                continue
+            states = ", ".join(
+                f"{k}={'AVAILABLE' if v else 'MISSING'}" for k, v in coverage.items()
+            )
+            print(f"{division} season {args.season}: {states}")
     return 0
 
 
@@ -648,9 +682,17 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--registry", default="config/source_registry.json")
     p.set_defaults(func=cmd_sources)
 
-    p = sub.add_parser("quota", help="The Odds API credit usage this month")
-    p.add_argument("--quota", default="config/odds_api_quota.json")
+    p = sub.add_parser("quota", help="API credit usage across sources")
+    p.add_argument("--quota", default=None)
     p.set_defaults(func=cmd_quota)
+
+    p = sub.add_parser(
+        "coverage", help="detect API-Football coverage per league/season"
+    )
+    p.add_argument("--season", type=int, default=2026)
+    p.add_argument("--divisions", nargs="+", default=["E0", "E1"])
+    p.add_argument("--db", default="data/super6.db")
+    p.set_defaults(func=cmd_coverage)
 
     p = sub.add_parser("score", help="score a recorded round once results are known")
     p.add_argument("--round", type=int, required=True)

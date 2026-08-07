@@ -21,6 +21,8 @@ from pathlib import Path
 
 import requests
 
+from . import quota as quota_mod
+from .quota import QuotaExceededError  # re-exported for existing callers
 from .registry import DEFAULT_REGISTRY_PATH, assert_approved
 
 SOURCE_ID = "the_odds_api"
@@ -36,10 +38,6 @@ DEFAULT_REGIONS = "uk"
 DEFAULT_MARKETS = "h2h"
 FREE_TIER_MONTHLY_CREDITS = 500
 DEFAULT_QUOTA_PATH = Path("config/odds_api_quota.json")
-
-
-class QuotaExceededError(RuntimeError):
-    """Raised when a request would exceed the configured monthly budget."""
 
 
 @dataclass
@@ -66,26 +64,29 @@ def request_cost(markets: str = DEFAULT_MARKETS, regions: str = DEFAULT_REGIONS)
     return len(markets.split(",")) * len(regions.split(","))
 
 
+# Metering lives in `quota`, shared with API-Football; these remain as the
+# named entry points this module's callers already use.
+QUOTA = quota_mod.QuotaSpec(
+    source_id=SOURCE_ID, limit=FREE_TIER_MONTHLY_CREDITS, period="month"
+)
+
+
 def _month_key(now: datetime | None = None) -> str:
-    now = now or datetime.now(timezone.utc)
-    return now.strftime("%Y-%m")
+    return quota_mod.period_key("month", now)
 
 
 def load_quota(path: Path = DEFAULT_QUOTA_PATH) -> dict:
-    if not path.exists():
-        return {}
-    return json.loads(path.read_text())
+    return quota_mod.load(path)
 
 
 def save_quota(quota: dict, path: Path = DEFAULT_QUOTA_PATH) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(quota, indent=2) + "\n")
+    quota_mod.save(quota, path)
 
 
 def credits_used_this_month(
     path: Path = DEFAULT_QUOTA_PATH, now: datetime | None = None
 ) -> int:
-    return int(load_quota(path).get(_month_key(now), {}).get("used", 0))
+    return quota_mod.used(QUOTA, path, now)
 
 
 def record_usage(
@@ -94,23 +95,7 @@ def record_usage(
     path: Path = DEFAULT_QUOTA_PATH,
     now: datetime | None = None,
 ) -> dict:
-    """Record local spend, and reconcile against the API's own
-    x-requests-remaining header when present — the header is authoritative
-    and catches drift from failed or out-of-band calls."""
-    quota = load_quota(path)
-    month = _month_key(now)
-    entry = quota.setdefault(month, {"used": 0})
-    entry["used"] = int(entry.get("used", 0)) + cost
-    entry["last_call_at"] = (now or datetime.now(timezone.utc)).isoformat(
-        timespec="seconds"
-    )
-    if remaining_header is not None:
-        try:
-            entry["api_reported_remaining"] = int(remaining_header)
-        except (TypeError, ValueError):
-            pass
-    save_quota(quota, path)
-    return entry
+    return quota_mod.record(QUOTA, cost, remaining_header, path, now)
 
 
 def _parse_h2h(payload: list[dict]) -> list[EventOdds]:

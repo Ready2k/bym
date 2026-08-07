@@ -46,6 +46,31 @@ def test_approve_promotes_and_persists(path):
     assert reg.load_registry(path)["the_odds_api"].terms_checked_at == "2026-08-07"
 
 
+def test_new_seeded_source_appears_in_an_existing_registry(tmp_path):
+    """A source added in a later release must become visible without
+    hand-editing JSON, or assert_approved rejects it as unregistered
+    forever."""
+    import json
+
+    p = tmp_path / "registry.json"
+    partial = [
+        r for r in json.loads(json.dumps(
+            [reg.asdict(v) for v in reg.load_registry(p).values()]
+        )) if r["source_id"] != "api_football"
+    ]
+    p.write_text(json.dumps(partial))
+    assert "api_football" in reg.load_registry(p)
+    assert reg.load_registry(p)["api_football"].usage_status == "REVIEW_REQUIRED"
+
+
+def test_merge_never_overrides_a_stored_decision(tmp_path):
+    """Approving a source must survive a release that reseeds it."""
+    p = tmp_path / "registry.json"
+    reg.save_registry(reg.load_registry(p), p)
+    reg.approve("the_odds_api", path=p)
+    assert reg.load_registry(p)["the_odds_api"].usage_status == "APPROVED"
+
+
 def test_prohibited_cannot_be_promoted(path):
     """Sky's exclusion is architectural (§3) — not a toggle."""
     with pytest.raises(reg.SourceNotApprovedError, match="cannot be promoted"):

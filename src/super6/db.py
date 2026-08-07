@@ -89,6 +89,34 @@ MIGRATIONS: list[str] = [
     CREATE INDEX IF NOT EXISTS idx_lineups_fixture
         ON lineups (home_team, away_team, team, kind);
     """,
+    # 0003 — source capability detection and fixture mapping (Increment 3B)
+    """
+    CREATE TABLE IF NOT EXISTS source_capabilities (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        source_id   TEXT NOT NULL,
+        league_id   INTEGER NOT NULL,
+        season      INTEGER NOT NULL,
+        feature     TEXT NOT NULL,
+        available   INTEGER NOT NULL,
+        checked_at  TEXT NOT NULL,
+        UNIQUE (source_id, league_id, season, feature)
+    );
+
+    CREATE TABLE IF NOT EXISTS fixture_mappings (
+        id           INTEGER PRIMARY KEY AUTOINCREMENT,
+        source_id    TEXT NOT NULL,
+        external_id  TEXT NOT NULL,
+        home_team    TEXT NOT NULL,
+        away_team    TEXT NOT NULL,
+        kickoff_at   TEXT,
+        league_id    INTEGER,
+        season       INTEGER,
+        mapped_at    TEXT NOT NULL,
+        UNIQUE (source_id, external_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_fixture_map_teams
+        ON fixture_mappings (source_id, home_team, away_team);
+    """,
 ]
 
 
