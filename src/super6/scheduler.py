@@ -1,13 +1,7 @@
 """Persisted job scheduler (SPEC.md §9, §26).
 
-§26 specifies "a lightweight scheduler with jobs persisted in Postgres".
-**Interim deviation:** this uses SQLite. For a single-user system running
-roughly ten jobs a week, SQLite gives identical restart-safety (ACID,
-transactional claim) with no server to operate, and the schema and SQL
-port to Postgres by changing the connection and the placeholder style.
-The §26 intent — "jobs persisted, next_run_at recomputed as the deadline
-approaches" — is met; the storage engine is the only difference, and it
-is recorded here rather than quietly substituted.
+Persistence per §26: SQLite as the single-node default, with schema and
+connection handling in `db` (foreign keys, WAL, migrations, UTC).
 
 Restart safety: a job is claimed transactionally before running, and any
 job left RUNNING by a crash is reclaimed on startup. No Redis, Celery,
@@ -17,29 +11,17 @@ Kafka or space programme is involved.
 from __future__ import annotations
 
 import sqlite3
-from contextlib import closing, contextmanager
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
 
-DEFAULT_DB_PATH = Path("data/scheduler.db")
+from .db import connect as _db_connect
+from .db import from_iso as _parse_iso
+from .db import to_iso
 
-SCHEMA = """
-CREATE TABLE IF NOT EXISTS jobs (
-    id             INTEGER PRIMARY KEY AUTOINCREMENT,
-    job_type       TEXT NOT NULL,
-    round_number   INTEGER,
-    round_path     TEXT,
-    deadline_at    TEXT NOT NULL,
-    next_run_at    TEXT NOT NULL,
-    status         TEXT NOT NULL,
-    attempt_count  INTEGER NOT NULL DEFAULT 0,
-    last_run_at    TEXT,
-    last_error     TEXT
-);
-CREATE INDEX IF NOT EXISTS idx_jobs_due ON jobs (status, next_run_at);
-"""
+DEFAULT_DB_PATH = Path("data/super6.db")
 
 
 class JobType(str, Enum):
@@ -75,31 +57,24 @@ class Job:
         return _parse(self.next_run_at)
 
 
-def _parse(value: str) -> datetime:
-    dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
-    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
-
-
-def _iso(value: datetime) -> str:
-    if value.tzinfo is None:
-        value = value.replace(tzinfo=timezone.utc)
-    return value.isoformat(timespec="seconds")
+_parse = _parse_iso
+_iso = to_iso
 
 
 @contextmanager
 def connect(path: Path = DEFAULT_DB_PATH):
-    path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(path, isolation_level=None)
-    conn.row_factory = sqlite3.Row
-    try:
-        conn.executescript(SCHEMA)
+    with _db_connect(path) as conn:
         yield conn
-    finally:
-        conn.close()
+
+
+JOB_COLUMNS = (
+    "id", "job_type", "round_number", "round_path", "deadline_at",
+    "next_run_at", "status", "attempt_count", "last_run_at", "last_error",
+)
 
 
 def _row_to_job(row: sqlite3.Row) -> Job:
-    return Job(**{k: row[k] for k in row.keys()})
+    return Job(**{k: row[k] for k in JOB_COLUMNS})
 
 
 def schedule_round(
