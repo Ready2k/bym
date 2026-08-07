@@ -123,6 +123,34 @@ def _seed() -> list[SourceRecord]:
             "account exists and the terms have been accepted.",
         ),
         SourceRecord(
+            source_id="tavily",
+            source_name="Tavily",
+            acquisition_method=AcquisitionMethod.SEARCH.value,
+            usage_status=UsageStatus.REVIEW_REQUIRED.value,
+            terms_url="https://www.tavily.com/terms",
+            terms_checked_at="2026-08-07",
+            refresh_limit="free Researcher tier: 1000 credits/month; basic "
+            "search 1 credit, advanced 2, extract 1 per 5 pages",
+            retention_policy="derived_claims_and_source_metadata_only",
+            attribution_required=False,
+            purpose=[
+                "news_discovery",
+                "official_statement_discovery",
+                "press_conference_discovery",
+                "expected_lineup_research",
+                "market_move_investigation",
+            ],
+            notes="Retrieval layer for the knowledge agent (Increment 4). "
+            "Search and Extract endpoints ONLY — Tavily's Answer/Research "
+            "layer is deliberately unused, because feeding an "
+            "AI-generated research answer into another model turns "
+            "provenance into interpretive dance. Tavily is the "
+            "*acquisition* source; the authority behind any football "
+            "claim is the ORIGIN domain, stored separately. Retention is "
+            "derived claims plus source metadata and a minimal audit "
+            "snippet — never full copies of articles.",
+        ),
+        SourceRecord(
             source_id="football_data_org",
             source_name="football-data.org",
             acquisition_method=AcquisitionMethod.API.value,

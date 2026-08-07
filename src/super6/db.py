@@ -117,6 +117,53 @@ MIGRATIONS: list[str] = [
     CREATE INDEX IF NOT EXISTS idx_fixture_map_teams
         ON fixture_mappings (source_id, home_team, away_team);
     """,
+    # 0004 — knowledge agent evidence and claims (Increment 4)
+    """
+    CREATE TABLE IF NOT EXISTS evidence_documents (
+        id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+        acquisition_source TEXT NOT NULL,
+        origin_domain      TEXT NOT NULL,
+        origin_authority   TEXT NOT NULL,
+        url                TEXT NOT NULL,
+        canonical          TEXT NOT NULL,
+        title              TEXT,
+        byline             TEXT,
+        published_at       TEXT,
+        retrieved_at       TEXT NOT NULL,
+        content_hash       TEXT NOT NULL,
+        story_cluster_id   TEXT,
+        snippet            TEXT,
+        UNIQUE (url, content_hash)
+    );
+    CREATE INDEX IF NOT EXISTS idx_evidence_cluster
+        ON evidence_documents (story_cluster_id);
+
+    CREATE TABLE IF NOT EXISTS candidate_claims (
+        id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+        evidence_id         INTEGER NOT NULL,
+        round_number        INTEGER,
+        home_team           TEXT,
+        away_team           TEXT,
+        team                TEXT,
+        player_name         TEXT,
+        player_external_id  TEXT,
+        claim_type          TEXT NOT NULL,
+        availability        TEXT,
+        certainty           TEXT,
+        expected_role       TEXT,
+        event_at            TEXT,
+        observed_at         TEXT NOT NULL,
+        supporting_evidence TEXT NOT NULL,
+        source_url          TEXT NOT NULL,
+        expires_at          TEXT,
+        verdict             TEXT NOT NULL,
+        rejection_reason    TEXT,
+        story_cluster_id    TEXT,
+        FOREIGN KEY (evidence_id) REFERENCES evidence_documents (id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_claims_fixture
+        ON candidate_claims (home_team, away_team, verdict);
+    """,
 ]
 
 

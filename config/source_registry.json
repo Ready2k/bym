@@ -67,6 +67,25 @@
     "notes": "PERMANENTLY PROHIBITED as an automated source. Sky's terms prohibit automated and unauthorised manual data extraction. The agent is external to Sky by architecture (\u00a73, \u00a718.1): round fixtures and deadlines are entered by the user by hand (\u00a79.1). Cannot be promoted."
   },
   {
+    "source_id": "tavily",
+    "source_name": "Tavily",
+    "acquisition_method": "SEARCH",
+    "usage_status": "REVIEW_REQUIRED",
+    "terms_url": "https://www.tavily.com/terms",
+    "terms_checked_at": "2026-08-07",
+    "refresh_limit": "free Researcher tier: 1000 credits/month; basic search 1 credit, advanced 2, extract 1 per 5 pages",
+    "retention_policy": "derived_claims_and_source_metadata_only",
+    "attribution_required": false,
+    "purpose": [
+      "news_discovery",
+      "official_statement_discovery",
+      "press_conference_discovery",
+      "expected_lineup_research",
+      "market_move_investigation"
+    ],
+    "notes": "Retrieval layer for the knowledge agent (Increment 4). Search and Extract endpoints ONLY \u2014 Tavily's Answer/Research layer is deliberately unused, because feeding an AI-generated research answer into another model turns provenance into interpretive dance. Tavily is the *acquisition* source; the authority behind any football claim is the ORIGIN domain, stored separately. Retention is derived claims plus source metadata and a minimal audit snippet \u2014 never full copies of articles."
+  },
+  {
     "source_id": "the_odds_api",
     "source_name": "The Odds API",
     "acquisition_method": "API",
