@@ -168,7 +168,10 @@ def fit(
         return mu, gamma, alpha, beta, theta, rho
 
     # §29.4 prior penalty arrays (teams present in both fit and priors).
-    prior_teams = [t for t in (param_priors or {}) if t in idx]
+    # sorted() so the summation order — and therefore the optimiser's
+    # trajectory at float precision — is reproducible run to run (§19,
+    # §22), independent of how the caller built the priors dict.
+    prior_teams = sorted(t for t in (param_priors or {}) if t in idx)
     if prior_teams:
         p_idx = np.array([idx[t] for t in prior_teams])
         pm_a = np.array([param_priors[t].mean_alpha for t in prior_teams])

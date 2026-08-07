@@ -56,6 +56,19 @@ and exact% are "market result + naive score heuristic".
 | 2026-08-07 | §29.4 promoted-team priors ADOPTED (on correctness grounds, not a significant win) | ablation_005: +0.026 pts/round, paired CI [-0.167,+0.225] — NOT significant. Adopted because the zero prior it replaces is measurably wrong (E0-from-below α=−0.278), and §28 removes components that make things worse, which this does not |
 | 2026-08-07 | §29.5 season decay BINNED (season_decay=1.0) | ablation_005: 0.6 reproduces baseline exactly, 0.8 fails paired test. ξ=0.003 already discharges §29.5's intent |
 | 2026-08-07 | **MODEL FROZEN — PHASE1_MODEL_V1** (see MANIFEST.md) | No further modelling changes before the 2025/26 holdout runs |
+| 2026-08-07 | **HOLDOUT SPENT — 2025/26 evaluated once** | 7.47 pts/round vs fair market 7.42; paired CI [-0.470, +0.541], P(ahead) 0.543 → statistically indistinguishable from market. §24 target not demonstrated, not refuted. results/final_test_2025_26.md |
+| 2026-08-07 | Determinism fix (v1.0.1), holdout NOT re-run | Hash-randomised set iteration made runs vary ~0.02 pts/round; no model semantics changed |
+
+## Holdout status
+
+```text
+2025/26   SPENT (2026-08-07)
+```
+
+There is no unspent holdout season remaining. Any future modelling change
+— including any response to the calibration result above — must be
+developed on data up to 2024/25 and tested on a genuinely new season
+(2026/27 as it is played), never re-tested on 2025/26.
 
 Every future ablation decision (Elo θ, market blending, per-division,
 promoted-team priors, …) gets appended to this table.

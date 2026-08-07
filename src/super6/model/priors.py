@@ -71,7 +71,13 @@ def arrivals(
     season_slice = matches[
         (matches["division"] == division) & (matches["season"] == season)
     ]
-    teams = set(season_slice["home_team"]) | set(season_slice["away_team"])
+    # Sorted, not raw set order: Python randomises string hashing per
+    # process, so set iteration order varies run to run. That order
+    # propagates into the MLE penalty-term summation order, perturbs
+    # L-BFGS-B at float precision, and flips borderline scorelines — i.e.
+    # the same frozen model would answer differently on different runs,
+    # violating the reproducibility requirement (§19, §22).
+    teams = sorted(set(season_slice["home_team"]) | set(season_slice["away_team"]))
     result: dict[str, str] = {}
     for team in teams:
         prev = membership.get((team, season - 1))

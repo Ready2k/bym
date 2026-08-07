@@ -68,6 +68,7 @@ single-use acknowledgement flag.
 
 ```text
 Code:         git tag phase1-model-v1
+Git SHA:      6f39b7e359737502b6ffaea6aba793bd97814377
 Test suite:   57 tests passing at freeze
 Data source:  Football-Data.co.uk (E0, E1), seasons 2019/20-2025/26
 Corpus:       6,524 fixtures (5,592 usable for training up to 2024/25)
@@ -85,6 +86,19 @@ b2e057b0ed959f19  data/2023_E0.csv      5737f6cc95c95092  data/2023_E1.csv
 d0c8ce4a96d886cf  data/2024_E0.csv      f34c340446c91637  data/2024_E1.csv
 3e3a8352f9ada678  data/2025_E0.csv      98954c319950f191  data/2025_E1.csv
 ```
+
+## Post-freeze amendment: v1.0.1 (determinism only)
+
+The originally tagged `phase1-model-v1` (SHA 6f39b7e) contained a
+reproducibility defect: hash-randomised set iteration in
+`priors.arrivals()` made the fitted parameters vary marginally between
+runs (~0.02 pts/round). Fixed by sorting the iteration order in
+`priors.arrivals()` and `dixon_coles.fit()`, tagged `phase1-model-v1.0.1`.
+
+**No model semantics changed** — no parameter, feature, hyperparameter or
+data source differs. The 2025/26 holdout was **not** re-run after the fix;
+the recorded result stands as produced by the original single-use run
+(results/final_test_2025_26.md).
 
 ## Validation-season performance (2024/25, selection-biased)
 
