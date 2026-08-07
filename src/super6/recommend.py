@@ -1,0 +1,150 @@
+"""Round recommendations and the pre-round report (SPEC.md §20).
+
+Column semantics (§20 — never conflated):
+    RESULT = P(selected outcome), SCORE = P(exact selected scoreline),
+    EV = 2·RESULT + 3·SCORE, CONF = calibrated HIGH | MEDIUM | LOW category.
+
+Phase 1A confidence (documented placeholder): with a single model and no
+market/news feeds yet, three of §20's five factors (model_agreement,
+market_divergence, calibration_quality) are unavailable, so CONF v1 is
+derived from the score distribution alone via config thresholds. The full
+five-factor version arrives with Phase 2 feeds and must be
+calibration-tested (§16) before being trusted.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Callable
+
+import pandas as pd
+
+from .config import DEFAULT_MODEL, ModelConfig
+from .model import golden_goal, market
+from .model.dixon_coles import DixonColesParams
+from .model.matrix import ScoreMatrix, score_matrix
+from .round import Round
+
+
+@dataclass(frozen=True)
+class FixtureRecommendation:
+    home: str
+    away: str
+    pick_home: int
+    pick_away: int
+    p_result: float
+    p_score: float
+    ev: float
+    confidence: str
+    matrix: ScoreMatrix
+
+    @property
+    def pick(self) -> str:
+        return f"{self.pick_home}-{self.pick_away}"
+
+    def alternatives(self, top_n: int = 5) -> list[tuple[str, float, float]]:
+        """§41.3-style meaningful alternatives: (score, P(score), EV)."""
+        ev = self.matrix.ev_matrix()
+        flat = ev.flatten()
+        order = flat.argsort()[::-1][:top_n]
+        g = ev.shape[1]
+        return [
+            (f"{i // g}-{i % g}", float(self.matrix.probs.flatten()[i]), float(flat[i]))
+            for i in order
+        ]
+
+
+@dataclass(frozen=True)
+class RoundRecommendation:
+    round_number: int
+    fixtures: tuple[FixtureRecommendation, ...]
+    golden: golden_goal.GoldenGoalForecast
+
+    @property
+    def expected_round_score(self) -> float:
+        return sum(f.ev for f in self.fixtures)
+
+
+def confidence_v1(p_result: float, p_score: float, cfg: ModelConfig) -> str:
+    """Phase 1A CONF placeholder — see module docstring."""
+    if p_result >= cfg.conf_high_result_p and p_score >= cfg.conf_high_score_p:
+        return "HIGH"
+    if p_result < cfg.conf_low_result_p or p_score < cfg.conf_low_score_p:
+        return "LOW"
+    return "MEDIUM"
+
+
+def recommend_fixture(
+    params: DixonColesParams,
+    home: str,
+    away: str,
+    cfg: ModelConfig = DEFAULT_MODEL,
+    odds: tuple[float, float, float] | None = None,
+) -> FixtureRecommendation:
+    lam_h, lam_a = params.lambdas(home, away, cfg)
+    m = score_matrix(lam_h, lam_a, params.rho, cfg)
+    if odds is not None and cfg.market_blend_weight is not None:
+        mh, md, ma = market.implied_result_probs(*odds)
+        m = market.blend_matrix(m, mh, md, ma, cfg.market_blend_weight)
+    ph, pa = m.best_pick()
+    p_result = m.p_result(ph, pa)
+    p_score = m.p_score(ph, pa)
+    return FixtureRecommendation(
+        home=home,
+        away=away,
+        pick_home=ph,
+        pick_away=pa,
+        p_result=p_result,
+        p_score=p_score,
+        ev=m.ev(ph, pa),
+        confidence=confidence_v1(p_result, p_score, cfg),
+        matrix=m,
+    )
+
+
+ParamRouter = Callable[[str, str], DixonColesParams]
+
+
+def recommend_round(
+    params: DixonColesParams | ParamRouter,
+    rnd: Round,
+    cfg: ModelConfig = DEFAULT_MODEL,
+) -> RoundRecommendation:
+    """`params` is either a single fitted parameter set, or a router
+    (home, away) -> params — used for per-division fits, where each fixture
+    is scored by its own competition's model."""
+    router: ParamRouter = (
+        params if callable(params) else (lambda home, away: params)
+    )
+    recs = tuple(
+        recommend_fixture(router(f.home, f.away), f.home, f.away, cfg, odds=f.odds)
+        for f in rnd.fixtures
+    )
+    golden = golden_goal.forecast(
+        [r.matrix.lambda_home + r.matrix.lambda_away for r in recs]
+    )
+    return RoundRecommendation(rnd.round_number, recs, golden)
+
+
+def format_report(rec: RoundRecommendation) -> str:
+    """§20 pre-round report."""
+    lines = [f"SUPER 6 - ROUND {rec.round_number}", ""]
+    lines.append(
+        f"{'':24s} {'PICK':>5s} {'RESULT':>8s} {'SCORE':>7s} {'EV':>6s}  CONF"
+    )
+    for f in rec.fixtures:
+        name = f"{f.home[:10].upper()} v {f.away[:10].upper()}"
+        lines.append(
+            f"{name:24s} {f.pick:>5s} {f.p_result:>7.1%} {f.p_score:>6.1%} "
+            f"{f.ev:>6.2f}  {f.confidence}"
+        )
+    g = rec.golden
+    lines.append("")
+    lines.append(
+        f"Golden Goal: minute {g.recommended_minute} "
+        f"(Sky interval {golden_goal.sky_interval(g.recommended_minute)})"
+    )
+    intervals = "   ".join(f"{k} mins {v:.0%}" for k, v in g.intervals().items())
+    lines.append(f"First-goal intervals: {intervals}")
+    lines.append(f"Expected round score: {rec.expected_round_score:.2f}")
+    return "\n".join(lines)
