@@ -1,0 +1,53 @@
+import pytest
+
+from super6.sources import registry as reg
+
+
+@pytest.fixture
+def path(tmp_path):
+    p = tmp_path / "registry.json"
+    reg.save_registry(reg.load_registry(p), p)
+    return p
+
+
+def test_seeded_statuses(path):
+    r = reg.load_registry(path)
+    assert r["football_data_co_uk"].usage_status == "APPROVED"
+    assert r["the_odds_api"].usage_status == "REVIEW_REQUIRED"
+    assert r["sky_super6"].usage_status == "PROHIBITED"
+
+
+def test_review_required_is_refused(path):
+    """§22: no worker may query a source that is not APPROVED."""
+    with pytest.raises(reg.SourceNotApprovedError, match="REVIEW_REQUIRED"):
+        reg.assert_approved("the_odds_api", path)
+
+
+def test_prohibited_is_refused(path):
+    with pytest.raises(reg.SourceNotApprovedError, match="PROHIBITED"):
+        reg.assert_approved("sky_super6", path)
+
+
+def test_unregistered_source_refused(path):
+    """Default is refusal, not permission."""
+    with pytest.raises(reg.SourceNotApprovedError, match="not in the registry"):
+        reg.assert_approved("some_scraper_someone_found", path)
+
+
+def test_approved_source_passes(path):
+    record = reg.assert_approved("football_data_co_uk", path)
+    assert record.source_id == "football_data_co_uk"
+
+
+def test_approve_promotes_and_persists(path):
+    reg.approve("the_odds_api", checked_at="2026-08-07", path=path)
+    assert reg.assert_approved("the_odds_api", path).usage_status == "APPROVED"
+    # survives a reload
+    assert reg.load_registry(path)["the_odds_api"].terms_checked_at == "2026-08-07"
+
+
+def test_prohibited_cannot_be_promoted(path):
+    """Sky's exclusion is architectural (§3) — not a toggle."""
+    with pytest.raises(reg.SourceNotApprovedError, match="cannot be promoted"):
+        reg.approve("sky_super6", path=path)
+    assert reg.load_registry(path)["sky_super6"].usage_status == "PROHIBITED"

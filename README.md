@@ -62,7 +62,15 @@ src/super6/
 ├── scoring.py           Super 6 points rules + fixture status (§2, §2.2)
 ├── round.py             manual round entry (§9.1)
 ├── recommend.py         §20 report, EV picks, Phase 1A confidence
+├── cadence.py           §9 poll/reforecast ladder as a pure function
+├── prospective.py       2026/27 round-by-round arm comparison
 ├── data/football_data.py  Football-Data.co.uk ingestion + cache (§18)
+├── sources/
+│   ├── registry.py      §18.1 source policy — gates every outbound query
+│   ├── odds_api.py      The Odds API client + credit metering (§25)
+│   ├── consensus.py     per-book de-vig, median consensus, staleness
+│   ├── teams.py         cross-source team-name resolution (never fuzzy)
+│   └── pipeline.py      fetch → map → consensus → persist → model
 ├── model/
 │   ├── dixon_coles.py   weighted MLE: μ, γ, α, β, ρ (§29-31)
 │   ├── matrix.py        score matrix w/ tail handling + EV (§31, §2/§33)
@@ -85,10 +93,17 @@ Known weakness: calibration is worse than the market out-of-sample (log
 loss 1.0397 vs 1.0322), reversing the validation finding. Recorded, not
 "fixed" — the holdout is spent and may not be tuned against.
 
-**Next: Phase 2 live intelligence, measured prospectively** through
-2026/27 — see [results/prospective_2026_27.md](results/prospective_2026_27.md).
-No Phase 2 or Phase 3 component may claim improvement until its arm
-demonstrates it there.
+**Phase 2 Increment 1 (live odds) is built** — The Odds API integration
+with per-bookmaker de-vigging, median consensus, timestamped provenance
+snapshots, quota metering and stale detection. See
+[docs/phase2_increment1.md](docs/phase2_increment1.md). The source ships
+as `REVIEW_REQUIRED`: it cannot be queried until you register an account,
+accept the terms and run `super6 sources approve the_odds_api`.
+
+**Measurement is prospective** through 2026/27 —
+[results/prospective_2026_27.md](results/prospective_2026_27.md). No Phase
+2 or Phase 3 component may claim improvement until its arm demonstrates it
+there.
 
 ## Ablation ladder status (§28)
 

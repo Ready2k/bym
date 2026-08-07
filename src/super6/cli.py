@@ -38,6 +38,9 @@ def cmd_predict(args) -> int:
     from .round import load_round
 
     rnd = load_round(Path(args.round))
+    if getattr(args, "fetch_odds", False):
+        rnd, _ = _acquire_odds(rnd, args)
+        print()
     matches = load_matches(Path(args.data), _season_range(args), tuple(args.divisions))
 
     known = set(matches["home_team"]) | set(matches["away_team"])
@@ -120,6 +123,101 @@ def cmd_tune_xi(args) -> int:
     return 0
 
 
+def cmd_sources(args) -> int:
+    from .sources.registry import (
+        SourceNotApprovedError,
+        approve,
+        load_registry,
+        save_registry,
+    )
+
+    path = Path(args.registry)
+    registry = load_registry(path)
+
+    if args.sources_action == "approve":
+        try:
+            record = approve(args.source_id, path=path)
+        except (KeyError, SourceNotApprovedError) as exc:
+            print(f"{exc}", file=sys.stderr)
+            return 1
+        print(f"{record.source_id} -> APPROVED (terms checked {record.terms_checked_at})")
+        return 0
+
+    if not path.exists():
+        save_registry(registry, path)
+        print(f"Initialised registry at {path}\n")
+
+    for source_id in sorted(registry):
+        r = registry[source_id]
+        print(f"{r.source_name}  [{r.source_id}]")
+        print(f"  method   {r.acquisition_method}")
+        print(f"  status   {r.usage_status}")
+        if r.refresh_limit:
+            print(f"  limit    {r.refresh_limit}")
+        if r.terms_url:
+            print(f"  terms    {r.terms_url}  (checked {r.terms_checked_at or 'never'})")
+        if r.notes:
+            print(f"  note     {r.notes}")
+        print()
+    return 0
+
+
+def cmd_quota(args) -> int:
+    from .sources.odds_api import (
+        FREE_TIER_MONTHLY_CREDITS,
+        credits_used_this_month,
+        load_quota,
+    )
+
+    used = credits_used_this_month(Path(args.quota))
+    print(f"The Odds API credits this month: {used}/{FREE_TIER_MONTHLY_CREDITS}")
+    quota = load_quota(Path(args.quota))
+    for month in sorted(quota):
+        entry = quota[month]
+        reported = entry.get("api_reported_remaining")
+        extra = f", API reports {reported} remaining" if reported is not None else ""
+        print(f"  {month}: {entry.get('used', 0)} used{extra}")
+    return 0
+
+
+def _acquire_odds(rnd, args):
+    """Fetch live consensus odds for a round, returning the updated round."""
+    import os
+
+    from .sources.pipeline import acquire_round_odds, apply_to_round
+    from .sources.registry import SourceNotApprovedError
+
+    api_key = os.environ.get("ODDS_API_KEY")
+    if not api_key:
+        print(
+            "ODDS_API_KEY is not set. Export your The Odds API key to fetch "
+            "live odds, or omit --fetch-odds to use odds from the round file.",
+            file=sys.stderr,
+        )
+        return rnd, None
+
+    try:
+        acquired = acquire_round_odds(rnd, api_key)
+    except SourceNotApprovedError as exc:
+        print(f"{exc}", file=sys.stderr)
+        return rnd, None
+
+    print(
+        f"Odds acquired {acquired.fetched_at}: {acquired.covered}/6 fixtures "
+        f"covered, {acquired.credits_spent} credit(s) spent"
+    )
+    for f in acquired.fixtures:
+        if f.consensus is None:
+            print(f"  ! {f.home} v {f.away}: {f.reason} — using model only", file=sys.stderr)
+        else:
+            c = f.consensus
+            print(
+                f"  {f.home} v {f.away}: {c.p_home:.1%}/{c.p_draw:.1%}/{c.p_away:.1%} "
+                f"({c.bookmaker_count} books, dispersion {c.dispersion:.3f})"
+            )
+    return apply_to_round(rnd, acquired), acquired
+
+
 def _fit_router(matches, xi, cfg):
     """Per-division fits + §29.4 priors, with a pooled fallback. Shared by
     predict and record so both score a round identically."""
@@ -178,6 +276,8 @@ def cmd_record(args) -> int:
     from .round import load_round
 
     rnd = load_round(Path(args.round))
+    if getattr(args, "fetch_odds", False):
+        rnd, _ = _acquire_odds(rnd, args)
     ledger_path = Path(args.ledger)
     ledger = load_ledger(ledger_path)
     fixtures = [(f.home, f.away) for f in rnd.fixtures]
@@ -350,6 +450,11 @@ def main(argv: list[str] | None = None) -> int:
     common(p)
     p.add_argument("--round", required=True, help="round JSON file (§9.1)")
     p.add_argument("--xi", type=float, default=DEFAULT_MODEL.xi)
+    p.add_argument(
+        "--fetch-odds", action="store_true",
+        help="fetch live market consensus (needs ODDS_API_KEY and an "
+             "APPROVED the_odds_api registry entry)",
+    )
     p.set_defaults(func=cmd_predict)
 
     p = sub.add_parser("backtest", help="walk-forward ablation table (§16/§28)")
@@ -381,7 +486,23 @@ def main(argv: list[str] | None = None) -> int:
         "--submitted", nargs="+", metavar="H-A",
         help="six scores you actually entered in Super 6, e.g. 2-0 1-0 ...",
     )
+    p.add_argument(
+        "--fetch-odds", action="store_true",
+        help="fetch live market consensus before recording picks",
+    )
     p.set_defaults(func=cmd_record)
+
+    p = sub.add_parser("sources", help="source registry (§18.1)")
+    p.add_argument(
+        "sources_action", nargs="?", default="list", choices=["list", "approve"]
+    )
+    p.add_argument("source_id", nargs="?")
+    p.add_argument("--registry", default="config/source_registry.json")
+    p.set_defaults(func=cmd_sources)
+
+    p = sub.add_parser("quota", help="The Odds API credit usage this month")
+    p.add_argument("--quota", default="config/odds_api_quota.json")
+    p.set_defaults(func=cmd_quota)
 
     p = sub.add_parser("score", help="score a recorded round once results are known")
     p.add_argument("--round", type=int, required=True)

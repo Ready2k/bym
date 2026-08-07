@@ -1,0 +1,66 @@
+[
+  {
+    "source_id": "football_data_co_uk",
+    "source_name": "Football-Data.co.uk",
+    "acquisition_method": "DATASET",
+    "usage_status": "APPROVED",
+    "terms_url": "https://www.football-data.co.uk/",
+    "terms_checked_at": "2026-08-07",
+    "refresh_limit": "weekly CSV download per division",
+    "retention_policy": "persist raw CSV + parsed fixtures",
+    "attribution_required": false,
+    "purpose": [
+      "historical_results",
+      "historical_odds",
+      "backtest_corpus"
+    ],
+    "notes": "Free downloadable historical results/odds. Training and backtesting corpus for Phase 1."
+  },
+  {
+    "source_id": "football_data_org",
+    "source_name": "football-data.org",
+    "acquisition_method": "API",
+    "usage_status": "REVIEW_REQUIRED",
+    "terms_url": "https://www.football-data.org/terms",
+    "terms_checked_at": "2026-08-07",
+    "refresh_limit": "free tier: 10 requests/minute, fixtures/results only",
+    "retention_policy": "persist fixtures/results",
+    "attribution_required": false,
+    "purpose": [
+      "fixtures",
+      "results",
+      "tables"
+    ],
+    "notes": "Free tier does NOT include odds \u2014 pre-match H/D/A odds are a paid add-on (~EUR15/month) which would breach the GBP10 target (\u00a725). Retained as a candidate structured fixtures/results source only."
+  },
+  {
+    "source_id": "sky_super6",
+    "source_name": "Sky Sports Super 6",
+    "acquisition_method": "MANUAL",
+    "usage_status": "PROHIBITED",
+    "terms_url": "https://www.skysports.com/terms-and-conditions",
+    "terms_checked_at": "2026-08-07",
+    "refresh_limit": "",
+    "retention_policy": "",
+    "attribution_required": false,
+    "purpose": [],
+    "notes": "PERMANENTLY PROHIBITED as an automated source. Sky's terms prohibit automated and unauthorised manual data extraction. The agent is external to Sky by architecture (\u00a73, \u00a718.1): round fixtures and deadlines are entered by the user by hand (\u00a79.1). Cannot be promoted."
+  },
+  {
+    "source_id": "the_odds_api",
+    "source_name": "The Odds API",
+    "acquisition_method": "API",
+    "usage_status": "REVIEW_REQUIRED",
+    "terms_url": "https://the-odds-api.com/terms-and-conditions.html",
+    "terms_checked_at": "2026-08-07",
+    "refresh_limit": "500 credits/month (free tier); 1 credit per markets x regions per request",
+    "retention_policy": "persist_internal_odds_snapshots",
+    "attribution_required": false,
+    "purpose": [
+      "pre_match_1x2",
+      "market_consensus",
+      "market_movement"
+    ],
+    "notes": "UK region, h2h market, Premier League + Championship. Terms permit use in analytical tools including commercial applications, but prohibit reselling or repackaging the raw market feed as a standalone data product \u2014 this system is a permitted analytical use. Promote to APPROVED only once an account exists and the terms have been accepted."
+  }
+]
