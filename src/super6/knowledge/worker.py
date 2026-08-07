@@ -24,6 +24,7 @@ from ..db import to_iso, utcnow
 from ..sources import tavily
 from ..sources.quota import QuotaExceededError, constrained
 from . import clustering, store
+from .config import ExtractorMode
 from .extractor import ClaimExtractor, validate
 from .models import (
     AUTHORITY_TO_TIER,
@@ -60,7 +61,10 @@ class ResearchResult:
     documents_skipped: int = 0
     claims_accepted: int = 0
     claims_rejected: int = 0
+    claims_promoted: int = 0
     llm_calls: int = 0
+    extraction_failures: int = 0
+    mode: str = ExtractorMode.SHADOW.value
     events: list[ev.Event] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
 
@@ -98,11 +102,19 @@ def research(
     now: datetime | None = None,
     round_number: int | None = None,
     max_extract: int = 5,
+    mode: str = ExtractorMode.SHADOW.value,
     **request_kwargs,
 ) -> ResearchResult:
-    """Run one bounded research pass for a fixture."""
+    """Run one bounded research pass for a fixture.
+
+    `mode` defaults to **shadow**: claims are extracted, validated,
+    recorded with provenance, and deliberately NOT promoted into
+    reconciled availability state. Only `active` feeds the availability
+    pipeline, and even then through the same deterministic reconciliation
+    every other source uses.
+    """
     now = now or utcnow()
-    result = ResearchResult()
+    result = ResearchResult(mode=mode)
 
     if constrained(tavily.QUOTA):
         result.notes.append(
@@ -157,9 +169,40 @@ def research(
         raw_claims = extractor.extract_claims(document)
         result.llm_calls += 1
         outcome = validate(raw_claims, document)
+
+        promote = mode == ExtractorMode.ACTIVE.value
+        run_id = _record_provenance(
+            conn, extractor, mode, stored.id,
+            len(outcome.accepted), len(outcome.rejected), promote,
+        )
+
+        failure = getattr(extractor, "last_failure", None)
+        if failure is not None:
+            result.extraction_failures += 1
+            result.events.append(
+                ev.make_event(
+                    ev.EventType.KNOWLEDGE_EXTRACTION_FAILED,
+                    ev.Severity.INFORMATIONAL,
+                    f"Claim extraction failed ({failure.kind}) for "
+                    f"{document.origin_domain}. Evidence retained; no "
+                    "candidate claims. Forecasting is unaffected.",
+                    round_number=round_number,
+                    home_team=home_team,
+                    away_team=away_team,
+                    detail={
+                        "failure_kind": failure.kind,
+                        "detail": failure.detail[:300],
+                        "source_url": document.url,
+                    },
+                    now=now,
+                )
+            )
+
         for claim in outcome.all_claims:
             store.record_claim(
-                conn, claim, home_team, away_team, round_number, to_iso(now)
+                conn, claim, home_team, away_team, round_number, to_iso(now),
+                promoted=promote and claim in outcome.accepted,
+                extraction_run_id=run_id,
             )
         result.claims_accepted += len(outcome.accepted)
         result.claims_rejected += len(outcome.rejected)
@@ -204,13 +247,43 @@ def research(
                     now=now,
                 )
             )
-            result.events.extend(
-                _feed_availability_pipeline(
-                    conn, claim, document, home_team, away_team,
-                    round_number, now,
+            if mode == ExtractorMode.ACTIVE.value:
+                result.claims_promoted += 1
+                result.events.extend(
+                    _feed_availability_pipeline(
+                        conn, claim, document, home_team, away_team,
+                        round_number, now,
+                    )
                 )
-            )
+
+    if mode != ExtractorMode.ACTIVE.value and result.claims_accepted:
+        result.notes.append(
+            f"shadow mode: {result.claims_accepted} validated claim(s) "
+            "recorded but NOT promoted into availability state"
+        )
     return result
+
+
+def _record_provenance(
+    conn: sqlite3.Connection,
+    extractor,
+    mode: str,
+    evidence_id: int | None,
+    accepted: int,
+    rejected: int,
+    promoted: bool,
+) -> int | None:
+    """Persist extractor provenance when the extractor supplies it.
+
+    Extractors without provenance (the null and fake ones) simply record
+    nothing rather than fabricating a run.
+    """
+    provenance = getattr(extractor, "last_provenance", None)
+    if provenance is None:
+        return None
+    return store.record_extraction_run(
+        conn, provenance, mode, evidence_id, accepted, rejected, promoted
+    )
 
 
 def _feed_availability_pipeline(
@@ -273,6 +346,7 @@ def investigate_movement(
         conn, home_team, away_team, plans, api_key, extractor,
         now=now, round_number=round_number, **kwargs,
     )
+
     if result.claims_accepted:
         result.events.append(
             ev.make_event(

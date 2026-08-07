@@ -6,3 +6,5 @@ data/
 .pytest_cache/
 config/odds_api_quota.json
 *.db
+config/*_quota.json
+.env

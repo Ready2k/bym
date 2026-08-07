@@ -24,7 +24,7 @@ CLAIM_COLUMNS = (
     "player_name", "player_external_id", "claim_type", "availability",
     "certainty", "expected_role", "event_at", "observed_at",
     "supporting_evidence", "source_url", "expires_at", "verdict",
-    "rejection_reason", "story_cluster_id",
+    "rejection_reason", "story_cluster_id", "promoted", "extraction_run_id",
 )
 
 # Audit snippets are capped: enough to justify a claim, not an archive.
@@ -70,8 +70,12 @@ def record_claim(
     away_team: str,
     round_number: int | None = None,
     observed_at: str | None = None,
+    promoted: bool = False,
+    extraction_run_id: int | None = None,
 ) -> CandidateClaim:
     values = {
+        "promoted": int(promoted),
+        "extraction_run_id": extraction_run_id,
         "evidence_id": claim.evidence_id,
         "round_number": round_number,
         "home_team": home_team,
@@ -110,6 +114,62 @@ def claims_for_fixture(
         sql += " AND verdict = ?"
         params += (verdict,)
     return conn.execute(sql + " ORDER BY observed_at", params).fetchall()
+
+
+RUN_COLUMNS = (
+    "provider", "model", "model_digest", "host", "prompt_version",
+    "extractor_version", "mode", "requested_at", "completed_at",
+    "evidence_hash", "evidence_id", "status", "error", "claims_emitted",
+    "claims_accepted", "claims_rejected", "promoted",
+)
+
+
+def record_extraction_run(
+    conn: sqlite3.Connection,
+    provenance,
+    mode: str,
+    evidence_id: int | None,
+    claims_accepted: int,
+    claims_rejected: int,
+    promoted: bool,
+) -> int:
+    """Persist how a set of claims was produced (§5 provenance).
+
+    Stores host rather than base URL, and no article content — a run is
+    reproducible from this row plus the evidence hash, without the record
+    becoming either a secret store or a news archive.
+    """
+    values = {
+        "provider": provenance.provider,
+        "model": provenance.model,
+        "model_digest": provenance.model_digest,
+        "host": provenance.host,
+        "prompt_version": provenance.prompt_version,
+        "extractor_version": provenance.extractor_version,
+        "mode": mode,
+        "requested_at": provenance.requested_at,
+        "completed_at": provenance.completed_at,
+        "evidence_hash": provenance.evidence_hash,
+        "evidence_id": evidence_id,
+        "status": provenance.status,
+        "error": provenance.error,
+        "claims_emitted": provenance.claims_emitted,
+        "claims_accepted": claims_accepted,
+        "claims_rejected": claims_rejected,
+        "promoted": int(promoted),
+    }
+    cursor = conn.execute(
+        f"INSERT INTO extraction_runs ({', '.join(RUN_COLUMNS)}) "
+        f"VALUES ({', '.join('?' for _ in RUN_COLUMNS)})",
+        tuple(values[c] for c in RUN_COLUMNS),
+    )
+    return int(cursor.lastrowid)
+
+
+def extraction_runs(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    return conn.execute(
+        "SELECT * FROM extraction_runs ORDER BY requested_at"
+    ).fetchall()
 
 
 def evidence_by_id(conn: sqlite3.Connection, evidence_id: int):

@@ -127,7 +127,10 @@ def test_authority_derives_from_origin_not_retriever():
 
 
 def test_reliability_passed_to_pipeline_comes_from_origin(conn, wired):
-    worker.research(conn, "Chelsea", "Newcastle", PLANS, "key", FakeExtractor(), now=NOW)
+    worker.research(
+        conn, "Chelsea", "Newcastle", PLANS, "key", FakeExtractor(), now=NOW,
+        mode="active",
+    )
     events = avail_store.events_for_fixture(conn, "Chelsea", "Newcastle")
     assert events, "claim should have reached the availability pipeline"
     assert events[0].source_id == "bbc.co.uk"   # not "tavily"
@@ -137,14 +140,38 @@ def test_reliability_passed_to_pipeline_comes_from_origin(conn, wired):
 # ---- pipeline handoff and the model boundary ---------------------------
 
 
-def test_accepted_claim_enters_availability_pipeline(conn, wired):
+def test_accepted_claim_enters_availability_pipeline_in_active_mode(conn, wired):
     result = worker.research(
-        conn, "Chelsea", "Newcastle", PLANS, "key", FakeExtractor(), now=NOW
+        conn, "Chelsea", "Newcastle", PLANS, "key", FakeExtractor(), now=NOW,
+        mode="active",
     )
     assert result.claims_accepted == 1
+    assert result.claims_promoted == 1
     events = avail_store.events_for_fixture(conn, "Chelsea", "Newcastle")
     assert events[0].event_type == "DOUBT"
     assert events[0].claim_status == "REPORTED"
+
+
+def test_shadow_is_the_default_mode(conn, wired):
+    """Turning the LLM on must be deliberate twice over: an extractor has
+    to be configured, and then promoted out of shadow."""
+    result = worker.research(
+        conn, "Chelsea", "Newcastle", PLANS, "key", FakeExtractor(), now=NOW
+    )
+    assert result.mode == "shadow"
+    assert result.claims_accepted == 1     # validated...
+    assert result.claims_promoted == 0     # ...but not promoted
+    assert avail_store.events_for_fixture(conn, "Chelsea", "Newcastle") == []
+    assert any("NOT promoted" in n for n in result.notes)
+
+
+def test_shadow_claims_are_recorded_but_flagged_unpromoted(conn, wired):
+    worker.research(conn, "Chelsea", "Newcastle", PLANS, "key", FakeExtractor(), now=NOW)
+    row = conn.execute(
+        "SELECT * FROM candidate_claims WHERE verdict = 'ACCEPTED'"
+    ).fetchone()
+    assert row is not None            # the claim IS stored for inspection
+    assert row["promoted"] == 0       # but explicitly not promoted
 
 
 def test_no_claim_can_reach_the_model(conn, wired):

@@ -27,15 +27,37 @@ def test_market_pick_convention():
     assert pr.market_pick((4.0, 1.5, 6.0)) == (1, 1)  # draw favourite
 
 
-def test_arms_are_rows_so_new_arms_append():
+def test_arms_are_rows_so_new_arms_append(tmp_path):
+    registry = tmp_path / "arms.json"
+    pr.register_arm("PHASE2_AGENT", "2026-08-07", registry)
     ledger = seeded_ledger()
     ledger = pr.record_picks(
-        ledger, 2026, 1, FIXTURES, "PHASE2_AGENT", [(3, 0), (1, 0), (1, 1)]
+        ledger, 2026, 1, FIXTURES, "PHASE2_AGENT", [(3, 0), (1, 0), (1, 1)],
+        arm_registry_path=registry,
     )
     assert set(ledger["arm"]) == {pr.FROZEN_ARM, pr.MARKET_ARM, "PHASE2_AGENT"}
     # the frozen arm's rows are untouched by the new arm
     frozen = ledger[ledger["arm"] == pr.FROZEN_ARM]
     assert list(frozen["pred_home"]) == [2, 1, 2]
+
+
+def test_unregistered_arm_cannot_be_recorded(tmp_path):
+    """An arm added after the fact is indistinguishable from one fitted to
+    known results, so backfilling is refused outright."""
+    registry = tmp_path / "arms.json"
+    with pytest.raises(ValueError, match="not registered"):
+        pr.record_picks(
+            pd.DataFrame(columns=pr.COLUMNS), 2026, 1, FIXTURES,
+            "MYSTERY_ARM", [(1, 0)] * 3, arm_registry_path=registry,
+        )
+
+
+def test_registration_date_cannot_be_moved(tmp_path):
+    registry = tmp_path / "arms.json"
+    pr.register_arm("PHASE3_STRATEGY", "2026-09-01", registry)
+    with pytest.raises(ValueError, match="already registered"):
+        pr.register_arm("PHASE3_STRATEGY", "2026-08-01", registry)
+    assert pr.load_arm_registry(registry)["PHASE3_STRATEGY"] == "2026-09-01"
 
 
 def test_refuses_to_overwrite_recorded_arm():

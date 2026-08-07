@@ -25,6 +25,7 @@ later editing it would defeat the entire point.
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -35,6 +36,15 @@ from .scoring import super6_points
 FROZEN_ARM = "PHASE1_MODEL_V1"
 MARKET_ARM = "MARKET_AVAILABLE"
 SUBMITTED_ARM = "SUBMITTED"
+PHASE2_ARM = "PHASE2_AGENT"
+PHASE3_ARM = "PHASE3_STRATEGY"
+
+DEFAULT_ARM_REGISTRY = Path("results/prospective_arms.json")
+
+# Arms present from Round 1. Later arms must be registered *before* their
+# first round and can never be backfilled — an arm that appears
+# retrospectively is indistinguishable from one fitted to known results.
+BASE_ARMS = (FROZEN_ARM, MARKET_ARM, SUBMITTED_ARM)
 
 COLUMNS = [
     "season",
@@ -71,6 +81,47 @@ def _normalise_dtypes(ledger: pd.DataFrame) -> pd.DataFrame:
         if col in ledger.columns:
             ledger[col] = ledger[col].astype(object)
     return ledger
+
+
+def load_arm_registry(path: Path = DEFAULT_ARM_REGISTRY) -> dict[str, str]:
+    """arm -> ISO date it was registered."""
+    if not path.exists():
+        return {arm: "2026-08-07" for arm in BASE_ARMS}
+    return json.loads(path.read_text())
+
+
+def register_arm(
+    arm: str,
+    registered_at: str | None = None,
+    path: Path = DEFAULT_ARM_REGISTRY,
+) -> dict[str, str]:
+    """Pre-register a measurement arm. Refuses to re-register, so a
+    registration date cannot be quietly moved earlier."""
+    registry = load_arm_registry(path)
+    if arm in registry:
+        raise ValueError(
+            f"'{arm}' is already registered ({registry[arm]}). A registration "
+            "date may not be changed — it is what proves the arm was not "
+            "created after seeing results."
+        )
+    registry[arm] = registered_at or datetime.now(timezone.utc).date().isoformat()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(registry, indent=2, sort_keys=True) + "\n")
+    return registry
+
+
+def assert_arm_registered(
+    arm: str, path: Path = DEFAULT_ARM_REGISTRY
+) -> str:
+    registry = load_arm_registry(path)
+    if arm not in registry:
+        raise ValueError(
+            f"Arm '{arm}' is not registered. Register it with "
+            "`register_arm` BEFORE its first round — arms cannot be "
+            "backfilled, because an arm added after the fact is "
+            "indistinguishable from one fitted to known results."
+        )
+    return registry[arm]
 
 
 def load_ledger(path: Path) -> pd.DataFrame:
@@ -111,10 +162,13 @@ def record_picks(
     fixtures: list[tuple[str, str]],
     arm: str,
     picks: list[tuple[int, int]],
+    arm_registry_path: Path = DEFAULT_ARM_REGISTRY,
 ) -> pd.DataFrame:
     """Append one arm's picks for a round. Refuses to overwrite an arm
     already recorded for that round — a prospective record that can be
-    revised is not a prospective record."""
+    revised is not a prospective record — and refuses an unregistered arm
+    outright."""
+    assert_arm_registered(arm, arm_registry_path)
     if already_recorded(ledger, season, rnd, arm):
         raise ValueError(
             f"{arm} already recorded for season {season} round {rnd}. "

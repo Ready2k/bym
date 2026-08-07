@@ -247,6 +247,154 @@ def cmd_activity(args) -> int:
     return 0
 
 
+def cmd_health(args) -> int:
+    """Engine health, including Ollama reachability (§7)."""
+    from . import db as db_mod
+    from .api import service
+    from .knowledge.config import from_env
+    from .knowledge.ollama import check_health
+    from .sources.registry import load_registry
+
+    config = from_env()
+    health = check_health(config)
+    print(health.describe())
+    print()
+
+    with db_mod.connect(Path(args.db)) as conn:
+        system = service.build_system_health(
+            conn,
+            registry=load_registry(Path(args.registry)),
+            ollama_health=health,
+            extractor_config=config,
+            schema_version=db_mod.schema_version(conn),
+        )
+    print("Sources")
+    for source in system.sources:
+        quota = (
+            f"  quota {source.quota_used}/{source.quota_limit} per {source.quota_period}"
+            if source.quota_limit
+            else ""
+        )
+        print(f"  {source.source_id:20s} {source.usage_status}{quota}")
+    print(f"\nScheduler jobs pending: {system.scheduler_jobs_pending}")
+    print(f"Database schema version: {system.database_schema_version}")
+    print(f"Extractor: {system.extractor} (mode {system.extractor_mode})")
+    for warning in system.warnings:
+        print(f"  ! {warning}")
+    return 0 if health.reachable else 1
+
+
+def cmd_verify_live(args) -> int:
+    """Live verification of each external source (§9)."""
+    from .verify import FAILED, verify_all
+
+    print("LIVE SOURCE VERIFICATION")
+    print("Approval is never bypassed; a successful check approves nothing.\n")
+    results = verify_all(Path(args.registry), season=args.season)
+    for result in results:
+        print(result.report())
+        print()
+    failures = [r for r in results if r.status == FAILED]
+    print(
+        f"{len(results) - len(failures)}/{len(results)} source(s) verified "
+        "without failure"
+    )
+    return 1 if failures else 0
+
+
+def cmd_engine_run(args) -> int:
+    """Full engine pass for a manually configured round (§13)."""
+    import os
+
+    from . import db as db_mod
+    from .config import FROZEN_PHASE1_V1
+    from .data.football_data import load_matches
+    from .engine import format_engine_report, run_engine
+    from .knowledge.config import build_extractor, from_env
+    from .round import load_round
+
+    rnd = load_round(Path(args.round))
+    matches = load_matches(Path(args.data), _season_range(args), tuple(args.divisions))
+    router = _fit_router(matches, FROZEN_PHASE1_V1.xi, FROZEN_PHASE1_V1)
+
+    config = from_env()
+    extractor = build_extractor(config)
+
+    with db_mod.connect(Path(args.db)) as conn:
+        result = run_engine(
+            conn,
+            rnd,
+            router,
+            odds_api_key=os.environ.get("ODDS_API_KEY"),
+            tavily_api_key=os.environ.get("TAVILY_API_KEY"),
+            extractor=extractor,
+            extractor_config=config,
+            run_knowledge=args.with_knowledge,
+        )
+
+    print(format_engine_report(result))
+    if args.json:
+        import json as json_mod
+
+        Path(args.json).write_text(
+            json_mod.dumps(result.round_summary.to_dict(), indent=2) + "\n"
+        )
+        print(f"\nRound summary contract written to {args.json}")
+    return 0
+
+
+def cmd_shadow_report(args) -> int:
+    """Shadow-mode extraction metrics (§12) — counts only, no AI score."""
+    from . import db as db_mod
+    from .knowledge import store as knowledge_store
+
+    with db_mod.connect(Path(args.db)) as conn:
+        runs = knowledge_store.extraction_runs(conn)
+        rows = conn.execute(
+            "SELECT verdict, rejection_reason, promoted FROM candidate_claims"
+        ).fetchall()
+
+    if not runs and not rows:
+        print("No extraction runs recorded yet.")
+        return 0
+
+    accepted = sum(1 for r in rows if r["verdict"] == "ACCEPTED")
+    rejected = sum(1 for r in rows if r["verdict"] == "REJECTED")
+    promoted = sum(1 for r in rows if r["promoted"])
+    print("SHADOW EXTRACTION REPORT\n")
+    print(f"Extraction runs      {len(runs)}")
+    print(f"Claims emitted       {sum(r['claims_emitted'] for r in runs)}")
+    print(f"Claims accepted      {accepted}")
+    print(f"Claims rejected      {rejected}")
+    print(f"Claims promoted      {promoted}")
+    failures = [r for r in runs if r["status"] == "FAILED"]
+    print(f"Failed runs          {len(failures)}")
+
+    reasons: dict[str, int] = {}
+    for row in rows:
+        if row["verdict"] == "REJECTED" and row["rejection_reason"]:
+            key = row["rejection_reason"].split("(")[0].strip()[:60]
+            reasons[key] = reasons.get(key, 0) + 1
+    if reasons:
+        print("\nRejection reasons")
+        for reason, count in sorted(reasons.items(), key=lambda x: -x[1]):
+            print(f"  {count:4d}  {reason}")
+
+    if runs:
+        print("\nProvenance")
+        for run in runs[-5:]:
+            print(
+                f"  {run['requested_at']}  {run['provider']}/{run['model']} "
+                f"@{run['host']}  prompt={run['prompt_version']} "
+                f"mode={run['mode']} status={run['status']}"
+            )
+    print(
+        "\nManual review of individual claims is expected. No automated "
+        "quality score is produced on purpose."
+    )
+    return 0
+
+
 def cmd_sources(args) -> int:
     from .sources.registry import (
         SourceNotApprovedError,
@@ -673,6 +821,28 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--type", nargs="+", help="filter by event type")
     p.add_argument("--all", action="store_true", help="include routine snapshots")
     p.set_defaults(func=cmd_activity)
+
+    p = sub.add_parser("health", help="engine + Ollama health check")
+    p.add_argument("--db", default="data/super6.db")
+    p.add_argument("--registry", default="config/source_registry.json")
+    p.set_defaults(func=cmd_health)
+
+    p = sub.add_parser("verify-live", help="live-verify each external source")
+    p.add_argument("--registry", default="config/source_registry.json")
+    p.add_argument("--season", type=int, default=2026)
+    p.set_defaults(func=cmd_verify_live)
+
+    p = sub.add_parser("engine-run", help="full engine pass for a round")
+    common(p)
+    p.add_argument("--round", required=True)
+    p.add_argument("--db", default="data/super6.db")
+    p.add_argument("--with-knowledge", action="store_true")
+    p.add_argument("--json", help="write the RoundSummary contract to this path")
+    p.set_defaults(func=cmd_engine_run)
+
+    p = sub.add_parser("shadow-report", help="shadow extraction metrics")
+    p.add_argument("--db", default="data/super6.db")
+    p.set_defaults(func=cmd_shadow_report)
 
     p = sub.add_parser("sources", help="source registry (§18.1)")
     p.add_argument(

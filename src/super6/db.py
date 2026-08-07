@@ -164,6 +164,37 @@ MIGRATIONS: list[str] = [
     CREATE INDEX IF NOT EXISTS idx_claims_fixture
         ON candidate_claims (home_team, away_team, verdict);
     """,
+    # 0005 — claim-extraction provenance (engine activation)
+    """
+    CREATE TABLE IF NOT EXISTS extraction_runs (
+        id                INTEGER PRIMARY KEY AUTOINCREMENT,
+        provider          TEXT NOT NULL,
+        model             TEXT,
+        model_digest      TEXT,
+        host              TEXT,
+        prompt_version    TEXT NOT NULL,
+        extractor_version TEXT NOT NULL,
+        mode              TEXT NOT NULL,
+        requested_at      TEXT NOT NULL,
+        completed_at      TEXT,
+        evidence_hash     TEXT NOT NULL,
+        evidence_id       INTEGER,
+        status            TEXT NOT NULL,
+        error             TEXT,
+        claims_emitted    INTEGER NOT NULL DEFAULT 0,
+        claims_accepted   INTEGER NOT NULL DEFAULT 0,
+        claims_rejected   INTEGER NOT NULL DEFAULT 0,
+        promoted          INTEGER NOT NULL DEFAULT 0,
+        FOREIGN KEY (evidence_id) REFERENCES evidence_documents (id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_extraction_runs_evidence
+        ON extraction_runs (evidence_id);
+    """,
+    # 0006 — claim promotion flag, so shadow-mode claims are visibly unpromoted
+    """
+    ALTER TABLE candidate_claims ADD COLUMN promoted INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE candidate_claims ADD COLUMN extraction_run_id INTEGER;
+    """,
 ]
 
 
