@@ -332,10 +332,15 @@ def test_health_connection_refused():
     assert "connection refused" in health.detail.lower()
 
 
-def test_health_timeout():
+def test_health_timeout_names_the_likely_cause():
+    """A timeout means packets dropped, not a refusal — on a host that
+    otherwise responds that is a firewall or a loopback-only bind, and the
+    diagnostic should say so rather than just 'timed out'."""
     session = FakeSession(exc=requests.Timeout())
     health = check_health(CONFIG, session)
     assert "timed out" in health.detail
+    assert "firewall" in health.detail
+    assert "OLLAMA_HOST=0.0.0.0" in health.detail
 
 
 def test_health_unexpected_response():

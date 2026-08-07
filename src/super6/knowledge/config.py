@@ -7,9 +7,15 @@ state. Turning the LLM on is a deliberate act, twice over.
 
     CLAIM_EXTRACTOR=null|ollama      default: null
     CLAIM_EXTRACTOR_MODE=shadow|active   default: shadow
-    OLLAMA_BASE_URL=http://desktop-pc:11434
+    OLLAMA_BASE_URL=http://Desktop-HomePC.local:11434
     OLLAMA_MODEL=<model name>
     OLLAMA_TIMEOUT_SECONDS=120
+
+The native Ollama API (`/api/chat`) is used rather than the
+OpenAI-compatible `/v1` surface: `/api/chat` accepts a full JSON schema in
+its `format` field, which is what constrains output to the existing
+CandidateClaim shape. The `/v1` path would need a second, translated
+schema definition, and the whole point of §3 is that there is exactly one.
 
 No secret is read from, or written to, the repository.
 """
@@ -20,7 +26,7 @@ import os
 from dataclasses import dataclass
 from enum import Enum
 
-DEFAULT_OLLAMA_BASE_URL = "http://desktop-pc:11434"
+DEFAULT_OLLAMA_BASE_URL = "http://Desktop-HomePC.local:11434"
 DEFAULT_OLLAMA_MODEL = "llama3.1"
 DEFAULT_TIMEOUT_SECONDS = 120
 

@@ -345,7 +345,17 @@ def check_health(
             f"{config.base_url.rstrip('/')}/api/tags", timeout=timeout
         )
     except requests.Timeout:
-        base.detail = f"timed out after {timeout}s contacting {config.host}"
+        # A timeout means packets are being dropped, which is different
+        # from a refusal (nothing listening) or a DNS failure (no such
+        # host). On a host that otherwise responds, this is almost always
+        # a firewall, or Ollama bound to loopback only.
+        base.detail = (
+            f"timed out after {timeout}s contacting {config.host}. The port "
+            "is dropping packets rather than refusing them — check that "
+            "the host firewall allows inbound TCP on this port, and that "
+            "Ollama is listening on all interfaces (OLLAMA_HOST=0.0.0.0) "
+            "rather than loopback only."
+        )
         return base
     except requests.ConnectionError as exc:
         text = str(exc).lower()
