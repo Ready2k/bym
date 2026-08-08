@@ -216,7 +216,7 @@ function roundView() {
   else if (roundTab === "changes") {
     const visitChanges = round.changes_since_last_visit || [];
     const submissionChanges = round.submission?.drift || [];
-    content = visitChanges.length || submissionChanges.length ? `<div class="feed-list">${visitChanges.map((change) => `<article class="feed-item"><span class="severity important">Changed</span><div><h3>${escapeHtml(change.home_team)} v ${escapeHtml(change.away_team)}</h3><p>${escapeHtml(change.fields.map((field) => `${titleCase(field.field)}: ${field.was} → ${field.now}`).join(" · "))}</p><small>Recorded in forecast version history. Review the fixture for its full audit trail.</small></div></article>`).join("")}${submissionChanges.map((change) => `<article class="feed-item"><span class="severity critical">Entry drift</span><div><h3>${escapeHtml(round.fixtures[change.index].home_team)} v ${escapeHtml(round.fixtures[change.index].away_team)}</h3><p>${escapeHtml(change.was)} → ${escapeHtml(change.now)}</p><small>Update the prediction in Super 6 yourself if you choose the new recommendation.</small></div></article>`).join("")}</div>` : emptyState("No changes since your last review", "The current recommendations are stable against your recorded picks.");
+    content = submissionRecord(round) + (visitChanges.length || submissionChanges.length ? `<div class="feed-list">${visitChanges.map((change) => `<article class="feed-item"><span class="severity important">Changed</span><div><h3>${escapeHtml(change.home_team)} v ${escapeHtml(change.away_team)}</h3><p>${escapeHtml(change.fields.map((field) => `${titleCase(field.field)}: ${field.was} → ${field.now}`).join(" · "))}</p><small>Recorded in forecast version history. Review the fixture for its full audit trail.</small></div></article>`).join("")}${submissionChanges.map((change) => `<article class="feed-item"><span class="severity critical">Entry drift</span><div><h3>${escapeHtml(round.fixtures[change.index].home_team)} v ${escapeHtml(round.fixtures[change.index].away_team)}</h3><p>${escapeHtml(change.was)} → ${escapeHtml(change.now)}</p><small>Update the prediction in Super 6 yourself if you choose the new recommendation.</small></div></article>`).join("")}</div>` : emptyState("No changes since your last review", "The current recommendations are stable against your recorded picks."));
   }
   else if (roundTab === "setup") content = roundSetupView();
   else if (roundTab === "results") content = resultsView(results);
@@ -242,6 +242,24 @@ function cupView() {
   const result = cupForecast;
   const prediction = result ? result.fixture : null;
   return `${pageHeader("One-off forecast", "Cup Match", "Choose any home and away side. This forecast is separate from your active Super 6 round.")}<section class="split-layout"><section class="form-card"><p class="eyebrow">Cup tie</p><h2>Predict a match</h2><p class="subtitle">Start typing to pick a team the model knows. A team outside the corpus returns no forecast rather than a misleading one.</p><form id="cup-form"><datalist id="known-teams">${teams}</datalist><label>Home team<input required name="home" maxlength="80" list="known-teams" placeholder="e.g. Stoke" value="${escapeHtml(prediction?.home_team || "")}"></label><label>Away team<input required name="away" maxlength="80" list="known-teams" placeholder="e.g. Oldham" value="${escapeHtml(prediction?.away_team || "")}"></label><label class="toggle-row"><span>Include League One, League Two &amp; National League</span><input type="checkbox" name="extended" ${result?.extended ? "checked" : ""}><i></i></label><p class="subtitle">The wider corpus changes the cross-division fallback, so it is no longer the frozen PHASE1_MODEL_V1. Use it for cup-tie sanity checks, never for Super 6 picks.</p><div class="form-actions"><button class="button" type="submit">Get cup prediction</button></div></form></section>${result ? cupResultCard(result) : ""}</section>`;
+}
+
+// What you told us you entered, and when. The reconciler already records
+// all of this; without it on screen "entry drift" has nothing to drift from.
+function submissionRecord(round) {
+  const record = round.submission;
+  if (!record?.submitted_at && !record?.reviewed_at) return "";
+  const picks = (record.submitted_picks || []).map((pick, index) => {
+    const fixture = round.fixtures[index];
+    const label = fixture ? `${shortTeam(fixture.home_team)}–${shortTeam(fixture.away_team)}` : `Fixture ${index + 1}`;
+    const drifted = (record.drift || []).some((change) => change.index === index);
+    return `<span class="${drifted ? "drifted" : ""}">${escapeHtml(label)} ${escapeHtml(pick)}</span>`;
+  }).join("");
+  return `<section class="callout muted submission-record"><strong>Your recorded entry</strong><span>
+    ${record.submitted_at ? `Marked as entered ${escapeHtml(displayDate(record.submitted_at))}` : "Not yet marked as entered"}${record.reviewed_at ? ` · last reviewed ${escapeHtml(displayDate(record.reviewed_at))}` : ""}${record.submitted_golden_goal ? ` · Golden Goal minute ${record.submitted_golden_goal}` : ""}.
+    <span class="recorded-picks">${picks}</span>
+    ${(record.drift || []).length ? `Highlighted picks no longer match the current recommendation.` : `These match the current recommendations.`}
+  </span></section>`;
 }
 
 function roundSetupView() {
@@ -296,7 +314,7 @@ function modelView() {
   const config = appData.model.frozen_config;
   const transparency = appData.model.transparency;
   const values = [["Model version", appData.model.version], ["Training config", "Frozen Phase 1"], ["Time decay ξ", config.xi], ["Market blend", config.market_blend_weight], ["Tail tolerance", config.tail_tolerance], ["Goal grid", `${config.min_goals_grid}–${config.max_goals_cap}`], ["Promoted-team priors", config.use_promoted_priors ? "Enabled" : "Disabled"]];
-  return `${pageHeader("Expert", "Model Lab", "Technical detail is available here without competing with the weekly decision.")}<section class="callout muted"><strong>Frozen evaluation model</strong><span>${escapeHtml(appData.model.note)} ${escapeHtml(transparency.evaluation_reason || "")}</span></section><section class="spec-grid">${values.map(([label, value]) => `<article><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></article>`).join("")}</section><section class="form-card"><h2>How a pick is selected</h2><p>The scoreline with the highest expected Super 6 value is recommended. Expected points uses the probability of the selected match result plus the probability of the exact score; confidence remains a separate category.</p><p class="subtitle">Score matrices, calculation breakdowns and source freshness are available in each fixture’s detail view.</p></section>`;
+  return `${pageHeader("Expert", "Model Lab", "Technical detail is available here without competing with the weekly decision.")}<section class="callout muted"><strong>Frozen evaluation model</strong><span>${escapeHtml(appData.model.note)} ${escapeHtml(transparency.evaluation_reason || "")}</span></section><section class="spec-grid">${values.map(([label, value]) => `<article><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></article>`).join("")}</section><section class="form-card"><h2>How a pick is selected</h2><p>The scoreline with the highest expected Super 6 value is recommended. Expected points uses the probability of the selected match result plus the probability of the exact score; confidence remains a separate category.</p><p class="subtitle">Open any fixture for its expected-value breakdown, and expand “Score matrix &amp; provenance” there for the full scoreline distribution and source freshness.</p></section>`;
 }
 
 function sourcesView() {
@@ -366,6 +384,69 @@ function reasonFor(fixture) {
   return { result, market };
 }
 
+// UIUX §41.2 asks for a heatmap. The matrix runs to max_goals (11x11), but
+// the tail is visually dead weight, so the grid is capped and the caption
+// states how much probability is actually on screen rather than implying
+// the whole distribution is shown.
+const HEATMAP_CAP = 6;
+
+function heatmapGrid(explanation) {
+  const heatmap = explanation?.heatmap;
+  if (!heatmap?.cells?.length) return "";
+  const shown = heatmap.cells.filter((cell) => cell.home_goals <= HEATMAP_CAP && cell.away_goals <= HEATMAP_CAP);
+  const captured = shown.reduce((total, cell) => total + cell.probability, 0);
+  const peak = Math.max(...shown.map((cell) => cell.probability));
+  const at = new Map(shown.map((cell) => [`${cell.home_goals}-${cell.away_goals}`, cell]));
+  const range = Array.from({ length: HEATMAP_CAP + 1 }, (_, i) => i);
+
+  const header = range.map((away) => `<th scope="col">${away}</th>`).join("");
+  const rows = range.map((home) => {
+    const cells = range.map((away) => {
+      const cell = at.get(`${home}-${away}`);
+      if (!cell) return `<td></td>`;
+      const intensity = peak > 0 ? (cell.probability / peak).toFixed(3) : 0;
+      return `<td class="${cell.selected ? "selected" : ""}" style="--intensity:${intensity}" title="${escapeHtml(cell.score)} — ${percent(cell.probability)}, EV ${cell.expected_points.toFixed(2)}"><span>${(cell.probability * 100).toFixed(1)}</span></td>`;
+    }).join("");
+    return `<tr><th scope="row">${home}</th>${cells}</tr>`;
+  }).join("");
+
+  return `<section class="heatmap-block"><p class="eyebrow">Score matrix</p>
+    <p class="subtitle">Probability of each scoreline, as a percentage. ${escapeHtml(heatmap.home_team)} goals down the side, ${escapeHtml(heatmap.away_team)} across the top. The recommended score is outlined.</p>
+    <div class="heatmap-scroll"><table class="heatmap"><caption class="sr-only">Scoreline probability matrix</caption><thead><tr><th scope="col"><span class="sr-only">Home goals versus away goals</span>⁄</th>${header}</tr></thead><tbody>${rows}</tbody></table></div>
+    <p class="subtitle">Showing 0–${HEATMAP_CAP} goals per side: ${percent(captured)} of all outcomes. The remaining ${percent(1 - captured)} sits in higher scorelines, which are in the model but not drawn here.</p></section>`;
+}
+
+// A confirmed XI departing materially from the expected one. Raised as an
+// event by the availability layer, and a standing fact on the read model —
+// which is what a fixture opened after the fact needs.
+function surpriseNote(fixture) {
+  const surprise = fixture.availability?.lineup_surprise;
+  if (!surprise) return "";
+  return `<div class="surprise-note"><b>Lineup surprise</b> ${escapeHtml(surprise)}. Quantitative impact on this forecast: none directly.</div>`;
+}
+
+function evBreakdown(explanation) {
+  const pick = explanation?.selected_pick;
+  if (!pick) return "";
+  return `<section class="ev-block"><p class="eyebrow">How this expected value is built</p>
+    <p class="formula">${escapeHtml(pick.formula)}</p>
+    <table class="ev-table"><tbody>
+      <tr><td>P(result)</td><td>${percent(pick.result_probability)}</td><td>× ${pick.result_points} pts</td><td><strong>${pick.result_expected_points.toFixed(3)}</strong></td></tr>
+      <tr><td>P(exact ${escapeHtml(pick.score)})</td><td>${percent(pick.exact_score_probability)}</td><td>× ${pick.exact_score_bonus_points} pts</td><td><strong>${pick.exact_score_bonus_expected_points.toFixed(3)}</strong></td></tr>
+      <tr class="total"><td colspan="3">Expected Super 6 points</td><td><strong>${pick.expected_points.toFixed(3)}</strong></td></tr>
+    </tbody></table></section>`;
+}
+
+function sourceFreshness(explanation) {
+  const provenance = explanation?.provenance;
+  if (!provenance) return "";
+  const sources = (provenance.sources || []).map((source) => `<li><b>${escapeHtml(titleCase(source.source_id))}</b> — ${source.available ? escapeHtml(source.freshness) : "unavailable"}${source.detail ? `: ${escapeHtml(source.detail)}` : ""}${source.observed_at ? ` (observed ${escapeHtml(displayDate(source.observed_at))})` : ""}</li>`).join("");
+  const inputs = provenance.model_inputs || {};
+  return `<section class="provenance-block"><p class="eyebrow">Provenance</p>
+    <ul>${sources || "<li>No source provenance recorded for this forecast.</li>"}</ul>
+    <p class="subtitle">Generated ${escapeHtml(displayDate(provenance.generated_at))} by ${escapeHtml(provenance.model_version)} — expected goals ${Number(inputs.lambda_home).toFixed(2)} v ${Number(inputs.lambda_away).toFixed(2)}, ρ ${Number(inputs.rho).toFixed(3)}, grid capped at ${inputs.max_goals}.</p></section>`;
+}
+
 function openFixture(index) {
   const fixture = appData.round.fixtures[index];
   const reason = reasonFor(fixture);
@@ -385,7 +466,7 @@ function openFixture(index) {
   const headlineNote = unmodellable
     ? `Model returned ${escapeHtml(fixture.pick)} from the league-average prior${fixture.user_pick ? ` · your pick ${escapeHtml(fixture.user_pick)}` : ""}`
     : `Model ${escapeHtml(fixture.pick)}${fixture.user_pick ? ` · your pick ${escapeHtml(fixture.user_pick)}` : ""}`;
-  $("#fixture-detail").innerHTML = `<div class="detail-header"><p class="eyebrow">Fixture recommendation</p><div class="detail-teams"><span>${teamBadge(fixture.home_team, "large")}${escapeHtml(fixture.home_team)}</span><b>v</b><span>${teamBadge(fixture.away_team, "large")}${escapeHtml(fixture.away_team)}</span></div><div class="detail-score ${unmodellable ? "no-pick" : ""}">${headlineScore}</div><p class="subtitle">${headlineNote}</p></div>${unmodellableBanner}<div class="detail-grid"><div class="detail-metric"><span>Result probability</span><strong>${percent(fixture.result_probability)}</strong></div><div class="detail-metric"><span>Exact-score probability</span><strong>${percent(fixture.score_probability)}</strong></div><div class="detail-metric"><span>Expected Super 6 points</span><strong>${fixture.expected_points.toFixed(2)}</strong></div><div class="detail-metric"><span>Confidence</span><strong class="confidence ${unmodellable ? "" : fixture.confidence.toLowerCase()}">${unmodellable ? `${fixture.confidence} — of the wrong distribution` : fixture.confidence}</strong></div></div><section class="why-card"><p class="eyebrow">${unmodellable ? `Why no pick?` : `Why ${fixture.pick}?`}</p><h3>${unmodellable ? "The distribution below is not about these two teams." : `${escapeHtml(reason.result)} is the highest-value result.`}</h3><p>${unmodellable ? "It is the highest-expected-value score under a distribution built from a league-average stand-in, so it describes an average team, not the one actually playing." : "This score produces the highest expected Super 6 score from the current probability distribution. It is a recommendation, not a certainty."}</p><ul><li>${escapeHtml(reason.market)}</li>${marketNotes(fixture).map((note) => `<li>${escapeHtml(note)}</li>`).join("")}<li>Data quality: ${escapeHtml(fixture.availability?.data_quality || "LIMITED")}.</li><li>Confidence is separate from both probability figures.</li></ul></section><section class="alternatives"><p class="eyebrow">Meaningful alternatives</p><table><thead><tr><th>Score</th><th>Score probability</th><th>Super 6 EV</th></tr></thead><tbody>${alternatives}</tbody></table></section><details class="disclosure"><summary>Evidence &amp; prediction history</summary><h3>Current evidence</h3><ul>${evidence}</ul><h3>Prediction history</h3><ul>${history}</ul></details><form id="override-form" data-index="${index}" class="inline-score-form"><p class="eyebrow">Your pick</p><label>Home goals<input aria-label="${escapeHtml(fixture.home_team)} goals" name="home" min="0" max="20" type="number" value="${home}"></label><span>–</span><label>Away goals<input aria-label="${escapeHtml(fixture.away_team)} goals" name="away" min="0" max="20" type="number" value="${away}"></label><button class="button" type="submit">Use this score</button></form>`;
+  $("#fixture-detail").innerHTML = `<div class="detail-header"><p class="eyebrow">Fixture recommendation</p><div class="detail-teams"><span>${teamBadge(fixture.home_team, "large")}${escapeHtml(fixture.home_team)}</span><b>v</b><span>${teamBadge(fixture.away_team, "large")}${escapeHtml(fixture.away_team)}</span></div><div class="detail-score ${unmodellable ? "no-pick" : ""}">${headlineScore}</div><p class="subtitle">${headlineNote}</p></div>${unmodellableBanner}<div class="detail-grid"><div class="detail-metric"><span>Result probability</span><strong>${percent(fixture.result_probability)}</strong></div><div class="detail-metric"><span>Exact-score probability</span><strong>${percent(fixture.score_probability)}</strong></div><div class="detail-metric"><span>Expected Super 6 points</span><strong>${fixture.expected_points.toFixed(2)}</strong></div><div class="detail-metric"><span>Confidence</span><strong class="confidence ${unmodellable ? "" : fixture.confidence.toLowerCase()}">${unmodellable ? `${fixture.confidence} — of the wrong distribution` : fixture.confidence}</strong></div></div><section class="why-card"><p class="eyebrow">${unmodellable ? `Why no pick?` : `Why ${fixture.pick}?`}</p><h3>${unmodellable ? "The distribution below is not about these two teams." : `${escapeHtml(reason.result)} is the highest-value result.`}</h3><p>${unmodellable ? "It is the highest-expected-value score under a distribution built from a league-average stand-in, so it describes an average team, not the one actually playing." : "This score produces the highest expected Super 6 score from the current probability distribution. It is a recommendation, not a certainty."}</p><ul><li>${escapeHtml(reason.market)}</li>${marketNotes(fixture).map((note) => `<li>${escapeHtml(note)}</li>`).join("")}<li>Data quality: ${escapeHtml(fixture.availability?.data_quality || "LIMITED")}.</li><li>Confidence is separate from both probability figures.</li></ul></section><section class="alternatives"><p class="eyebrow">Meaningful alternatives</p><table><thead><tr><th>Score</th><th>Score probability</th><th>Super 6 EV</th></tr></thead><tbody>${alternatives}</tbody></table></section>${evBreakdown(fixture.explanation)}<details class="disclosure"><summary>Score matrix &amp; provenance</summary>${heatmapGrid(fixture.explanation)}${sourceFreshness(fixture.explanation)}</details><details class="disclosure"><summary>Evidence &amp; prediction history</summary>${surpriseNote(fixture)}<h3>Current evidence</h3><ul>${evidence}</ul><h3>Prediction history</h3><ul>${history}</ul></details><form id="override-form" data-index="${index}" class="inline-score-form"><p class="eyebrow">Your pick</p><label>Home goals<input aria-label="${escapeHtml(fixture.home_team)} goals" name="home" min="0" max="20" type="number" value="${home}"></label><span>–</span><label>Away goals<input aria-label="${escapeHtml(fixture.away_team)} goals" name="away" min="0" max="20" type="number" value="${away}"></label><button class="button" type="submit">Use this score</button></form>`;
   $("#fixture-dialog").showModal();
 }
 
