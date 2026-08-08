@@ -58,6 +58,14 @@ def _season_for(rnd: Round) -> int:
     return rnd.deadline_at.year if rnd.deadline_at.year else datetime.now().year
 
 
+def _known_teams(matches) -> set[str]:
+    return set(matches["home_team"]) | set(matches["away_team"])
+
+
+def _corpus_label(divisions: tuple[str, ...]) -> str:
+    return "+".join(divisions)
+
+
 DEFAULT_UI_STATE = {
     "league_name": "My Super 6 League",
     "player_name": "You",
@@ -229,12 +237,14 @@ def dashboard_payload(config: WebConfig) -> dict:
         fetch=False,
     )
     router = _fit_router(matches)
+    known_teams = _known_teams(matches)
     ollama_health, extractor_config = ollama_status()
     season = _season_for(rnd)
     generated_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
     with db.connect(config.database_path) as conn:
         result = run_engine(
-            conn, rnd, router, season=season, submission_path=config.submissions_path
+            conn, rnd, router, season=season, submission_path=config.submissions_path,
+            known_teams=known_teams, corpus=_corpus_label(config.divisions),
         )
         health = service.build_system_health(
             conn,
@@ -331,6 +341,103 @@ def dashboard_payload(config: WebConfig) -> dict:
                 "notification_email", "budget",
             )
         },
+        "teams": sorted(known_teams),
+    }
+
+
+def _cup_corpus(config: WebConfig, extended: bool) -> tuple[tuple[str, ...], list[int]]:
+    """Divisions and seasons for a cup forecast, refusing to quietly shrink.
+
+    The lower divisions were only downloaded from the season the extended
+    corpus was introduced, so an extended request over the full season
+    range would either hit the network mid-request or silently drop the
+    seasons whose files are absent. Both are worse than saying so.
+    """
+    from .config import DEFAULT_DATA
+
+    seasons = list(range(config.seasons[0], config.seasons[1] + 1))
+    if not extended:
+        return config.divisions, seasons
+    divisions = tuple(DEFAULT_DATA.extended_divisions)
+    missing = [
+        f"{year}_{div}"
+        for year in seasons
+        for div in divisions
+        if not (config.data_path / f"{year}_{div}.csv").exists()
+    ]
+    if missing:
+        available = [
+            year for year in seasons
+            if all((config.data_path / f"{year}_{div}.csv").exists() for div in divisions)
+        ]
+        if not available:
+            raise ValueError(
+                "The extended corpus is not downloaded. Run: super6 fetch "
+                f"--seasons {seasons[0]} {seasons[-1]} --divisions "
+                + " ".join(divisions)
+            )
+        return divisions, available
+    return divisions, seasons
+
+
+def cup_prediction(payload: dict, config: WebConfig) -> dict:
+    """Forecast one user-selected cup tie without changing the active round."""
+    home = " ".join(str(payload.get("home", "")).split())
+    away = " ".join(str(payload.get("away", "")).split())
+    if not home or not away or len(home) > 80 or len(away) > 80:
+        raise ValueError("Enter a home and away team, each up to 80 characters.")
+    if home.casefold() == away.casefold():
+        raise ValueError("Choose two different teams.")
+    extended = bool(payload.get("extended"))
+    divisions, seasons = _cup_corpus(config, extended)
+    matches = load_matches(config.data_path, seasons, divisions, fetch=False)
+    router = _fit_router(matches)
+    known_teams = _known_teams(matches)
+    corpus = _corpus_label(divisions)
+    # Widening the corpus changes the pooled cross-division fallback, so the
+    # result is no longer the frozen, holdout-tested model and must not claim
+    # to be. Same rule the CLI's `forecast --extended` prints.
+    model_version = f"UNFROZEN_EXTENDED_CORPUS_{corpus}" if extended else "PHASE1_MODEL_V1"
+    from .recommend import recommend_fixture
+    from .transparency import SourceFreshness, fixture_transparency
+
+    recommendation = recommend_fixture(router(home, away), home, away, FROZEN_PHASE1_V1)
+    modellability = service.build_modellability(home, away, known_teams, corpus)
+    fixture = service.build_fixture_forecast(
+        recommendation, modellability=modellability
+    ).to_dict()
+    fixture["explanation"] = fixture_transparency(
+        recommendation,
+        generated_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        model_version=model_version,
+        sources=[SourceFreshness(
+            source_id="historical_match_data",
+            available=True,
+            freshness="CURRENT",
+            detail=(
+                f"Team-specific history from {corpus}"
+                if modellability.modellable
+                else modellability.reason
+            ),
+        )],
+    ).to_dict()
+    return {
+        "fixture": fixture,
+        "corpus": corpus,
+        "seasons": [seasons[0], seasons[-1]],
+        "extended": extended,
+        "model_version": model_version,
+        "note": (
+            "Cup ties are model forecasts only; they do not alter your active "
+            "Super 6 round."
+            + (
+                ""
+                if not extended
+                else " This corpus is wider than the one PHASE1_MODEL_V1 was "
+                "fitted and holdout-tested on, so treat it as a sanity check, "
+                "never as a Super 6 pick."
+            )
+        ),
     }
 
 
@@ -732,7 +839,11 @@ class Super6RequestHandler(BaseHTTPRequestHandler):
             "Content-Type", mimetypes.guess_type(path.name)[0] or "application/octet-stream"
         )
         self.send_header("Content-Length", str(len(body)))
-        self.send_header("Cache-Control", "no-cache")
+        # `no-cache` still let browsers reuse a stale script here, because
+        # nothing is served with a validator to revalidate against. The assets
+        # are read from disk per request anyway, so refuse storage outright
+        # rather than have an edited UI silently not take effect.
+        self.send_header("Cache-Control", "no-store")
         self.end_headers()
         self.wfile.write(body)
 
@@ -779,6 +890,8 @@ class Super6RequestHandler(BaseHTTPRequestHandler):
                 self._send_json(HTTPStatus.OK, import_opponent(payload, self.config))
             elif path == "/api/results":
                 self._send_json(HTTPStatus.OK, save_results(payload, self.config))
+            elif path == "/api/cup-prediction":
+                self._send_json(HTTPStatus.OK, cup_prediction(payload, self.config))
             else:
                 self.send_error(HTTPStatus.NOT_FOUND)
         except (OSError, ValueError, KeyError, json.JSONDecodeError) as exc:

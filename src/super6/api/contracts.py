@@ -139,6 +139,29 @@ class PredictionVersion(Contract):
 
 
 @dataclass(frozen=True)
+class Modellability(Contract):
+    """Whether the model can meaningfully forecast this fixture at all.
+
+    A team outside the training corpus receives the league-average prior,
+    which does not merely add uncertainty — it can make a lower-division
+    side favourite over a genuinely below-average team from the division
+    above. That is a different kind of statement from "low confidence",
+    so the UI needs to be able to refuse to show a pick rather than
+    display a confident-looking wrong one.
+
+    `modellable` is the whole verdict: a false value means withhold the
+    pick. It is a plain field rather than a derived property because only
+    declared fields survive `to_dict`, and a consumer that cannot see the
+    verdict cannot act on it.
+    """
+
+    modellable: bool = True
+    unknown_teams: list[str] = field(default_factory=list)
+    corpus: str = "E0+E1"
+    reason: str = ""
+
+
+@dataclass(frozen=True)
 class FixtureForecast(Contract):
     """§20's columns, with probability and confidence kept apart."""
 
@@ -150,6 +173,7 @@ class FixtureForecast(Contract):
     expected_points: float
     confidence: str               # HIGH | MEDIUM | LOW — never a number
     model_pick: str
+    modellability: Modellability = field(default_factory=Modellability)
     strategy_pick: str | None = None
     user_pick: str | None = None
     status: str = "SCHEDULED"

@@ -23,6 +23,7 @@ from ..round import Round
 from ..sources.consensus import Consensus
 from .contracts import (
     ArmPerformance,
+    Modellability,
     AvailabilityItem,
     AvailabilityState,
     FixtureForecast,
@@ -103,11 +104,31 @@ def build_availability_state(
     )
 
 
+def build_modellability(
+    home: str, away: str, known_teams: set[str], corpus: str = "E0+E1"
+) -> Modellability:
+    """Flag fixtures the model cannot meaningfully forecast."""
+    unknown = [t for t in (home, away) if t not in known_teams]
+    if not unknown:
+        return Modellability(modellable=True, corpus=corpus)
+    return Modellability(
+        modellable=False,
+        unknown_teams=unknown,
+        corpus=corpus,
+        reason=(
+            f"{', '.join(unknown)} not in the {corpus} training corpus; "
+            "an unknown team receives the league-average prior, which can "
+            "make it favourite over a genuinely below-average known team"
+        ),
+    )
+
+
 def build_fixture_forecast(
     recommendation,
     market: MarketState | None = None,
     availability: AvailabilityState | None = None,
     alternatives_count: int = 5,
+    modellability: Modellability | None = None,
 ) -> FixtureForecast:
     alternatives = [
         ScoreAlternative(
@@ -129,6 +150,7 @@ def build_fixture_forecast(
         expected_points=round(recommendation.ev, 3),
         confidence=recommendation.confidence,
         model_pick=recommendation.pick,
+        modellability=modellability or Modellability(),
         alternatives=alternatives,
         market=market,
         availability=availability,
@@ -141,6 +163,8 @@ def build_round_summary(
     markets: dict[tuple[str, str], MarketState] | None = None,
     availabilities: dict[tuple[str, str], AvailabilityState] | None = None,
     submission_state: str = "NOT_READY",
+    known_teams: set[str] | None = None,
+    corpus: str = "E0+E1",
 ) -> RoundSummary:
     markets = markets or {}
     availabilities = availabilities or {}
@@ -149,6 +173,11 @@ def build_round_summary(
             fixture,
             markets.get((fixture.home, fixture.away)),
             availabilities.get((fixture.home, fixture.away)),
+            modellability=(
+                build_modellability(fixture.home, fixture.away, known_teams, corpus)
+                if known_teams is not None
+                else None
+            ),
         )
         for fixture in recommendation.fixtures
     ]

@@ -59,6 +59,59 @@ def test_engine_runs_without_any_external_credentials(conn, router):
     assert result.knowledge_layer["enabled"] is False
 
 
+def test_engine_reports_every_fixture_modellable_when_no_corpus_is_supplied(conn, router):
+    """Silence about the corpus must not be read as a warning."""
+    result = engine.run_engine(conn, ROUND, router, now=NOW)
+    assert all(f.modellability.modellable for f in result.round_summary.fixtures)
+
+
+def test_engine_flags_fixtures_whose_teams_are_outside_the_corpus(conn, router):
+    result = engine.run_engine(
+        conn, ROUND, router, now=NOW,
+        known_teams={"Strong", "Weak"}, corpus="E0",
+    )
+    verdicts = {
+        (f.home_team, f.away_team): f.modellability
+        for f in result.round_summary.fixtures
+    }
+    assert verdicts[("Strong", "Weak")].modellable is True
+    unknown = verdicts[("Middling A", "Middling B")]
+    assert unknown.modellable is False
+    assert unknown.unknown_teams == ["Middling A", "Middling B"]
+    assert unknown.corpus == "E0"
+
+    report = engine.format_engine_report(result)
+    assert "NOT A TRUSTWORTHY FORECAST" in report
+    assert "Middling A v Middling B" in report
+
+
+def test_engine_does_not_leak_known_teams_into_the_knowledge_worker(
+    conn, router, monkeypatch
+):
+    """`known_teams` is a forecast concern. `run_engine` forwards its spare
+    kwargs to the research pass as HTTP request options, so a corpus set
+    arriving there would end up on an outbound request."""
+    from super6.knowledge import worker as knowledge_worker
+
+    seen = []
+
+    def fake_research(*args, **kwargs):
+        seen.append(kwargs)
+        return knowledge_worker.ResearchResult()
+
+    monkeypatch.setattr(knowledge_worker, "research", fake_research)
+    engine.run_engine(
+        conn, ROUND, router, now=NOW,
+        tavily_api_key="key", extractor=object(), run_knowledge=True,
+        known_teams={"Strong"}, corpus="E0", timeout=5,
+    )
+    assert seen, "the research pass did not run"
+    for kwargs in seen:
+        assert "known_teams" not in kwargs
+        assert "corpus" not in kwargs
+        assert kwargs["timeout"] == 5
+
+
 def test_engine_report_separates_four_layers(conn, router):
     report = engine.format_engine_report(
         engine.run_engine(conn, ROUND, router, now=NOW)

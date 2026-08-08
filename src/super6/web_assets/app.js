@@ -5,6 +5,7 @@ let countdownTimer;
 let roundTab = "predictions";
 let pendingRound;
 let activityFilter = "ALL";
+let cupForecast;
 
 // Football-Data crest IDs for the clubs in the supplied Super 6 round.
 // Unknown teams retain the accessible initials fallback inside teamBadge.
@@ -47,6 +48,22 @@ function teamBadge(team, size = "") {
 
 function effectivePick(fixture) {
   return fixture.user_pick || fixture.strategy_pick || fixture.pick;
+}
+
+// A team outside the training corpus gets the league-average prior, which is
+// not "low confidence" — it can rank a non-league side above a real one. The
+// UI withholds the pick rather than dressing that up as a recommendation.
+function isUnmodellable(fixture) {
+  return fixture.modellability?.modellable === false;
+}
+
+function unknownTeamList(modellability) {
+  const teams = modellability?.unknown_teams || [];
+  return teams.length === 1 ? `${teams[0]} is` : `${teams.join(" and ")} are`;
+}
+
+function modellabilityNote(modellability) {
+  return `${unknownTeamList(modellability)} outside the ${modellability?.corpus || "training"} corpus, so the model has no team strength to work from and falls back to the league average. That can rank the unknown side above a genuinely weaker known team, which is why no pick is shown.`;
 }
 
 function fixtureChange(index) {
@@ -98,6 +115,14 @@ function fixtureCard(fixture, index, compact = false) {
   const pick = effectivePick(fixture);
   const overridden = fixture.user_pick && fixture.user_pick !== fixture.pick;
   const change = fixtureChange(index);
+  if (isUnmodellable(fixture) && !fixture.user_pick) {
+    return `<button class="fixture-card unmodellable ${compact ? "compact" : ""}" data-fixture="${index}" aria-label="No recommendation for ${escapeHtml(fixture.home_team)} versus ${escapeHtml(fixture.away_team)}">
+      <div class="card-topline"><div class="teams"><span class="team-line">${teamBadge(fixture.home_team)}${escapeHtml(fixture.home_team)}</span><span class="team-line">${teamBadge(fixture.away_team)}${escapeHtml(fixture.away_team)}</span></div><span class="status-pill prohibited">NO PICK</span></div>
+      <div class="score no-pick" aria-label="No recommendation available">—</div>
+      <p class="unmodellable-note">${escapeHtml(modellabilityNote(fixture.modellability))}</p>
+      <div class="card-footer"><span class="card-link">See what the model returned</span><span aria-hidden="true">›</span></div>
+    </button>`;
+  }
   const changedCopy = change ? `<div class="change-note">Changed · ${escapeHtml(change.fields.map((field) => `${field.was} → ${field.now}`).join(" · "))}</div>` : "";
   return `<button class="fixture-card ${overridden ? "overridden" : ""} ${change ? "changed" : ""} ${compact ? "compact" : ""}" data-fixture="${index}" aria-label="View detail for ${escapeHtml(fixture.home_team)} versus ${escapeHtml(fixture.away_team)}">
     <div class="card-topline"><div class="teams"><span class="team-line">${teamBadge(fixture.home_team)}${escapeHtml(fixture.home_team)}</span><span class="team-line">${teamBadge(fixture.away_team)}${escapeHtml(fixture.away_team)}</span></div>${overridden ? '<span class="status-pill neutral">YOUR PICK</span>' : '<span class="versus">v</span>'}</div>
@@ -128,12 +153,15 @@ function homeView() {
   const [dataQuality, qualityCopy] = quality(round.fixtures);
   const changed = round.submission_state === "CHANGED_AFTER_SUBMISSION" || round.submission_state === "CHANGED_SINCE_REVIEW";
   const alerts = appData.alerts?.items || [];
+  const unmodellable = round.fixtures.filter(isUnmodellable);
+  const unmodellableBanner = unmodellable.length ? `<div class="change-alert danger"><strong>${unmodellable.length} fixture${unmodellable.length === 1 ? "" : "s"} cannot be modelled</strong> ${escapeHtml(unmodellable.map((fixture) => `${fixture.home_team} v ${fixture.away_team}`).join("; "))} — outside the ${escapeHtml(unmodellable[0].modellability.corpus)} training corpus. No pick is shown. The expected round score above still counts ${unmodellable.length === 1 ? "this fixture" : "these fixtures"}, so it is overstated.</div>` : "";
   return `${pageHeader(`Super 6 — Round ${round.round_number}`, "Your round, in one view.", `Deadline ${displayDate(round.deadline_at)}`, `<div class="monitor-card"><span class="monitor-dot"></span><span>Monitoring active</span><small>Forecast refreshed ${displayDate(round.meta.generated_at)}</small></div>`)}
     <section class="command-strip" aria-label="Round status"><div class="deadline-card"><span class="eyebrow">Time to deadline</span><strong id="countdown">—</strong><span>${displayDate(round.deadline_at)}</span></div><div class="round-kpi"><span>Expected round score <button class="info" data-info="ev" aria-label="Explain expected points">?</button></span><strong>${round.expected_round_score.toFixed(2)}</strong><small>Across all six picks</small></div><div class="round-kpi submission-kpi"><span>Entry status</span><strong>${submissionState}</strong><small>${submissionDetail}</small></div></section>
     ${leagueSummary()}
     ${alerts.length ? `<button class="alert-strip" data-page="activity"><strong>${alerts.length} material update${alerts.length === 1 ? "" : "s"}</strong><span>${escapeHtml(alerts[0].summary)}</span><b>Review ›</b></button>` : ""}
     <section class="section-heading"><div><p class="eyebrow">Recommended picks</p><h2>Six scores to enter</h2></div><div class="button-row"><button class="button secondary-button" data-action="edit-picks">Edit picks</button><button class="button secondary-button" data-action="copy-picks">Copy picks</button></div></section>
     ${changed ? `<div class="change-alert"><strong>Action needed</strong> ${escapeHtml(submissionDetail)}. This app does not update Super 6 for you.</div>` : ""}
+    ${unmodellableBanner}
     <div class="fixture-grid">${round.fixtures.map((fixture, index) => fixtureCard(fixture, index)).join("")}</div>
     <section class="lower-grid"><article class="golden-card"><p class="eyebrow">Golden Goal</p><div class="golden-value">${round.golden_goal.minute}</div><p>Sky minute ${round.golden_goal.minute} = goal between ${round.golden_goal.sky_interval}.</p><button class="text-button" data-action="golden-detail">Why this minute?</button></article><article class="action-card"><p class="eyebrow">Next action</p><h2>${round.submission_state === "MARKED_AS_SUBMITTED" ? "Your picks are recorded" : "Ready to enter?"}</h2><p>${round.submission_state === "MARKED_AS_SUBMITTED" ? "You told us these scores were entered in Super 6. Any later recommendation change will be clearly flagged." : "Enter these predictions in Super 6 yourself, then record that action here."}</p><button class="button" data-action="mark-entered">${round.submission_state === "MARKED_AS_SUBMITTED" ? "Update entered picks" : "Mark as entered in Super 6"}</button></article><article class="quality-card"><p class="eyebrow">Data quality</p><h2>${dataQuality}</h2><p>${qualityCopy}</p><button class="text-button" data-page="health">View source status</button></article></section>`;
 }
@@ -160,6 +188,25 @@ function roundView() {
   else content = `<div class="fixture-grid">${round.fixtures.map((fixture, index) => fixtureCard(fixture, index)).join("")}</div>`;
   return `${pageHeader(`Round ${round.round_number}`, "Round control", "See every pick, evidence item, change, setup detail, and result in one place.")}
   <div class="tabs" role="tablist">${tabs.map((tab) => `<button class="tab ${roundTab === tab ? "active" : ""}" data-round-tab="${tab}" role="tab" aria-selected="${roundTab === tab}">${titleCase(tab)}</button>`).join("")}</div><section class="tab-panel">${content}</section>`;
+}
+
+function cupResultCard(result) {
+  const prediction = result.fixture;
+  const unmodellable = isUnmodellable(prediction);
+  const provenance = `<p class="subtitle">Corpus ${escapeHtml(result.corpus)} · seasons ${result.seasons[0]}–${result.seasons[1]} · model ${escapeHtml(result.model_version)}</p>`;
+  if (unmodellable) {
+    const retry = result.extended ? "" : `<div class="form-actions"><button class="button secondary-button" data-action="cup-extended">Retry with lower divisions</button></div>`;
+    return `<section class="form-card cup-result"><p class="eyebrow">No recommendation</p><div class="detail-teams"><span>${teamBadge(prediction.home_team, "large")}${escapeHtml(prediction.home_team)}</span><b>v</b><span>${teamBadge(prediction.away_team, "large")}${escapeHtml(prediction.away_team)}</span></div><div class="detail-score no-pick">—</div><section class="danger-card"><h3>The model cannot forecast this tie.</h3><p>${escapeHtml(modellabilityNote(prediction.modellability))}</p></section>${provenance}${retry}<details class="disclosure"><summary>Show the raw model output anyway</summary><p class="subtitle">Kept visible so the failure can be checked. That does not make it usable.</p><div class="detail-grid"><div class="detail-metric"><span>Returned score</span><strong>${escapeHtml(prediction.pick)}</strong></div><div class="detail-metric"><span>Result probability</span><strong>${percent(prediction.result_probability)}</strong></div><div class="detail-metric"><span>Expected points</span><strong>${prediction.expected_points.toFixed(2)}</strong></div></div></details></section>`;
+  }
+  const alternatives = prediction.alternatives.map((alternative) => `<tr class="${alternative.is_recommendation ? "recommended" : ""}"><td>${escapeHtml(alternative.score)}</td><td>${percent(alternative.score_probability)}</td><td>${alternative.expected_points.toFixed(2)}</td></tr>`).join("");
+  return `<section class="form-card cup-result"><p class="eyebrow">Model forecast</p><div class="detail-teams"><span>${teamBadge(prediction.home_team, "large")}${escapeHtml(prediction.home_team)}</span><b>v</b><span>${teamBadge(prediction.away_team, "large")}${escapeHtml(prediction.away_team)}</span></div><div class="detail-score">${escapeHtml(prediction.pick.replace("-", " – "))}</div><div class="detail-grid"><div class="detail-metric"><span>Result probability</span><strong>${percent(prediction.result_probability)}</strong></div><div class="detail-metric"><span>Exact-score probability</span><strong>${percent(prediction.score_probability)}</strong></div><div class="detail-metric"><span>Expected points</span><strong>${prediction.expected_points.toFixed(2)}</strong></div><div class="detail-metric"><span>Confidence</span><strong class="confidence ${prediction.confidence.toLowerCase()}">${prediction.confidence}</strong></div></div>${provenance}<table class="cup-alternatives"><thead><tr><th>Alternative</th><th>Score probability</th><th>EV</th></tr></thead><tbody>${alternatives}</tbody></table><p class="subtitle">${escapeHtml(result.note)}</p></section>`;
+}
+
+function cupView() {
+  const teams = (appData.teams || []).map((team) => `<option value="${escapeHtml(team)}"></option>`).join("");
+  const result = cupForecast;
+  const prediction = result ? result.fixture : null;
+  return `${pageHeader("One-off forecast", "Cup Match", "Choose any home and away side. This forecast is separate from your active Super 6 round.")}<section class="split-layout"><section class="form-card"><p class="eyebrow">Cup tie</p><h2>Predict a match</h2><p class="subtitle">Start typing to pick a team the model knows. A team outside the corpus returns no forecast rather than a misleading one.</p><form id="cup-form"><datalist id="known-teams">${teams}</datalist><label>Home team<input required name="home" maxlength="80" list="known-teams" placeholder="e.g. Stoke" value="${escapeHtml(prediction?.home_team || "")}"></label><label>Away team<input required name="away" maxlength="80" list="known-teams" placeholder="e.g. Oldham" value="${escapeHtml(prediction?.away_team || "")}"></label><label class="toggle-row"><span>Include League One, League Two &amp; National League</span><input type="checkbox" name="extended" ${result?.extended ? "checked" : ""}><i></i></label><p class="subtitle">The wider corpus changes the cross-division fallback, so it is no longer the frozen PHASE1_MODEL_V1. Use it for cup-tie sanity checks, never for Super 6 picks.</p><div class="form-actions"><button class="button" type="submit">Get cup prediction</button></div></form></section>${result ? cupResultCard(result) : ""}</section>`;
 }
 
 function roundSetupView() {
@@ -243,7 +290,7 @@ function moreView() {
 function renderPage() {
   if (!appData) return;
   const page = (location.hash || "#home").slice(1).split("?")[0] || "home";
-  const views = { home: homeView, round: roundView, league: leagueView, opponents: opponentsView, performance: performanceView, activity: activityView, model: modelView, sources: sourcesView, health: healthView, settings: settingsView, more: moreView };
+  const views = { home: homeView, round: roundView, cup: cupView, league: leagueView, opponents: opponentsView, performance: performanceView, activity: activityView, model: modelView, sources: sourcesView, health: healthView, settings: settingsView, more: moreView };
   $("#app").innerHTML = (views[page] || homeView)();
   document.querySelectorAll("[data-page-link]").forEach((link) => link.classList.toggle("active", link.dataset.pageLink === page));
   updateCountdown();
@@ -263,7 +310,17 @@ function openFixture(index) {
   const evidence = fixture.availability?.items?.length ? fixture.availability.items.map((item) => `<li>${escapeHtml(item.player_name)} — ${escapeHtml(titleCase(item.status))}; ${escapeHtml(item.certainty)} via ${escapeHtml(item.source)}.</li>`).join("") : `<li>No individual team-news item is recorded for this fixture.</li>`;
   const history = fixture.history?.length ? fixture.history.map((version) => `<li>${escapeHtml(displayDate(version.recorded_at))}: ${escapeHtml(version.pick)} — ${escapeHtml(version.reason || "Forecast recorded")}</li>`).join("") : `<li>No earlier forecast version is persisted yet.</li>`;
   const [home, away] = effectivePick(fixture).split("-");
-  $("#fixture-detail").innerHTML = `<div class="detail-header"><p class="eyebrow">Fixture recommendation</p><div class="detail-teams"><span>${teamBadge(fixture.home_team, "large")}${escapeHtml(fixture.home_team)}</span><b>v</b><span>${teamBadge(fixture.away_team, "large")}${escapeHtml(fixture.away_team)}</span></div><div class="detail-score">${escapeHtml(effectivePick(fixture).replace("-", " – "))}</div><p class="subtitle">Model ${fixture.pick}${fixture.user_pick ? ` · your pick ${fixture.user_pick}` : ""}</p></div><div class="detail-grid"><div class="detail-metric"><span>Result probability</span><strong>${percent(fixture.result_probability)}</strong></div><div class="detail-metric"><span>Exact-score probability</span><strong>${percent(fixture.score_probability)}</strong></div><div class="detail-metric"><span>Expected Super 6 points</span><strong>${fixture.expected_points.toFixed(2)}</strong></div><div class="detail-metric"><span>Confidence</span><strong class="confidence ${fixture.confidence.toLowerCase()}">${fixture.confidence}</strong></div></div><section class="why-card"><p class="eyebrow">Why ${fixture.pick}?</p><h3>${escapeHtml(reason.result)} is the highest-value result.</h3><p>This score produces the highest expected Super 6 score from the current probability distribution. It is a recommendation, not a certainty.</p><ul><li>${escapeHtml(reason.market)}</li><li>Data quality: ${escapeHtml(fixture.availability?.data_quality || "LIMITED")}.</li><li>Confidence is separate from both probability figures.</li></ul></section><section class="alternatives"><p class="eyebrow">Meaningful alternatives</p><table><thead><tr><th>Score</th><th>Score probability</th><th>Super 6 EV</th></tr></thead><tbody>${alternatives}</tbody></table></section><details class="disclosure"><summary>Evidence &amp; prediction history</summary><h3>Current evidence</h3><ul>${evidence}</ul><h3>Prediction history</h3><ul>${history}</ul></details><form id="override-form" data-index="${index}" class="inline-score-form"><p class="eyebrow">Your pick</p><label>Home goals<input aria-label="${escapeHtml(fixture.home_team)} goals" name="home" min="0" max="20" type="number" value="${home}"></label><span>–</span><label>Away goals<input aria-label="${escapeHtml(fixture.away_team)} goals" name="away" min="0" max="20" type="number" value="${away}"></label><button class="button" type="submit">Use this score</button></form>`;
+  const unmodellable = isUnmodellable(fixture);
+  const unmodellableBanner = unmodellable
+    ? `<section class="danger-card"><p class="eyebrow">No recommendation</p><h3>The model cannot forecast this fixture.</h3><p>${escapeHtml(modellabilityNote(fixture.modellability))}</p><p class="subtitle">The figures below are raw model output, kept visible so the failure can be checked. That does not make them usable.</p></section>`
+    : "";
+  // Leading with the scoreline would present the fallback as a recommendation,
+  // which is the exact failure the banner underneath is there to prevent.
+  const headlineScore = unmodellable ? "—" : escapeHtml(effectivePick(fixture).replace("-", " – "));
+  const headlineNote = unmodellable
+    ? `Model returned ${escapeHtml(fixture.pick)} from the league-average prior${fixture.user_pick ? ` · your pick ${escapeHtml(fixture.user_pick)}` : ""}`
+    : `Model ${escapeHtml(fixture.pick)}${fixture.user_pick ? ` · your pick ${escapeHtml(fixture.user_pick)}` : ""}`;
+  $("#fixture-detail").innerHTML = `<div class="detail-header"><p class="eyebrow">Fixture recommendation</p><div class="detail-teams"><span>${teamBadge(fixture.home_team, "large")}${escapeHtml(fixture.home_team)}</span><b>v</b><span>${teamBadge(fixture.away_team, "large")}${escapeHtml(fixture.away_team)}</span></div><div class="detail-score ${unmodellable ? "no-pick" : ""}">${headlineScore}</div><p class="subtitle">${headlineNote}</p></div>${unmodellableBanner}<div class="detail-grid"><div class="detail-metric"><span>Result probability</span><strong>${percent(fixture.result_probability)}</strong></div><div class="detail-metric"><span>Exact-score probability</span><strong>${percent(fixture.score_probability)}</strong></div><div class="detail-metric"><span>Expected Super 6 points</span><strong>${fixture.expected_points.toFixed(2)}</strong></div><div class="detail-metric"><span>Confidence</span><strong class="confidence ${unmodellable ? "" : fixture.confidence.toLowerCase()}">${unmodellable ? `${fixture.confidence} — of the wrong distribution` : fixture.confidence}</strong></div></div><section class="why-card"><p class="eyebrow">${unmodellable ? `Why no pick?` : `Why ${fixture.pick}?`}</p><h3>${unmodellable ? "The distribution below is not about these two teams." : `${escapeHtml(reason.result)} is the highest-value result.`}</h3><p>${unmodellable ? "It is the highest-expected-value score under a distribution built from a league-average stand-in, so it describes an average team, not the one actually playing." : "This score produces the highest expected Super 6 score from the current probability distribution. It is a recommendation, not a certainty."}</p><ul><li>${escapeHtml(reason.market)}</li><li>Data quality: ${escapeHtml(fixture.availability?.data_quality || "LIMITED")}.</li><li>Confidence is separate from both probability figures.</li></ul></section><section class="alternatives"><p class="eyebrow">Meaningful alternatives</p><table><thead><tr><th>Score</th><th>Score probability</th><th>Super 6 EV</th></tr></thead><tbody>${alternatives}</tbody></table></section><details class="disclosure"><summary>Evidence &amp; prediction history</summary><h3>Current evidence</h3><ul>${evidence}</ul><h3>Prediction history</h3><ul>${history}</ul></details><form id="override-form" data-index="${index}" class="inline-score-form"><p class="eyebrow">Your pick</p><label>Home goals<input aria-label="${escapeHtml(fixture.home_team)} goals" name="home" min="0" max="20" type="number" value="${home}"></label><span>–</span><label>Away goals<input aria-label="${escapeHtml(fixture.away_team)} goals" name="away" min="0" max="20" type="number" value="${away}"></label><button class="button" type="submit">Use this score</button></form>`;
   $("#fixture-dialog").showModal();
 }
 
@@ -274,8 +331,10 @@ function openInfo(title, content) {
 
 function openEntryDialog() {
   const round = appData.round;
-  const rows = round.fixtures.map((fixture) => `<div><span>${shortTeam(fixture.home_team)} ${escapeHtml(fixture.home_team)} v ${escapeHtml(fixture.away_team)} ${shortTeam(fixture.away_team)}</span><strong>${effectivePick(fixture)}</strong></div>`).join("");
-  $("#entry-detail").innerHTML = `<p class="eyebrow">Manual entry confirmation</p><h2>Have you entered these in Super 6?</h2><p class="subtitle">This only records your confirmation. It does not submit or update anything on Sky.</p><div class="entry-list">${rows}<div><span>Golden Goal</span><strong>Minute ${round.golden_goal.minute}</strong></div></div><div class="dialog-actions"><button class="plain-button" data-close="entry-dialog">Not yet</button><button class="button" id="confirm-entered">Yes — mark as entered</button></div>`;
+  const rows = round.fixtures.map((fixture) => `<div><span>${shortTeam(fixture.home_team)} ${escapeHtml(fixture.home_team)} v ${escapeHtml(fixture.away_team)} ${shortTeam(fixture.away_team)}</span><strong>${effectivePick(fixture)}</strong>${isUnmodellable(fixture) ? '<em class="entry-flag">not modelled</em>' : ""}</div>`).join("");
+  const unmodellable = round.fixtures.filter(isUnmodellable);
+  const unmodellableWarning = unmodellable.length ? `<section class="danger-card"><h3>${unmodellable.length} fixture${unmodellable.length === 1 ? " has" : "s have"} no model recommendation.</h3><p>${escapeHtml(unmodellable.map((fixture) => `${fixture.home_team} v ${fixture.away_team}`).join("; "))} — the score shown is raw model output for a team outside the training corpus, not a recommendation. Choose it yourself before recording this entry.</p></section>` : "";
+  $("#entry-detail").innerHTML = `<p class="eyebrow">Manual entry confirmation</p><h2>Have you entered these in Super 6?</h2><p class="subtitle">This only records your confirmation. It does not submit or update anything on Sky.</p>${unmodellableWarning}<div class="entry-list">${rows}<div><span>Golden Goal</span><strong>Minute ${round.golden_goal.minute}</strong></div></div><div class="dialog-actions"><button class="plain-button" data-close="entry-dialog">Not yet</button><button class="button" id="confirm-entered">Yes — mark as entered</button></div>`;
   $("#entry-dialog").showModal();
 }
 
@@ -344,6 +403,12 @@ document.addEventListener("click", async (event) => {
   if (activityTab) { activityFilter = activityTab.dataset.activityFilter; renderPage(); }
   const action = event.target.closest("[data-action]")?.dataset.action;
   if (action === "mark-entered") openEntryDialog();
+  if (action === "cup-extended" && cupForecast) {
+    try {
+      cupForecast = await post("/api/cup-prediction", { home: cupForecast.fixture.home_team, away: cupForecast.fixture.away_team, extended: true });
+      renderPage();
+    } catch (error) { toast(error.message); }
+  }
   if (action === "copy-picks") await copyPicks();
   if (action === "edit-picks") { location.hash = "#round"; roundTab = "predictions"; }
   if (action === "golden-detail") { const distribution = appData.round.golden_goal.distribution; openInfo("Golden Goal", `${appData.round.golden_goal.rationale}${distribution ? ` Most likely intervals: ${Object.entries(distribution.interval_probabilities).map(([label, value]) => `${label} ${percent(value)}`).join(", ")}. No goal: ${percent(distribution.no_goal_probability)}.` : ""}`); }
@@ -366,6 +431,9 @@ document.addEventListener("submit", async (event) => {
       const picks = appData.round.fixtures.map(effectivePick);
       picks[Number(form.dataset.index)] = `${form.elements.home.value}-${form.elements.away.value}`;
       await saveOverrides(picks); $("#fixture-dialog").close(); toast("Your pick is saved separately from the model recommendation.");
+    } else if (form.id === "cup-form") {
+      cupForecast = await post("/api/cup-prediction", { home: form.elements.home.value, away: form.elements.away.value, extended: form.elements.extended.checked });
+      renderPage();
     } else if (form.id === "round-form") {
       const fixtures = Array.from({ length: 6 }, (_, index) => ({ home: form.elements[`home_${index}`].value.trim(), away: form.elements[`away_${index}`].value.trim() }));
       openRoundConfirm({ round_number: Number(form.elements.round_number.value), deadline_at: `${form.elements.deadline_at.value}:00`, fixtures });

@@ -66,10 +66,20 @@ def run_engine(
     run_knowledge: bool = False,
     season: int = 2026,
     submission_path: Path | None = None,
+    known_teams: set[str] | None = None,
+    corpus: str = "E0+E1",
     **kwargs,
 ) -> EngineRunResult:
     """One full engine pass. Every external step degrades to 'absent'
-    rather than failing the run."""
+    rather than failing the run.
+
+    `known_teams` is the set of teams the router was actually fitted on.
+    Supplying it lets each fixture carry a modellability verdict, so the
+    UI can refuse to show a pick for a team the model has never seen
+    rather than presenting the league-average prior as a forecast. Omit
+    it and every fixture is reported as modellable, which is only honest
+    when the caller already knows the round is inside the corpus.
+    """
     now = now or utcnow()
     notes: list[str] = []
     all_events: list[ev.Event] = []
@@ -191,6 +201,8 @@ def run_engine(
     summary = service.build_round_summary(
         rnd, recommendation, markets, availabilities,
         submission_state=submission_record.state,
+        known_teams=known_teams,
+        corpus=corpus,
     )
     return EngineRunResult(
         round_summary=summary,
@@ -237,6 +249,19 @@ def format_engine_report(result: EngineRunResult) -> str:
         )
     lines.append(f"Expected round score: {summary.expected_round_score:.2f}")
     lines.append(f"Submission state: {summary.submission_state}")
+
+    unmodellable = [f for f in summary.fixtures if not f.modellability.modellable]
+    if unmodellable:
+        lines += ["", "!! NOT A TRUSTWORTHY FORECAST — outside the training corpus"]
+        for fixture in unmodellable:
+            lines.append(
+                f"  {fixture.home_team} v {fixture.away_team}: "
+                f"{fixture.modellability.reason}"
+            )
+        lines.append(
+            "  The pick above is what the model returns, not what it knows. "
+            "Do not enter it."
+        )
 
     lines += ["", "=== MARKET INTELLIGENCE ==="]
     lines.append(

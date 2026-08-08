@@ -106,7 +106,12 @@ def cmd_forecast(args) -> int:
     from .model import golden_goal
     from .recommend import recommend_fixture
 
-    matches = load_matches(Path(args.data), _season_range(args), tuple(args.divisions))
+    divisions = (
+        tuple(DEFAULT_DATA.extended_divisions)
+        if args.extended
+        else tuple(args.divisions)
+    )
+    matches = load_matches(Path(args.data), _season_range(args), divisions)
     known = set(matches["home_team"]) | set(matches["away_team"])
 
     unknown = [t for t in (args.home, args.away) if t not in known]
@@ -119,6 +124,13 @@ def cmd_forecast(args) -> int:
     )
 
     print(f"\n{args.home.upper()} v {args.away.upper()}\n")
+    if args.extended:
+        print(
+            "  Corpus: EXTENDED (E0-E3 + National League).\n"
+            "  This is NOT PHASE1_MODEL_V1 — that model was fitted and\n"
+            "  holdout-tested on Premier League + Championship only. Use\n"
+            "  this for cup-tie sanity checks, never for Super 6 picks.\n"
+        )
     if unknown:
         print("  !! WARNING — NOT A TRUSTWORTHY FORECAST")
         for team in unknown:
@@ -422,6 +434,8 @@ def cmd_engine_run(args) -> int:
             extractor=extractor,
             extractor_config=config,
             run_knowledge=args.with_knowledge,
+            known_teams=set(matches["home_team"]) | set(matches["away_team"]),
+            corpus="+".join(args.divisions),
         )
 
     print(format_engine_report(result))
@@ -1095,6 +1109,12 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument(
         "--odds", nargs=3, type=float, metavar=("H", "D", "A"),
         help="decimal odds, to blend the market in as the real engine would",
+    )
+    p.add_argument(
+        "--extended", action="store_true",
+        help="include League One/Two and the National League so cup ties "
+             "against lower-division sides can be modelled. NOT "
+             "PHASE1_MODEL_V1 — the frozen model's corpus is E0+E1 only.",
     )
     p.set_defaults(func=cmd_forecast)
 
