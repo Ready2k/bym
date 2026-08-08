@@ -101,7 +101,42 @@ def build_availability_state(
         data_quality=report.state,
         feature_completeness=completeness_mod.completeness_factor(report),
         items=items,
+        lineup_surprise=_lineup_surprise(lineups),
     )
+
+
+def _lineup_surprise(lineups) -> str | None:
+    """Describe a confirmed XI that departs materially from the expected one.
+
+    `availability/ingest` already raises LINEUP_SURPRISE as an *event* when
+    this happens, but events are a feed — a fixture opened after the fact
+    would show nothing. The read model needs the standing fact too, so it
+    is recomputed here from the same stored lineups with the same rule
+    rather than mirrored from the feed.
+
+    Still `NONE DIRECTLY` on the forecast: this describes evidence, and no
+    amount of it moves a frozen model.
+    """
+    from ..availability.lineups import compare_lineups
+
+    latest: dict[tuple[str, str], object] = {}
+    for lineup in lineups:  # store returns them ordered by observed_at
+        latest[(lineup.team, lineup.kind)] = lineup
+
+    descriptions = []
+    for team, kind in list(latest):
+        if kind != LineupKind.CONFIRMED.value:
+            continue
+        expected = latest.get((team, LineupKind.EXPECTED.value))
+        if expected is None:
+            continue
+        try:
+            diff = compare_lineups(expected, latest[(team, kind)])
+        except ValueError:
+            continue
+        if diff.material:
+            descriptions.append(f"{team}: {diff.describe()}")
+    return "; ".join(descriptions) or None
 
 
 def build_modellability(
@@ -240,6 +275,7 @@ def build_system_health(
     ollama_health=None,
     extractor_config=None,
     schema_version: int = 0,
+    last_forecast_at: str | None = None,
 ) -> SystemHealth:
     from ..sources import api_football, quota as quota_mod, tavily
     from ..sources.odds_api import QUOTA as ODDS_QUOTA
@@ -263,14 +299,19 @@ def build_system_health(
         )
 
     pending = 0
+    next_check = None
     if conn is not None:
         try:
             row = conn.execute(
-                "SELECT COUNT(*) c FROM jobs WHERE status = 'PENDING'"
+                "SELECT COUNT(*) c, MIN(next_run_at) next_at "
+                "FROM jobs WHERE status = 'PENDING'"
             ).fetchone()
             pending = int(row["c"])
+            # Absent when nothing is scheduled, so the UI can say "not
+            # monitoring" instead of implying a watch that does not exist.
+            next_check = row["next_at"] if pending else None
         except sqlite3.Error:
-            pending = 0
+            pending, next_check = 0, None
 
     warnings = []
     for source in sources:
@@ -282,6 +323,8 @@ def build_system_health(
     return SystemHealth(
         sources=sources,
         scheduler_jobs_pending=pending,
+        last_forecast_at=last_forecast_at,
+        next_scheduled_check=next_check,
         extractor=(
             "OllamaClaimExtractor"
             if extractor_config and extractor_config.kind == "ollama"

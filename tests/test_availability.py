@@ -280,3 +280,52 @@ def test_completeness_stays_categorical():
     """No 83.7 confidence units."""
     report = completeness.assess("Chelsea", "Newcastle", [], has_market=True)
     assert completeness.completeness_factor(report) in {"HIGH", "MEDIUM", "LOW"}
+
+
+def test_read_model_carries_the_lineup_surprise_as_standing_fact(conn):
+    """LINEUP_SURPRISE is raised as an event, but a fixture opened later
+    would show nothing — the read model has to hold the fact too."""
+    from super6.api import service
+
+    expected = lineup(
+        LineupKind.EXPECTED,
+        ["Palmer", "Jackson", "Caicedo", "James", "Colwill"],
+        confidence="MEDIUM",
+    )
+    confirmed = lineup(
+        LineupKind.CONFIRMED,
+        ["Palmer", "Mudryk", "Chalobah", "Disasi", "Badiashile"],
+        minutes=60,
+    )
+    ingest.ingest_lineup(conn, expected, now=NOW)
+    ingest.ingest_lineup(conn, confirmed, now=NOW + timedelta(minutes=60))
+
+    state = service.build_availability_state(conn, "Chelsea", "Newcastle", has_market=True)
+    assert state.lineup_surprise is not None
+    assert "Chelsea" in state.lineup_surprise
+    # Evidence never moves a frozen model, however surprising it is.
+    assert state.quantitative_impact == "NONE DIRECTLY"
+
+
+def test_no_lineup_surprise_when_the_confirmed_xi_matches(conn):
+    from super6.api import service
+
+    players = ["Palmer", "Jackson", "Caicedo", "James", "Colwill"]
+    ingest.ingest_lineup(conn, lineup(LineupKind.EXPECTED, players, confidence="HIGH"), now=NOW)
+    ingest.ingest_lineup(
+        conn, lineup(LineupKind.CONFIRMED, players, minutes=60),
+        now=NOW + timedelta(minutes=60),
+    )
+    state = service.build_availability_state(conn, "Chelsea", "Newcastle", has_market=True)
+    assert state.lineup_surprise is None
+
+
+def test_no_lineup_surprise_without_an_expected_lineup_to_compare(conn):
+    """A confirmed XI alone is not a surprise — there is nothing to differ from."""
+    from super6.api import service
+
+    ingest.ingest_lineup(
+        conn, lineup(LineupKind.CONFIRMED, ["Palmer", "Jackson"], minutes=60), now=NOW
+    )
+    state = service.build_availability_state(conn, "Chelsea", "Newcastle", has_market=True)
+    assert state.lineup_surprise is None

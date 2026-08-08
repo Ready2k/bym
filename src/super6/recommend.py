@@ -37,6 +37,16 @@ class FixtureRecommendation:
     ev: float
     confidence: str
     matrix: ScoreMatrix
+    # The matrix *before* any market blend. §33's divergence check compares
+    # the model's own opinion against the market, so it must not be handed
+    # a matrix the market has already been folded into — that would compare
+    # the market with itself and report agreement by construction. Equal to
+    # `matrix` when no odds were supplied.
+    raw_matrix: ScoreMatrix | None = None
+
+    @property
+    def model_only_matrix(self) -> ScoreMatrix:
+        return self.raw_matrix if self.raw_matrix is not None else self.matrix
 
     @property
     def pick(self) -> str:
@@ -82,7 +92,7 @@ def recommend_fixture(
     odds: tuple[float, float, float] | None = None,
 ) -> FixtureRecommendation:
     lam_h, lam_a = params.lambdas(home, away, cfg)
-    m = score_matrix(lam_h, lam_a, params.rho, cfg)
+    m = raw = score_matrix(lam_h, lam_a, params.rho, cfg)
     if odds is not None and cfg.market_blend_weight is not None:
         mh, md, ma = market.implied_result_probs(*odds)
         m = market.blend_matrix(m, mh, md, ma, cfg.market_blend_weight)
@@ -99,6 +109,7 @@ def recommend_fixture(
         ev=m.ev(ph, pa),
         confidence=confidence_v1(p_result, p_score, cfg),
         matrix=m,
+        raw_matrix=raw,
     )
 
 

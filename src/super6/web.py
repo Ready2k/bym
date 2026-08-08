@@ -252,6 +252,7 @@ def dashboard_payload(config: WebConfig) -> dict:
             ollama_health=ollama_health,
             extractor_config=extractor_config,
             schema_version=db.schema_version(conn),
+            last_forecast_at=generated_at,
         )
 
     picks = [fixture.pick for fixture in result.round_summary.fixtures]
@@ -270,9 +271,20 @@ def dashboard_payload(config: WebConfig) -> dict:
         season, rnd.round_number, picks, rnd.deadline_at, path=config.submissions_path
     )
     summary = result.round_summary.to_dict()
+    # The only postponement signal this system has is the user recording a
+    # fixture VOID; nothing polls for it. So status is derived from that
+    # and left SCHEDULED otherwise, rather than implying a fixture-state
+    # feed that does not exist.
+    recorded_results = ui_state["results"].get(_round_key(rnd), [])
     for index, fixture in enumerate(summary["fixtures"]):
         fixture["strategy_pick"] = fixture["pick"]
         fixture["user_pick"] = override_picks.get(str(index))
+        if index < len(recorded_results):
+            recorded = recorded_results[index]
+            if recorded is None:
+                fixture["status"] = "VOID"
+            elif recorded:
+                fixture["status"] = "RESULTED"
     summary["submission_state"] = record.state
     summary["submission"] = {
         "submitted_picks": record.submitted_picks,

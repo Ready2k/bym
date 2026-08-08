@@ -203,3 +203,33 @@ def test_contracts_are_immutable(recommendation):
     summary = service.build_round_summary(ROUND, recommendation)
     with pytest.raises(Exception):
         summary.round_number = 99
+
+
+def test_system_health_reports_no_scheduled_check_when_nothing_is_scheduled(conn):
+    """The UI states "monitoring active" from this field. With no pending
+    job there is no monitoring, and the contract must not imply one."""
+    health = service.build_system_health(conn)
+    assert health.scheduler_jobs_pending == 0
+    assert health.next_scheduled_check is None
+
+
+def test_system_health_surfaces_the_next_scheduled_check(conn):
+    from datetime import datetime, timedelta, timezone
+
+    from super6 import scheduler
+
+    deadline = datetime(2026, 8, 15, 14, 0, tzinfo=timezone.utc)
+    scheduler.schedule_all_layers(
+        conn, 14, "rounds/example_round.json", deadline,
+        first_run_at=deadline - timedelta(days=2),
+    )
+    health = service.build_system_health(conn)
+    assert health.scheduler_jobs_pending > 0
+    assert health.next_scheduled_check is not None
+
+
+def test_system_health_carries_the_forecast_timestamp_it_is_given(conn):
+    health = service.build_system_health(conn, last_forecast_at="2026-08-08T12:00:00+00:00")
+    assert health.last_forecast_at == "2026-08-08T12:00:00+00:00"
+    # Never invented when the caller does not supply one.
+    assert service.build_system_health(conn).last_forecast_at is None
