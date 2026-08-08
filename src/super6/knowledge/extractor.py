@@ -149,6 +149,40 @@ def looks_like_injected_instruction(claim: CandidateClaim) -> bool:
     return any(marker in text for marker in INJECTION_MARKERS)
 
 
+def is_incomplete(claim: CandidateClaim) -> tuple[bool, str]:
+    """Whether a claim lacks the fields that give it meaning.
+
+    Found in live testing: llama3.1:8b filled only the JSON-schema
+    `required` fields and left player_name, availability and certainty
+    null — producing claims that pass every other check while saying
+    nothing. A claim with no subject is not a claim.
+    """
+    if claim.claim_type == ClaimType.AVAILABILITY.value:
+        missing = [
+            name
+            for name, value in (
+                ("player_name", claim.player_name),
+                ("availability", claim.availability),
+                ("certainty", claim.certainty),
+            )
+            if not value
+        ]
+        if missing:
+            return True, f"availability claim missing {', '.join(missing)}"
+    elif claim.claim_type == ClaimType.EXPECTED_LINEUP.value:
+        missing = [
+            name
+            for name, value in (
+                ("player_name", claim.player_name),
+                ("expected_role", claim.expected_role),
+            )
+            if not value
+        ]
+        if missing:
+            return True, f"expected-lineup claim missing {', '.join(missing)}"
+    return False, ""
+
+
 def is_unsupported_inference(claim: CandidateClaim) -> bool:
     """Past-tense-only evidence cannot support a present availability claim.
 
@@ -220,6 +254,13 @@ def validate(
                 "absence of evidence cannot become a positive availability "
                 "claim (§4.5)"
             )
+            rejected.append(claim)
+            continue
+
+        incomplete, why = is_incomplete(claim)
+        if incomplete:
+            claim.verdict = ClaimVerdict.REJECTED.value
+            claim.rejection_reason = why
             rejected.append(claim)
             continue
 

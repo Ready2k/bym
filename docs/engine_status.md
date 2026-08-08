@@ -27,7 +27,7 @@ An adapter existing is **not** "live".
 | Submission state (§46) | BUILT, TESTED OFFLINE, ACTIVE | drift detection after entry |
 | Availability intelligence | BUILT, TESTED OFFLINE | no live feed yet |
 | Knowledge agent | BUILT, TESTED OFFLINE | **SHADOW** by default |
-| Ollama extractor | BUILT, TESTED OFFLINE | host `Desktop-HomePC.local` reachable but port 11434 firewalled |
+| Ollama extractor | BUILT, TESTED OFFLINE, **LIVE VERIFIED** | `llama3.1:8b` on Desktop-HomePC.local; extraction confirmed |
 | API read-model contracts | BUILT, TESTED OFFLINE | frozen for the future UI |
 | **UI (§37+)** | **DEFERRED — not started** | deliberate |
 | **Increment 5 player-impact model** | **DEFERRED — not started** | deliberate |
@@ -56,7 +56,7 @@ Configuration, all environment-driven and safe by default:
 export CLAIM_EXTRACTOR=ollama
 export CLAIM_EXTRACTOR_MODE=shadow
 export OLLAMA_BASE_URL=http://Desktop-HomePC.local:11434
-export OLLAMA_MODEL=llama3.1
+export OLLAMA_MODEL=llama3.1:8b
 ```
 
 Health check:
@@ -111,7 +111,7 @@ Current live verification status:
 the_odds_api   BLOCKED  (REVIEW_REQUIRED — awaiting account + approval)
 api_football   BLOCKED  (REVIEW_REQUIRED — awaiting account + approval)
 tavily         BLOCKED  (REVIEW_REQUIRED — awaiting account + approval)
-ollama         FAILED   (Desktop-HomePC.local pings, but TCP 11434 times out)
+ollama         LIVE VERIFIED  (llama3.1:8b, real extraction confirmed 2026-08-08)
 ```
 
 Approval remains a manual act:
@@ -191,7 +191,7 @@ the run, so a forecast is produced with no credentials at all.
 ## Tests
 
 ```text
-362 passing, 6 skipped (live)
+367 passing, 6 skipped (live)
 ```
 
 Network access is blocked at the socket layer for the entire ordinary
@@ -202,13 +202,8 @@ Live tests opt back in with `SUPER6_LIVE_TESTS=1`.
 
 1. Three source accounts + manual approval (The Odds API, API-Football,
    Tavily). Combined recurring cost: £0.
-2. Ollama port reachable. `Desktop-HomePC.local` resolves
-   (192.168.6.200) and pings in ~8ms, but TCP 11434 **times out rather
-   than refusing** — packets are being dropped. That is the firewall
-   signature, not a dead service. Two things to check on the Windows
-   host: allow inbound TCP 11434 through the firewall, and set
-   `OLLAMA_HOST=0.0.0.0` before starting Ollama so it binds all
-   interfaces rather than loopback only.
+2. ~~Ollama~~ **DONE** — live verified 2026-08-08 on `llama3.1:8b`.
+   The Windows restart cleared the blocked port.
 3. A real live verification pass, which will be the first time any payload
    shape is confirmed against a live service rather than a recorded fixture.
 4. At least one full engine run against live sources, ideally on a real

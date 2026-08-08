@@ -117,7 +117,16 @@ def claims_json_schema() -> dict[str, Any]:
                             "enum": ["NONE DIRECTLY"],
                         },
                     },
-                    "required": ["claim_type", "supporting_evidence"],
+                    # player_name and certainty are required because a
+                    # claim without a subject or a certainty says nothing.
+                    # Live testing showed the model fills exactly the
+                    # required set and leaves everything else null.
+                    "required": [
+                        "claim_type",
+                        "supporting_evidence",
+                        "player_name",
+                        "certainty",
+                    ],
                 },
             }
         },
@@ -140,8 +149,13 @@ Additional rules:
 - Never convert speculation into confirmation. "Expected to miss out" is
   REPORTED or LIKELY, never CONFIRMED.
 - Never invent players, teams, dates or statuses.
-- Quote supporting_evidence verbatim from the evidence text. If you cannot
-  quote it exactly, do not emit the claim.
+- Quote supporting_evidence verbatim from the evidence text, character for
+  character. Do not correct spelling, punctuation or grammar in the quote,
+  and do not add apostrophes the source does not have. If you cannot
+  reproduce it exactly, do not emit the claim.
+- Every AVAILABILITY claim MUST set player_name, availability and
+  certainty. A claim without a named player and an availability value is
+  worthless and will be discarded.
 - Never produce forecast or model parameters of any kind.
 
 Return {"claims": []} when the evidence supports no claim.

@@ -192,6 +192,67 @@ def test_no_positive_availability_value_exists():
 # ---- prompt boundary ----------------------------------------------------
 
 
+def test_claim_without_a_subject_is_rejected():
+    """Found live: llama3.1:8b filled only the JSON-schema `required`
+    fields and left player_name/availability/certainty null, producing
+    claims that passed every other check while saying nothing."""
+    from super6.knowledge.extractor import is_incomplete
+
+    empty = CandidateClaim(
+        claim_type=ClaimType.AVAILABILITY.value,
+        supporting_evidence="Cole Palmer will be assessed tomorrow",
+    )
+    incomplete, why = is_incomplete(empty)
+    assert incomplete
+    assert "player_name" in why and "availability" in why
+
+    result = validate([empty], evidence())
+    assert len(result.rejected) == 1
+
+
+def test_expected_lineup_claim_needs_a_role():
+    from super6.knowledge.extractor import is_incomplete
+
+    incomplete, why = is_incomplete(
+        CandidateClaim(
+            claim_type=ClaimType.EXPECTED_LINEUP.value,
+            player_name="Cole Palmer",
+            supporting_evidence="x",
+        )
+    )
+    assert incomplete and "expected_role" in why
+
+
+def test_complete_claim_passes_the_completeness_check():
+    from super6.knowledge.extractor import is_incomplete
+
+    incomplete, _ = is_incomplete(claim())
+    assert not incomplete
+
+
+def test_silently_corrected_quote_is_rejected():
+    """Found live: the model 'fixed' the source's missing apostrophe, so
+    its quote no longer matched the page. Grounding caught it — a
+    paraphrase is not a quote, however well-intentioned."""
+    source = evidence("Enzo Fernandez missed last week match at Everton.")
+    tidied = claim(
+        player_name="Enzo Fernandez",
+        availability="INJURY",
+        supporting_evidence="Enzo Fernandez missed last week's match at Everton.",
+    )
+    result = validate([tidied], source)
+    assert len(result.rejected) == 1
+    assert "does not appear in the source" in result.rejected[0].rejection_reason
+
+
+def test_prompt_forbids_tidying_quotes():
+    from super6.knowledge.ollama import SYSTEM_PROMPT
+
+    lowered = " ".join(SYSTEM_PROMPT.lower().split())
+    assert "character for character" in lowered
+    assert "do not correct spelling" in lowered
+
+
 def test_prompt_states_the_injection_boundary():
     lowered = PROMPT_PREAMBLE.lower()
     assert "untrusted" in lowered
