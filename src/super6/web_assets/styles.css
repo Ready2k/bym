@@ -71,7 +71,9 @@ h3 { margin-bottom: .35rem; font-size: 1rem; }
 .fixture-card:hover { transform: translateY(-2px); border-color: #bfdbfe; }
 .fixture-card.changed { border: 2px solid var(--amber); background: linear-gradient(135deg, var(--amber-soft), white 38%); }
 .card-topline { display: flex; align-items: start; justify-content: space-between; gap: .5rem; }
-.teams { font-size: 1.04rem; font-weight: 800; line-height: 1.3; letter-spacing: -.025em; }
+.teams { display: grid; gap: .36rem; font-size: 1.04rem; font-weight: 800; line-height: 1.3; letter-spacing: -.025em; }
+.team-line { display: flex; align-items: center; gap: .42rem; }
+.team-badge { position: relative; display: inline-grid; flex: 0 0 auto; width: 1.5rem; height: 1.5rem; place-items: center; overflow: hidden; color: #344054; font-size: .48rem; font-weight: 850; letter-spacing: -.04em; background: #f2f4f7; border: 1px solid #eaecf0; border-radius: 50%; }.team-badge img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; background: white; }.team-badge.large { width: 2.35rem; height: 2.35rem; font-size: .64rem; }
 .versus { padding-top: .15rem; font-size: .72rem; color: var(--muted); }
 .status-pill { display: inline-flex; padding: .22rem .43rem; font-size: .64rem; font-weight: 850; letter-spacing: .05em; color: var(--amber); background: var(--amber-soft); border-radius: 99px; }
 .score { display: flex; align-items: baseline; justify-content: center; gap: .65rem; padding: 1rem 0 .9rem; font-variant-numeric: tabular-nums; }
@@ -96,6 +98,7 @@ h3 { margin-bottom: .35rem; font-size: 1rem; }
 .dialog::backdrop { background: rgb(15 23 42 / 55%); backdrop-filter: blur(2px); }
 .close-button { position: absolute; top: .8rem; right: .85rem; width: 2.3rem; height: 2.3rem; color: #475467; font-size: 1.55rem; line-height: 1; background: transparent; border: 0; border-radius: .4rem; }
 .detail-header { padding-right: 2rem; margin-bottom: 1.5rem; }
+.detail-teams { display: flex; align-items: center; gap: .7rem; font-size: 1.18rem; font-weight: 800; letter-spacing: -.03em; }.detail-teams > span { display: inline-flex; align-items: center; gap: .45rem; }.detail-teams > b { color: var(--muted); font-size: .82rem; }
 .detail-score { margin: .45rem 0; font-size: 3.3rem; font-weight: 850; letter-spacing: -.09em; }
 .detail-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: .75rem; margin: 1.1rem 0 1.5rem; }
 .detail-metric { padding: .8rem; background: #f8fafc; border-radius: .45rem; }.detail-metric span { display: block; margin-bottom: .2rem; color: var(--muted); font-size: .7rem; font-weight: 750; text-transform: uppercase; }.detail-metric strong { font-size: 1.08rem; }

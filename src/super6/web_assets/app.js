@@ -5,6 +5,14 @@ let countdownTimer;
 let roundTab = "predictions";
 let pendingRound;
 
+// Football-Data crest IDs for the clubs in the supplied Super 6 round.
+// Unknown teams retain the accessible initials fallback inside teamBadge.
+const TEAM_CRESTS = {
+  "Arsenal": 57, "Aston Villa": 58, "Bournemouth": 1044, "Brentford": 402,
+  "Chelsea": 61, "Everton": 62, "Fulham": 63, "Leeds": 341,
+  "Man City": 65, "Newcastle": 67, "Tottenham": 73, "West Ham": 563,
+};
+
 const $ = (selector) => document.querySelector(selector);
 const percent = (value) => `${(Number(value) * 100).toFixed(1)}%`;
 const money = (value) => `£${Number(value).toFixed(0)}`;
@@ -28,6 +36,12 @@ function localDateTime(iso) {
 
 function shortTeam(team) {
   return team.split(" ").map((word) => word[0]).join("").slice(0, 3).toUpperCase();
+}
+
+function teamBadge(team, size = "") {
+  const crest = TEAM_CRESTS[team];
+  const image = crest ? `<img src="https://crests.football-data.org/${crest}.png" alt="" loading="lazy" onerror="this.hidden=true">` : "";
+  return `<span class="team-badge ${size}" role="img" aria-label="${escapeHtml(team)} badge"><b>${escapeHtml(shortTeam(team))}</b>${image}</span>`;
 }
 
 function effectivePick(fixture) {
@@ -62,7 +76,7 @@ function fixtureCard(fixture, index, compact = false) {
   const pick = effectivePick(fixture);
   const overridden = fixture.user_pick && fixture.user_pick !== fixture.pick;
   return `<button class="fixture-card ${overridden ? "overridden" : ""} ${compact ? "compact" : ""}" data-fixture="${index}" aria-label="View detail for ${escapeHtml(fixture.home_team)} versus ${escapeHtml(fixture.away_team)}">
-    <div class="card-topline"><div class="teams">${escapeHtml(fixture.home_team)}<br>${escapeHtml(fixture.away_team)}</div>${overridden ? '<span class="status-pill neutral">YOUR PICK</span>' : '<span class="versus">v</span>'}</div>
+    <div class="card-topline"><div class="teams"><span class="team-line">${teamBadge(fixture.home_team)}${escapeHtml(fixture.home_team)}</span><span class="team-line">${teamBadge(fixture.away_team)}${escapeHtml(fixture.away_team)}</span></div>${overridden ? '<span class="status-pill neutral">YOUR PICK</span>' : '<span class="versus">v</span>'}</div>
     <div class="score" aria-label="Recommended score ${pick}"><strong>${pick.split("-")[0]}</strong><span>–</span><strong>${pick.split("-")[1]}</strong></div>
     <div class="metric-row"><div class="metric"><span>Result</span><strong>${percent(fixture.result_probability)}</strong></div><div class="metric"><span>Score</span><strong>${percent(fixture.score_probability)}</strong></div><div class="metric"><span>EV</span><strong>${fixture.expected_points.toFixed(2)}</strong></div></div>
     <div class="card-footer"><span>${overridden ? `Model: ${fixture.pick}` : `Model pick: ${fixture.model_pick}`}</span><span class="confidence ${fixture.confidence.toLowerCase()}">${fixture.confidence}</span></div>
@@ -211,7 +225,7 @@ function openFixture(index) {
   const evidence = fixture.availability?.items?.length ? fixture.availability.items.map((item) => `<li>${escapeHtml(item.player_name)} — ${escapeHtml(titleCase(item.status))}; ${escapeHtml(item.certainty)} via ${escapeHtml(item.source)}.</li>`).join("") : `<li>No individual team-news item is recorded for this fixture.</li>`;
   const history = fixture.history?.length ? fixture.history.map((version) => `<li>${escapeHtml(displayDate(version.recorded_at))}: ${escapeHtml(version.pick)} — ${escapeHtml(version.reason || "Forecast recorded")}</li>`).join("") : `<li>No earlier forecast version is persisted yet.</li>`;
   const [home, away] = effectivePick(fixture).split("-");
-  $("#fixture-detail").innerHTML = `<div class="detail-header"><p class="eyebrow">Fixture recommendation</p><h2>${escapeHtml(fixture.home_team)} v ${escapeHtml(fixture.away_team)}</h2><div class="detail-score">${escapeHtml(effectivePick(fixture).replace("-", " – "))}</div><p class="subtitle">Model ${fixture.pick}${fixture.user_pick ? ` · your pick ${fixture.user_pick}` : ""}</p></div><div class="detail-grid"><div class="detail-metric"><span>Result probability</span><strong>${percent(fixture.result_probability)}</strong></div><div class="detail-metric"><span>Exact-score probability</span><strong>${percent(fixture.score_probability)}</strong></div><div class="detail-metric"><span>Expected Super 6 points</span><strong>${fixture.expected_points.toFixed(2)}</strong></div><div class="detail-metric"><span>Confidence</span><strong class="confidence ${fixture.confidence.toLowerCase()}">${fixture.confidence}</strong></div></div><section class="why-card"><p class="eyebrow">Why ${fixture.pick}?</p><h3>${escapeHtml(reason.result)} is the highest-value result.</h3><p>This score produces the highest expected Super 6 score from the current probability distribution. It is a recommendation, not a certainty.</p><ul><li>${escapeHtml(reason.market)}</li><li>Data quality: ${escapeHtml(fixture.availability?.data_quality || "LIMITED")}.</li><li>Confidence is separate from both probability figures.</li></ul></section><section class="alternatives"><p class="eyebrow">Meaningful alternatives</p><table><thead><tr><th>Score</th><th>Score probability</th><th>Super 6 EV</th></tr></thead><tbody>${alternatives}</tbody></table></section><details class="disclosure"><summary>Evidence &amp; prediction history</summary><h3>Current evidence</h3><ul>${evidence}</ul><h3>Prediction history</h3><ul>${history}</ul></details><form id="override-form" data-index="${index}" class="inline-score-form"><p class="eyebrow">Your pick</p><label>Home goals<input aria-label="${escapeHtml(fixture.home_team)} goals" name="home" min="0" max="20" type="number" value="${home}"></label><span>–</span><label>Away goals<input aria-label="${escapeHtml(fixture.away_team)} goals" name="away" min="0" max="20" type="number" value="${away}"></label><button class="button" type="submit">Use this score</button></form>`;
+  $("#fixture-detail").innerHTML = `<div class="detail-header"><p class="eyebrow">Fixture recommendation</p><div class="detail-teams"><span>${teamBadge(fixture.home_team, "large")}${escapeHtml(fixture.home_team)}</span><b>v</b><span>${teamBadge(fixture.away_team, "large")}${escapeHtml(fixture.away_team)}</span></div><div class="detail-score">${escapeHtml(effectivePick(fixture).replace("-", " – "))}</div><p class="subtitle">Model ${fixture.pick}${fixture.user_pick ? ` · your pick ${fixture.user_pick}` : ""}</p></div><div class="detail-grid"><div class="detail-metric"><span>Result probability</span><strong>${percent(fixture.result_probability)}</strong></div><div class="detail-metric"><span>Exact-score probability</span><strong>${percent(fixture.score_probability)}</strong></div><div class="detail-metric"><span>Expected Super 6 points</span><strong>${fixture.expected_points.toFixed(2)}</strong></div><div class="detail-metric"><span>Confidence</span><strong class="confidence ${fixture.confidence.toLowerCase()}">${fixture.confidence}</strong></div></div><section class="why-card"><p class="eyebrow">Why ${fixture.pick}?</p><h3>${escapeHtml(reason.result)} is the highest-value result.</h3><p>This score produces the highest expected Super 6 score from the current probability distribution. It is a recommendation, not a certainty.</p><ul><li>${escapeHtml(reason.market)}</li><li>Data quality: ${escapeHtml(fixture.availability?.data_quality || "LIMITED")}.</li><li>Confidence is separate from both probability figures.</li></ul></section><section class="alternatives"><p class="eyebrow">Meaningful alternatives</p><table><thead><tr><th>Score</th><th>Score probability</th><th>Super 6 EV</th></tr></thead><tbody>${alternatives}</tbody></table></section><details class="disclosure"><summary>Evidence &amp; prediction history</summary><h3>Current evidence</h3><ul>${evidence}</ul><h3>Prediction history</h3><ul>${history}</ul></details><form id="override-form" data-index="${index}" class="inline-score-form"><p class="eyebrow">Your pick</p><label>Home goals<input aria-label="${escapeHtml(fixture.home_team)} goals" name="home" min="0" max="20" type="number" value="${home}"></label><span>–</span><label>Away goals<input aria-label="${escapeHtml(fixture.away_team)} goals" name="away" min="0" max="20" type="number" value="${away}"></label><button class="button" type="submit">Use this score</button></form>`;
   $("#fixture-dialog").showModal();
 }
 

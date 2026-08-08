@@ -119,8 +119,16 @@ def _seed() -> list[SourceRecord]:
             "predicted/expected lineups; that gap is deliberately left "
             "to manual entry or the later knowledge agent, since "
             "Sportmonks' expected-lineups product is far outside the "
-            "GBP10 budget (§25). Promote to APPROVED only once an "
-            "account exists and the terms have been accepted.",
+            "GBP10 budget (§25). "
+            "FREE-TIER LIMITS, established by live probing 2026-08-08: "
+            "current seasons are paywalled (2025+ rejected, 'try from "
+            "2022 to 2024'), and the batch `ids` parameter is paid-only. "
+            "BUT single-fixture /injuries and /fixtures/lineups DO return "
+            "full data for 2022-2024 with stable player ids. That makes "
+            "the free tier useless for live 2026/27 operation but "
+            "sufficient to measure, at zero cost, whether availability "
+            "data improves forecasts at all before anyone pays for a "
+            "live feed (§25's cost-per-Brier-improvement test).",
         ),
         SourceRecord(
             source_id="tavily",
