@@ -729,11 +729,17 @@ def cmd_score(args) -> int:
 
     ledger_path = Path(args.ledger)
     ledger = load_ledger(ledger_path)
-    raw = json.loads(Path(args.results).read_text())
-    results = {
-        int(k): (None if v is None else (int(v[0]), int(v[1])))
-        for k, v in raw.items()
-    }
+
+    if args.results:
+        raw = json.loads(Path(args.results).read_text())
+        results = {
+            int(k): (None if v is None else (int(v[0]), int(v[1])))
+            for k, v in raw.items()
+        }
+    else:
+        results = _fetch_results(args)
+        if results is None:
+            return 1
     ledger = score_round(ledger, args.season, args.round, results)
     save_ledger(ledger, ledger_path)
 
@@ -748,6 +754,58 @@ def cmd_score(args) -> int:
     print("\nRUNNING TOTALS\n")
     print(standings(ledger).to_string(index=False))
     return 0
+
+
+def _fetch_results(args):
+    """Fetch a round's results from football-data.org (§2.2 aware)."""
+    from .secrets import get_key
+    from .sources import football_data_org as fdo
+    from .sources.registry import SourceNotApprovedError
+    from .sources.teams import resolve
+    from .round import load_round
+
+    if not args.round_file:
+        print(
+            "Provide --results with a JSON file, or --round-file so results "
+            "can be fetched from football-data.org.",
+            file=sys.stderr,
+        )
+        return None
+
+    api_key = get_key("FOOTBALL_DATA_ORG_KEY")
+    if not api_key:
+        print("No football-data.org key found.", file=sys.stderr)
+        return None
+
+    rnd = load_round(Path(args.round_file))
+    fixtures = [(f.home, f.away) for f in rnd.fixtures]
+    try:
+        matches = []
+        for division in args.divisions:
+            matches.extend(
+                fdo.fetch_matches(division, args.fd_season, api_key)
+            )
+    except SourceNotApprovedError as exc:
+        print(f"{exc}", file=sys.stderr)
+        return None
+    except Exception as exc:
+        print(f"Result fetch failed: {exc}", file=sys.stderr)
+        return None
+
+    results = fdo.results_for_round(matches, fixtures, resolve)
+    missing = [
+        f"{h} v {a}" for i, (h, a) in enumerate(fixtures) if i not in results
+    ]
+    for index, value in sorted(results.items()):
+        home, away = fixtures[index]
+        label = "VOID" if value is None else f"{value[0]}-{value[1]}"
+        print(f"  {home} v {away}: {label}")
+    if missing:
+        print(
+            "  not yet resulted: " + ", ".join(missing),
+            file=sys.stderr,
+        )
+    return results
 
 
 def cmd_ledger(args) -> int:
@@ -986,9 +1044,13 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--season", type=int, default=2026)
     p.add_argument("--ledger", default="results/prospective_ledger.csv")
     p.add_argument(
-        "--results", required=True,
-        help='JSON: {"0": [2,0], "1": [1,1], "2": null}  (null = VOID)',
+        "--results",
+        help='JSON: {"0": [2,0], "1": [1,1], "2": null}  (null = VOID). '
+             "Omit to fetch from football-data.org via --round-file.",
     )
+    p.add_argument("--round-file", help="round JSON, for fetching results")
+    p.add_argument("--fd-season", type=int, default=2026)
+    p.add_argument("--divisions", nargs="+", default=["E0", "E1"])
     p.set_defaults(func=cmd_score)
 
     p = sub.add_parser("ledger", help="running prospective comparison across arms")

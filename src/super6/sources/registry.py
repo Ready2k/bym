@@ -157,13 +157,19 @@ def _seed() -> list[SourceRecord]:
             usage_status=UsageStatus.REVIEW_REQUIRED.value,
             terms_url="https://www.football-data.org/terms",
             terms_checked_at="2026-08-07",
-            refresh_limit="free tier: 10 requests/minute, fixtures/results only",
-            retention_policy="persist fixtures/results",
-            purpose=["fixtures", "results", "tables"],
-            notes="Free tier does NOT include odds — pre-match H/D/A odds "
-            "are a paid add-on (~EUR15/month) which would breach the "
-            "GBP10 target (§25). Retained as a candidate structured "
-            "fixtures/results source only.",
+            refresh_limit="free tier: 10 requests/minute",
+            retention_policy="persist fixtures/results/status",
+            purpose=["fixtures", "results", "match_status", "void_detection"],
+            notes="Scope established by live probing 2026-08-08. HAS "
+            "current-season fixtures (380 PL + Championship for 2026/27), "
+            "results, match status, referees and venue. LACKS lineups "
+            "(team objects carry crest/id/name/shortName/tla only) and "
+            "injuries, so it does NOT replace API-Football for "
+            "availability. Odds are a paid add-on (~EUR15/month) that "
+            "would breach the GBP10 target (§25) and are not used. Its "
+            "real value is the fixture/result/status feed the system "
+            "otherwise lacks entirely: §2.2 VOID handling had no source, "
+            "and ledger scoring was manual JSON entry.",
         ),
         SourceRecord(
             source_id="sky_super6",

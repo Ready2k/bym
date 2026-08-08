@@ -24,6 +24,9 @@ KEY_SOURCES: dict[str, tuple[str, ...]] = {
     "ODDS_API_KEY": ("theoddsapi", "the_odds_api", "odds_api", "oddsapi"),
     "API_FOOTBALL_KEY": ("apifootball", "api_football", "api-football"),
     "TAVILY_API_KEY": ("tavily", "tally", "tavilly"),
+    "FOOTBALL_DATA_ORG_KEY": (
+        "footballdataorg", "football_data_org", "football-data-org",
+    ),
 }
 
 

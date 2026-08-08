@@ -386,6 +386,60 @@ def verify_ollama(config=None) -> SourceVerification:
     return v
 
 
+def verify_football_data_org(
+    api_key: str | None,
+    season: int = 2026,
+    registry_path: Path = DEFAULT_REGISTRY_PATH,
+) -> SourceVerification:
+    v = SourceVerification("football_data_org")
+    if not _approval_gate(v, "football_data_org", registry_path):
+        return v
+    if not api_key:
+        v.add("credentials", SKIPPED, "no football-data.org key found")
+        return v
+
+    from .sources import football_data_org as fdo
+
+    try:
+        matches = fdo.fetch_matches("E0", season, api_key, registry_path=registry_path)
+    except Exception as exc:
+        v.add("authentication / fixtures", FAILED, f"{type(exc).__name__}: {exc}")
+        return v
+
+    v.add("authentication", OK)
+    v.add(
+        f"E0 fixtures ({season})",
+        OK if matches else ABSENT,
+        f"{len(matches)} match(es)",
+    )
+    if not matches:
+        return v
+
+    statuses = {m.raw_status for m in matches}
+    v.add("status mapping", OK, f"provider statuses seen: {sorted(statuses)}")
+    resulted = [m for m in matches if m.has_result]
+    voids = [m for m in matches if m.is_void]
+    v.add(
+        "results",
+        OK if resulted else ABSENT,
+        f"{len(resulted)} completed"
+        + ("" if resulted else " — season has not started yet"),
+    )
+    v.add(
+        "VOID detection (§2.2)",
+        OK if voids else ABSENT,
+        f"{len(voids)} void/postponed"
+        + ("" if voids else " — none currently, which is expected"),
+    )
+    v.add(
+        "lineups",
+        ABSENT,
+        "not provided on this plan — API-Football remains the only "
+        "candidate for confirmed XIs",
+    )
+    return v
+
+
 def verify_all(
     registry_path: Path = DEFAULT_REGISTRY_PATH, season: int = 2026
 ) -> list[SourceVerification]:
@@ -395,5 +449,8 @@ def verify_all(
         verify_odds_api(get_key("ODDS_API_KEY"), registry_path),
         verify_api_football(get_key("API_FOOTBALL_KEY"), season, registry_path),
         verify_tavily(get_key("TAVILY_API_KEY"), registry_path),
+        verify_football_data_org(
+            get_key("FOOTBALL_DATA_ORG_KEY"), season, registry_path
+        ),
         verify_ollama(),
     ]

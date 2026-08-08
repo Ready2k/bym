@@ -26,6 +26,8 @@ An adapter existing is **not** "live".
 | Always-on orchestration | BUILT, TESTED OFFLINE | odds + availability + event-driven knowledge |
 | Submission state (§46) | BUILT, TESTED OFFLINE, ACTIVE | drift detection after entry |
 | Availability intelligence | BUILT, TESTED OFFLINE | **no usable live feed** — see API-Football |
+| football-data.org adapter | **LIVE VERIFIED** | fixtures/results/status; §2.2 VOID source |
+| Result ingestion + VOID | **LIVE VERIFIED** | `super6 score --round-file` |
 | Knowledge agent | BUILT, TESTED OFFLINE | **SHADOW** by default |
 | Ollama extractor | BUILT, TESTED OFFLINE, **LIVE VERIFIED** | `llama3.1:8b` on Desktop-HomePC.local; extraction confirmed |
 | API read-model contracts | BUILT, TESTED OFFLINE | frozen for the future UI |
@@ -108,10 +110,11 @@ failure — a lineup not yet published and an empty injury list are both
 Current live verification status:
 
 ```text
-the_odds_api   LIVE VERIFIED  (20 bookmakers, de-vig + consensus confirmed)
-api_football   FAILED         (free plan covers 2022-2024 ONLY; 2026 paywalled)
-tavily         LIVE VERIFIED  (news topic required for published_date)
-ollama         LIVE VERIFIED  (llama3.1:8b, 2 claims accepted end-to-end)
+the_odds_api      LIVE VERIFIED  (20 bookmakers, de-vig + consensus confirmed)
+api_football      FAILED         (free plan covers 2022-2024 ONLY; 2026 paywalled)
+tavily            LIVE VERIFIED  (topic=news required for published_date)
+football_data_org LIVE VERIFIED  (380 PL fixtures 2026/27; no lineups on plan)
+ollama            LIVE VERIFIED  (llama3.1:8b, 2 claims accepted end-to-end)
 ```
 
 Approval remains a manual act:

@@ -152,17 +152,36 @@ def test_knowledge_events_carry_both_source_identities():
     assert built[0].quantitative_impact == "NONE DIRECTLY"
 
 
-def test_system_health_contract(conn):
-    from super6.sources.registry import load_registry
+def test_system_health_contract(conn, tmp_path):
+    """Built from an isolated registry: coupling this to the real one
+    made the test depend on which sources happen to be approved today."""
+    from super6.sources.registry import load_registry, save_registry
+
+    registry_path = tmp_path / "registry.json"
+    save_registry(load_registry(registry_path), registry_path)
+    registry = load_registry(registry_path)
 
     health = service.build_system_health(
-        conn, registry=load_registry(), schema_version=6
+        conn, registry=registry, schema_version=6
     )
     assert health.database_schema_version == 6
     assert {s.source_id for s in health.sources} >= {
         "the_odds_api", "api_football", "tavily"
     }
+    # seeded sources start REVIEW_REQUIRED, so the warning path fires
     assert any("REVIEW_REQUIRED" in w for w in health.warnings)
+
+
+def test_system_health_has_no_warnings_when_all_approved(conn, tmp_path):
+    from super6.sources.registry import SourceRecord
+
+    approved = {
+        "the_odds_api": SourceRecord(
+            "the_odds_api", "The Odds API", "API", "APPROVED"
+        )
+    }
+    health = service.build_system_health(conn, registry=approved)
+    assert health.warnings == []
 
 
 def test_prospective_contract_carries_sample_warning():
