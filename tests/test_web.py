@@ -12,6 +12,7 @@ from super6.web import (
     import_opponent,
     load_ui_state,
     mark_round_entered,
+    ollama_status,
     save_pick_overrides,
     save_results,
     save_settings,
@@ -125,3 +126,10 @@ def test_settings_opponents_and_results_use_local_explicit_state(tmp_path):
         {"results": ["2-0", "1-1", None, "1-2", "3-0", "1-2"]}, config
     )
     assert saved["results"][2] is None
+
+
+def test_ollama_is_not_probed_when_the_optional_extractor_is_disabled(monkeypatch):
+    monkeypatch.delenv("CLAIM_EXTRACTOR", raising=False)
+    health, config = ollama_status()
+    assert health is None
+    assert config.kind == "null"

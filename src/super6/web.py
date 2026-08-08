@@ -104,6 +104,23 @@ def _scoreline(value: str) -> tuple[int, int]:
     return home, away
 
 
+def ollama_status() -> tuple[object | None, object]:
+    """Return configured extractor health without probing an unused host.
+
+    A default/null extractor has no Ollama dependency at all. Calling a
+    network probe in that state would both slow normal page loads and turn
+    an intentionally unused optional component into a spurious warning.
+    """
+    from .knowledge.config import ExtractorKind, from_env
+
+    config = from_env()
+    if config.kind != ExtractorKind.OLLAMA.value:
+        return None, config
+    from .knowledge.ollama import check_health
+
+    return check_health(config, timeout=3), config
+
+
 def dashboard_payload(config: WebConfig) -> dict:
     """Build a fresh decision payload from the live engine contracts."""
     rnd = load_round(config.round_path)
@@ -114,11 +131,14 @@ def dashboard_payload(config: WebConfig) -> dict:
         fetch=False,
     )
     router = _fit_router(matches)
+    ollama_health, extractor_config = ollama_status()
     with db.connect(config.database_path) as conn:
         result = run_engine(conn, rnd, router)
         health = service.build_system_health(
             conn,
             registry=load_registry(config.registry_path),
+            ollama_health=ollama_health,
+            extractor_config=extractor_config,
             schema_version=db.schema_version(conn),
         )
 
@@ -147,9 +167,18 @@ def dashboard_payload(config: WebConfig) -> dict:
         "round_source": str(config.round_path),
         "current_picks": picks,
     }
+    health_payload = health.to_dict()
+    health_payload["ollama"] = {
+        "configured": extractor_config.kind == "ollama",
+        "host": extractor_config.host if extractor_config.kind == "ollama" else None,
+        "model": extractor_config.model if extractor_config.kind == "ollama" else None,
+        "detail": getattr(ollama_health, "detail", "") if ollama_health else (
+            "Ollama is not configured. The knowledge extractor is intentionally disabled."
+        ),
+    }
     return {
         "round": summary,
-        "health": health.to_dict(),
+        "health": health_payload,
         "notes": result.notes,
         "settings": {
             key: ui_state[key]

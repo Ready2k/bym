@@ -50,8 +50,16 @@ function effectivePick(fixture) {
 
 function quality(fixtures) {
   const levels = fixtures.map((fixture) => fixture.availability?.data_quality || "LIMITED");
+  const hasMarketForAll = fixtures.every((fixture) => fixture.market?.available);
+  const confirmedLineups = fixtures.reduce((total, fixture) => total + (fixture.availability?.confirmed_lineups || 0), 0);
   if (levels.includes("STALE")) return ["STALE", "One or more required sources have not refreshed within tolerance."];
-  if (levels.includes("DEGRADED")) return ["DEGRADED", "Some optional sources are unavailable. The forecast remains available."];
+  if (levels.includes("DEGRADED")) {
+    if (hasMarketForAll && confirmedLineups === 0) {
+      return ["DEGRADED", "Market views are available. Confirmed lineups are not yet available — normal this far ahead of kickoff."];
+    }
+    if (!hasMarketForAll) return ["DEGRADED", "At least one fixture has no current market view. The forecast remains available."];
+    return ["DEGRADED", "Some confirmed lineups are still incomplete. The forecast remains available."];
+  }
   if (levels.includes("LIMITED")) return ["LIMITED", "Forecasts use the available historical and market evidence."];
   return ["GOOD", "All available sources are current for this forecast."];
 }
@@ -188,7 +196,9 @@ function sourcesView() {
 
 function healthView() {
   const health = appData.health;
-  return `${pageHeader("Operational status", "System Health", "Health is visible when needed but stays out of the weekly decision flow.")}<section class="health-grid"><article><span>Scheduler</span><strong>${health.scheduler_jobs_pending ? `${health.scheduler_jobs_pending} pending` : "Ready"}</strong></article><article><span>Database</span><strong>Healthy · schema ${health.database_schema_version}</strong></article><article><span>Knowledge extractor</span><strong>${escapeHtml(health.extractor)} · ${escapeHtml(health.extractor_mode)}</strong></article><article><span>Ollama</span><strong>${escapeHtml(health.ollama_reachable)}</strong></article></section>${health.warnings.length ? `<section class="warning-list">${health.warnings.map((warning) => `<p>${escapeHtml(warning)}</p>`).join("")}</section>` : ""}<section class="stat-table-card"><table><thead><tr><th>Source</th><th>Status</th><th>Quota</th></tr></thead><tbody>${health.sources.map((source) => `<tr><td>${escapeHtml(source.source_id)}</td><td>${escapeHtml(titleCase(source.usage_status))}</td><td>${source.quota_limit ? `${source.quota_used}/${source.quota_limit} per ${escapeHtml(source.quota_period)}` : "Not metered"}</td></tr>`).join("")}</tbody></table></section>`;
+  const ollama = health.ollama || {};
+  const ollamaLabel = ollama.configured ? health.ollama_reachable : "Not configured";
+  return `${pageHeader("Operational status", "System Health", "Health is visible when needed but stays out of the weekly decision flow.")}<section class="health-grid"><article><span>Scheduler</span><strong>${health.scheduler_jobs_pending ? `${health.scheduler_jobs_pending} pending` : "Ready"}</strong></article><article><span>Database</span><strong>Healthy · schema ${health.database_schema_version}</strong></article><article><span>Knowledge extractor</span><strong>${escapeHtml(health.extractor)} · ${escapeHtml(health.extractor_mode)}</strong></article><article><span>Ollama</span><strong>${escapeHtml(ollamaLabel)}</strong><small>${escapeHtml(ollama.detail || "")}</small></article></section>${health.warnings.length ? `<section class="warning-list">${health.warnings.map((warning) => `<p>${escapeHtml(warning)}</p>`).join("")}</section>` : ""}<section class="stat-table-card"><table><thead><tr><th>Source</th><th>Status</th><th>Quota</th></tr></thead><tbody>${health.sources.map((source) => `<tr><td>${escapeHtml(source.source_id)}</td><td>${escapeHtml(titleCase(source.usage_status))}</td><td>${source.quota_limit ? `${source.quota_used}/${source.quota_limit} per ${escapeHtml(source.quota_period)}` : "Not metered"}</td></tr>`).join("")}</tbody></table></section>`;
 }
 
 function settingsView() {
