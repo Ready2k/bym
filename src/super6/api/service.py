@@ -140,6 +140,7 @@ def build_round_summary(
     recommendation: RoundRecommendation,
     markets: dict[tuple[str, str], MarketState] | None = None,
     availabilities: dict[tuple[str, str], AvailabilityState] | None = None,
+    submission_state: str = "NOT_READY",
 ) -> RoundSummary:
     markets = markets or {}
     availabilities = availabilities or {}
@@ -163,6 +164,7 @@ def build_round_summary(
         ),
         expected_round_score=round(recommendation.expected_round_score, 3),
         model_version=MODEL_VERSION,
+        submission_state=submission_state,
     )
 
 

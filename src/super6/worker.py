@@ -20,7 +20,7 @@ does not touch probabilities (§32 double-counting).
 from __future__ import annotations
 
 import sqlite3
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -45,6 +45,10 @@ class PollOutcome:
     reforecast: int
     events: list[events.Event]
     next_run_at: datetime | None
+    # Fixtures whose market moved materially with no availability event
+    # nearby — the §21 "REVIEW REQUIRED: no confirmed news detected" case,
+    # and the trigger for a targeted knowledge investigation.
+    unexplained_moves: list[tuple[str, str, str]] = field(default_factory=list)
 
 
 def budget_constrained(
@@ -64,6 +68,7 @@ def poll_round(
     rnd: Round,
     api_key: str,
     router,
+    conn: sqlite3.Connection | None = None,
     now: datetime | None = None,
     model_cfg: ModelConfig = FROZEN_PHASE1_V1,
     move_cfg: MovementConfig = DEFAULT_MOVEMENT,
@@ -89,6 +94,7 @@ def poll_round(
 
     emitted: list[events.Event] = []
     reforecast_count = 0
+    unexplained: list[tuple[str, str, str]] = []
     previous_picks = previous_picks or {}
 
     for fixture_odds in acquired.fixtures:
@@ -133,6 +139,18 @@ def poll_round(
             continue
 
         is_major = primary.materiality == movement.Materiality.MAJOR.value
+
+        # §21: a material move with no nearby team news is the
+        # "REVIEW REQUIRED — no confirmed news detected" case. Record it
+        # so the knowledge layer can investigate, rather than inventing an
+        # explanation here.
+        if is_major:
+            from .availability import attribution, store as avail_store
+
+            known = avail_store.events_for_fixture(conn, home, away) if conn else []
+            if attribution.best_explanation(primary, known) is None:
+                unexplained.append((home, away, primary.describe()))
+
         emitted.append(
             events.make_event(
                 events.EventType.MARKET_MAJOR_MOVEMENT
@@ -250,7 +268,109 @@ def poll_round(
         reforecast=reforecast_count,
         events=emitted,
         next_run_at=next_run,
+        unexplained_moves=unexplained,
     )
+
+
+def _run_availability_job(
+    conn: sqlite3.Connection,
+    rnd: Round,
+    job,
+    api_key: str | None,
+    season: int,
+    now: datetime,
+) -> PollOutcome:
+    """Structured availability polling (injuries + confirmed XIs)."""
+    from .availability import worker as availability_worker
+
+    if not api_key:
+        return PollOutcome(
+            round_number=rnd.round_number, fixtures_covered=0,
+            credits_spent=0, reforecast=0,
+            events=[
+                events.make_event(
+                    events.EventType.POLL_FAILED,
+                    events.Severity.INFORMATIONAL,
+                    "Availability polling skipped: no API_FOOTBALL_KEY.",
+                    round_number=rnd.round_number, now=now,
+                )
+            ],
+            next_run_at=cadence.next_poll_at(rnd.deadline_at, now),
+        )
+
+    result = availability_worker.poll_availability(
+        conn, rnd, "E0", season, api_key, now=now, kickoff_at=rnd.deadline_at
+    )
+    return PollOutcome(
+        round_number=rnd.round_number,
+        fixtures_covered=result.lineups_ingested,
+        credits_spent=result.requests_spent,
+        reforecast=0,          # availability never triggers a reforecast
+        events=result.events,
+        next_run_at=cadence.next_poll_at(rnd.deadline_at, now),
+    )
+
+
+def _run_knowledge_job(
+    conn: sqlite3.Connection,
+    rnd: Round,
+    job,
+    tavily_key: str | None,
+    extractor,
+    mode: str,
+    now: datetime,
+) -> PollOutcome:
+    """Routine bounded knowledge research for a round."""
+    from .knowledge import queries
+    from .knowledge import worker as knowledge_worker
+
+    emitted: list[events.Event] = []
+    if not (tavily_key and extractor):
+        emitted.append(
+            events.make_event(
+                events.EventType.POLL_FAILED,
+                events.Severity.INFORMATIONAL,
+                "Knowledge research skipped: needs TAVILY_API_KEY and a "
+                "configured extractor.",
+                round_number=rnd.round_number, now=now,
+            )
+        )
+    else:
+        for fixture in rnd.fixtures:
+            for team in (fixture.home, fixture.away):
+                result = knowledge_worker.research(
+                    conn, fixture.home, fixture.away,
+                    queries.plan_team_queries(team), tavily_key, extractor,
+                    now=now, round_number=rnd.round_number, mode=mode,
+                )
+                emitted.extend(result.events)
+
+    return PollOutcome(
+        round_number=rnd.round_number, fixtures_covered=0, credits_spent=0,
+        reforecast=0, events=emitted,
+        next_run_at=cadence.next_poll_at(rnd.deadline_at, now),
+    )
+
+
+def _investigate_unexplained(
+    conn: sqlite3.Connection,
+    outcome: PollOutcome,
+    tavily_key: str,
+    extractor,
+    mode: str,
+    now: datetime,
+) -> list[events.Event]:
+    """Targeted investigation of market moves with no known explanation."""
+    from .knowledge import worker as knowledge_worker
+
+    emitted: list[events.Event] = []
+    for home, away, description in outcome.unexplained_moves:
+        result = knowledge_worker.investigate_movement(
+            conn, home, away, description, tavily_key, extractor,
+            now=now, round_number=outcome.round_number, mode=mode,
+        )
+        emitted.extend(result.events)
+    return emitted
 
 
 def run_due_jobs(
@@ -259,9 +379,21 @@ def run_due_jobs(
     router_factory,
     now: datetime | None = None,
     event_log: Path = events.DEFAULT_EVENT_LOG,
+    availability_key: str | None = None,
+    tavily_key: str | None = None,
+    extractor=None,
+    extractor_mode: str = "shadow",
+    season: int = 2026,
     **poll_kwargs,
 ) -> list[PollOutcome]:
-    """Claim and run every due job, rescheduling each from the cadence."""
+    """Claim and run every due job, dispatching by job type and
+    rescheduling each from the cadence.
+
+    A market move that no known team news explains triggers a targeted
+    knowledge investigation — the one place the knowledge layer runs
+    without being separately scheduled, because that is exactly the
+    event-driven case it exists for.
+    """
     now = now or datetime.now(timezone.utc)
     scheduler.reclaim_stuck_jobs(conn)
     outcomes: list[PollOutcome] = []
@@ -272,9 +404,29 @@ def run_due_jobs(
             continue
         try:
             rnd = load_round(Path(job.round_path))
-            outcome = poll_round(
-                rnd, api_key, router_factory(), now=now, **poll_kwargs
-            )
+
+            if job.job_type == scheduler.JobType.POLL_AVAILABILITY.value:
+                outcome = _run_availability_job(
+                    conn, rnd, job, availability_key, season, now
+                )
+            elif job.job_type == scheduler.JobType.KNOWLEDGE_RESEARCH.value:
+                outcome = _run_knowledge_job(
+                    conn, rnd, job, tavily_key, extractor, extractor_mode, now
+                )
+            else:
+                outcome = poll_round(
+                    rnd, api_key, router_factory(), conn=conn, now=now,
+                    **poll_kwargs,
+                )
+                # Event-driven follow-up: explain what the market did.
+                if outcome.unexplained_moves and tavily_key and extractor:
+                    outcome.events.extend(
+                        _investigate_unexplained(
+                            conn, outcome, tavily_key, extractor,
+                            extractor_mode, now,
+                        )
+                    )
+
             events.append(outcome.events, event_log)
             scheduler.complete_job(conn, job.id, outcome.next_run_at)
             outcomes.append(outcome)

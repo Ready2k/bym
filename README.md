@@ -36,6 +36,21 @@ Output is the §20 pre-round report: six picks with RESULT / SCORE / EV /
 CONF columns, Golden Goal minute (with the Sky one-off interval convention,
 §15), and expected round score.
 
+## Local decision UI
+
+The first UI increment is a local, decision-first dashboard built directly
+on the stable API contracts. It shows the six current recommendations,
+separates result probability / exact-score probability / EV / confidence,
+offers fixture explanations and alternatives, and records only your manual
+confirmation that you entered picks in Super 6.
+
+```bash
+super6 serve --round rounds/example_round.json --seasons 2019 2025 --data data
+```
+
+Then open [http://127.0.0.1:8000](http://127.0.0.1:8000). The server is
+local-only by default. It never submits predictions to Sky.
+
 Walk-forward backtest against the §16/§28 baselines — MARKET-AVAILABLE
 (early odds — the fair target), MARKET-ORACLE (closing odds — theoretical
 gold standard), pure Poisson, and Dixon-Coles pooled vs per-division. See

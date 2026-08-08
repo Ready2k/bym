@@ -22,7 +22,9 @@ An adapter existing is **not** "live".
 | API-Football adapter | BUILT, TESTED OFFLINE | `REVIEW_REQUIRED` — no live call yet |
 | Tavily adapter | BUILT, TESTED OFFLINE | `REVIEW_REQUIRED` — no live call yet |
 | Market movement / divergence | BUILT, TESTED OFFLINE | needs live odds to exercise |
-| Scheduler | BUILT, TESTED OFFLINE | restart-safe, SQLite |
+| Scheduler | BUILT, TESTED OFFLINE | restart-safe, SQLite, three job types |
+| Always-on orchestration | BUILT, TESTED OFFLINE | odds + availability + event-driven knowledge |
+| Submission state (§46) | BUILT, TESTED OFFLINE, ACTIVE | drift detection after entry |
 | Availability intelligence | BUILT, TESTED OFFLINE | no live feed yet |
 | Knowledge agent | BUILT, TESTED OFFLINE | **SHADOW** by default |
 | Ollama extractor | BUILT, TESTED OFFLINE | host `Desktop-HomePC.local` reachable but port 11434 firewalled |
@@ -120,6 +122,58 @@ super6 sources approve the_odds_api
 
 `sky_super6` is permanently `PROHIBITED` and `approve()` refuses it.
 
+## Always-on orchestration
+
+The scheduler runs three job types, deliberately separate because they
+have different cadences and different budgets:
+
+```text
+POLL_ODDS           §9 deadline ladder
+POLL_AVAILABILITY   injuries routinely; confirmed XIs only inside the
+                    75-minute pre-kickoff window
+KNOWLEDGE_RESEARCH  opt-in (--with-knowledge); costs search credits
+```
+
+```bash
+super6 watch --round rounds/round_01.json --seasons 2021 2026 --data data --loop
+```
+
+**Event-driven investigation.** A MAJOR market move with no availability
+event nearby is the §21 "REVIEW REQUIRED — no confirmed news detected"
+case. The odds worker flags it, and the knowledge layer investigates that
+specific fixture — regardless of whether routine research is scheduled.
+This is the one place knowledge runs unscheduled, because it is exactly
+the event-driven case it exists for. A move that *is* explained by known
+team news triggers nothing.
+
+Each layer reschedules independently, and one failing layer neither stops
+the others nor abandons its own job — it records the error and retries.
+
+## Submission state (§46)
+
+The system cannot know what you entered into Sky, so you tell it, and its
+job is then to notice when its own recommendation drifts away from what
+you entered.
+
+```text
+NOT_READY → READY → CHANGED_SINCE_REVIEW
+                  → MARKED_AS_SUBMITTED → CHANGED_AFTER_SUBMISSION
+                  → ROUND_CLOSED
+```
+
+```bash
+super6 submission mark-entered --round 1 --picks 2-0 1-0 2-1 1-2 3-0 1-2 --golden-goal 9
+```
+
+```bash
+super6 submission status --round 1
+```
+
+`CHANGED_AFTER_SUBMISSION` is the state the mechanism exists for, and its
+wording always ends with "Remember to update these predictions in Super 6
+yourself" — nothing in this system submits anything, and a test asserts
+no phrasing implies otherwise.
+
 ## Engine run
 
 ```bash
@@ -137,7 +191,7 @@ the run, so a forecast is produced with no credentials at all.
 ## Tests
 
 ```text
-334 passing, 6 skipped (live)
+362 passing, 6 skipped (live)
 ```
 
 Network access is blocked at the socket layer for the entire ordinary

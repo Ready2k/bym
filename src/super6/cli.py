@@ -123,6 +123,26 @@ def cmd_tune_xi(args) -> int:
     return 0
 
 
+def _layer_credentials() -> dict:
+    """Credentials and extractor for the availability and knowledge layers.
+
+    Absent credentials are passed through as None rather than omitted, so
+    each layer reports "skipped: no key" as a structured event instead of
+    the loop silently doing less than it appears to.
+    """
+    import os
+
+    from .knowledge.config import build_extractor, from_env
+
+    config = from_env()
+    return {
+        "availability_key": os.environ.get("API_FOOTBALL_KEY"),
+        "tavily_key": os.environ.get("TAVILY_API_KEY"),
+        "extractor": build_extractor(config),
+        "extractor_mode": config.mode,
+    }
+
+
 def cmd_watch(args) -> int:
     """Schedule a round for automatic polling, and optionally run the loop."""
     import os
@@ -143,9 +163,11 @@ def cmd_watch(args) -> int:
     router = _fit_router(matches, FROZEN_PHASE1_V1.xi, FROZEN_PHASE1_V1)
 
     with scheduler.connect(Path(args.db)) as conn:
-        scheduler.schedule_round(
-            conn, rnd.round_number, str(Path(args.round).resolve()), rnd.deadline_at
+        jobs = scheduler.schedule_all_layers(
+            conn, rnd.round_number, str(Path(args.round).resolve()),
+            rnd.deadline_at, include_knowledge=args.with_knowledge,
         )
+        print("Scheduled: " + ", ".join(j.job_type for j in jobs))
         interval = cadence.poll_interval(rnd.deadline_at)
         if interval is None:
             print("Deadline has passed — nothing to watch.")
@@ -162,7 +184,9 @@ def cmd_watch(args) -> int:
         print("Polling. Ctrl-C to stop; state is persisted, so restarting resumes.")
         try:
             while True:
-                outcomes = worker.run_due_jobs(conn, api_key, lambda: router)
+                outcomes = worker.run_due_jobs(
+                    conn, api_key, lambda: router, **_layer_credentials()
+                )
                 for o in outcomes:
                     print(
                         f"[{o.round_number}] {o.fixtures_covered}/6 covered, "
@@ -196,7 +220,9 @@ def cmd_tick(args) -> int:
     router = _fit_router(matches, FROZEN_PHASE1_V1.xi, FROZEN_PHASE1_V1)
 
     with scheduler.connect(Path(args.db)) as conn:
-        outcomes = worker.run_due_jobs(conn, api_key, lambda: router)
+        outcomes = worker.run_due_jobs(
+            conn, api_key, lambda: router, **_layer_credentials()
+        )
     if not outcomes:
         print("No jobs due.")
     for o in outcomes:
@@ -340,6 +366,67 @@ def cmd_engine_run(args) -> int:
             json_mod.dumps(result.round_summary.to_dict(), indent=2) + "\n"
         )
         print(f"\nRound summary contract written to {args.json}")
+    return 0
+
+
+def cmd_serve(args) -> int:
+    """Run the local Phase 1 decision experience (UIUX.md §70)."""
+    from .web import WebConfig, serve
+
+    serve(
+        WebConfig(
+            round_path=Path(args.round),
+            data_path=Path(args.data),
+            database_path=Path(args.db),
+            submissions_path=Path(args.submissions),
+            registry_path=Path(args.registry),
+            seasons=tuple(args.seasons),
+            divisions=tuple(args.divisions),
+        ),
+        host=args.host,
+        port=args.port,
+    )
+    return 0
+
+
+def cmd_submission(args) -> int:
+    """Inspect or update submission state (§46).
+
+    Nothing here submits anything to Sky — the agent is external to Sky by
+    architecture. `mark-entered` records that *you* entered the picks.
+    """
+    from . import submission as submission_mod
+
+    if args.submission_action == "mark-entered":
+        if not args.picks:
+            print("--picks is required for mark-entered", file=sys.stderr)
+            return 1
+        record = submission_mod.mark_submitted(
+            args.season, args.round, args.picks, args.golden_goal
+        )
+        print(f"Recorded as entered at {record.submitted_at}:")
+        print("  " + " ".join(record.submitted_picks))
+        if record.submitted_golden_goal is not None:
+            print(f"  Golden Goal: {record.submitted_golden_goal}")
+        print(
+            "\nThis records what YOU entered in Super 6. The agent does not "
+            "submit anything."
+        )
+        return 0
+
+    if args.submission_action == "mark-reviewed":
+        if not args.picks:
+            print("--picks is required for mark-reviewed", file=sys.stderr)
+            return 1
+        record = submission_mod.mark_reviewed(args.season, args.round, args.picks)
+        print(f"Review baseline recorded: {record.state}")
+        return 0
+
+    record = submission_mod.get(args.season, args.round)
+    print(f"Round {args.round} ({args.season}): {record.state}")
+    print(submission_mod.describe(record))
+    if record.submitted_picks:
+        print("\nEntered: " + " ".join(record.submitted_picks))
     return 0
 
 
@@ -804,6 +891,11 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--db", default="data/scheduler.db")
     p.add_argument("--loop", action="store_true", help="run the polling loop now")
     p.add_argument("--tick-seconds", type=int, default=60)
+    p.add_argument(
+        "--with-knowledge", action="store_true",
+        help="also schedule routine knowledge research (costs search credits; "
+             "market-triggered investigation runs regardless)",
+    )
     p.set_defaults(func=cmd_watch)
 
     p = sub.add_parser("tick", help="run one scheduler pass (for cron/systemd)")
@@ -839,6 +931,31 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--with-knowledge", action="store_true")
     p.add_argument("--json", help="write the RoundSummary contract to this path")
     p.set_defaults(func=cmd_engine_run)
+
+    p = sub.add_parser(
+        "serve", help="run the local decision-first web UI (UIUX.md Phase 1)"
+    )
+    common(p)
+    p.add_argument("--round", default="rounds/example_round.json")
+    p.add_argument("--db", default="data/super6.db")
+    p.add_argument("--submissions", default="data/submissions.json")
+    p.add_argument("--registry", default="config/source_registry.json")
+    p.add_argument("--host", default="127.0.0.1")
+    p.add_argument("--port", default=8000, type=int)
+    p.set_defaults(func=cmd_serve)
+
+    p = sub.add_parser(
+        "submission", help="submission state (§46) — the agent never submits"
+    )
+    p.add_argument(
+        "submission_action", nargs="?", default="status",
+        choices=["status", "mark-reviewed", "mark-entered"],
+    )
+    p.add_argument("--round", type=int, required=True)
+    p.add_argument("--season", type=int, default=2026)
+    p.add_argument("--picks", nargs="+", metavar="H-A")
+    p.add_argument("--golden-goal", type=int)
+    p.set_defaults(func=cmd_submission)
 
     p = sub.add_parser("shadow-report", help="shadow extraction metrics")
     p.add_argument("--db", default="data/super6.db")

@@ -27,6 +27,7 @@ import json
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 FIXTURES_PER_ROUND = 6
 
@@ -48,7 +49,16 @@ class Round:
 
 
 def load_round(path: Path) -> Round:
-    raw = json.loads(path.read_text())
+    return round_from_dict(json.loads(path.read_text()))
+
+
+def round_from_dict(raw: dict) -> Round:
+    """Validate a manually-entered round payload and build its domain model.
+
+    Keeping validation here gives the CLI and the web UI the exact same
+    definition of a valid Super 6 round: six distinct fixtures and a
+    deliberate deadline supplied by the user.
+    """
 
     def parse_fixture(f: dict) -> Fixture:
         odds = f.get("odds")
@@ -73,9 +83,32 @@ def load_round(path: Path) -> Round:
         if key in seen:
             raise ValueError(f"Duplicate fixture {f.home} v {f.away}")
         seen.add(key)
+    deadline = datetime.fromisoformat(raw["deadline_at"].replace("Z", "+00:00"))
+    # The manual-entry flow presents deadlines in UK time. Existing round
+    # files used a local ISO value without an offset, so interpret that
+    # unambiguously rather than letting the server's machine timezone decide.
+    if deadline.tzinfo is None:
+        deadline = deadline.replace(tzinfo=ZoneInfo("Europe/London"))
     return Round(
         round_number=int(raw["round_number"]),
-        deadline_at=datetime.fromisoformat(raw["deadline_at"]),
+        deadline_at=deadline,
         fixtures=fixtures,
         source=raw.get("source", "MANUAL"),
     )
+
+
+def round_to_dict(rnd: Round) -> dict:
+    """Serialize a round in the documented, user-editable JSON format."""
+    return {
+        "round_number": rnd.round_number,
+        "deadline_at": rnd.deadline_at.isoformat(),
+        "fixtures": [
+            {
+                "home": fixture.home,
+                "away": fixture.away,
+                **({"odds": list(fixture.odds)} if fixture.odds is not None else {}),
+            }
+            for fixture in rnd.fixtures
+        ],
+        "source": rnd.source,
+    }

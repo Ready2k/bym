@@ -29,6 +29,7 @@ def test_loads_valid_round(tmp_path):
     assert rnd.round_number == 14
     assert len(rnd.fixtures) == 6
     assert rnd.source == "MANUAL"
+    assert str(rnd.deadline_at.tzinfo) == "Europe/London"
 
 
 def test_rejects_wrong_fixture_count(tmp_path):

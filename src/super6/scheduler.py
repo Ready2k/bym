@@ -25,7 +25,18 @@ DEFAULT_DB_PATH = Path("data/super6.db")
 
 
 class JobType(str, Enum):
+    """The three intelligence layers, scheduled independently.
+
+    Separate job types rather than one do-everything poll, because they
+    have genuinely different cadences and different budgets: odds follow
+    the §9 deadline ladder, confirmed lineups only exist in a narrow
+    window before kickoff, and knowledge research is expensive enough to
+    be event-driven rather than routine.
+    """
+
     POLL_ODDS = "POLL_ODDS"
+    POLL_AVAILABILITY = "POLL_AVAILABILITY"
+    KNOWLEDGE_RESEARCH = "KNOWLEDGE_RESEARCH"
 
 
 class JobStatus(str, Enum):
@@ -77,6 +88,31 @@ def _row_to_job(row: sqlite3.Row) -> Job:
     return Job(**{k: row[k] for k in JOB_COLUMNS})
 
 
+def schedule_all_layers(
+    conn: sqlite3.Connection,
+    round_number: int,
+    round_path: str,
+    deadline: datetime,
+    first_run_at: datetime | None = None,
+    include_knowledge: bool = False,
+) -> list[Job]:
+    """Schedule every intelligence layer for a round.
+
+    Knowledge research is opt-in: it costs search credits and LLM time,
+    and most of its value is event-driven (a market move to explain)
+    rather than routine polling.
+    """
+    types = [JobType.POLL_ODDS, JobType.POLL_AVAILABILITY]
+    if include_knowledge:
+        types.append(JobType.KNOWLEDGE_RESEARCH)
+    return [
+        schedule_round(
+            conn, round_number, round_path, deadline, first_run_at, job_type
+        )
+        for job_type in types
+    ]
+
+
 def schedule_round(
     conn: sqlite3.Connection,
     round_number: int,
@@ -85,7 +121,7 @@ def schedule_round(
     first_run_at: datetime | None = None,
     job_type: JobType = JobType.POLL_ODDS,
 ) -> Job:
-    """Create (or replace) the polling job for a round."""
+    """Create (or replace) one polling job for a round."""
     conn.execute(
         "DELETE FROM jobs WHERE round_number = ? AND job_type = ?",
         (round_number, job_type.value),

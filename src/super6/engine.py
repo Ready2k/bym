@@ -63,6 +63,7 @@ def run_engine(
     extractor_config: ExtractorConfig | None = None,
     now: datetime | None = None,
     run_knowledge: bool = False,
+    season: int = 2026,
     **kwargs,
 ) -> EngineRunResult:
     """One full engine pass. Every external step degrades to 'absent'
@@ -174,8 +175,19 @@ def run_engine(
             "knowledge: skipped (needs TAVILY_API_KEY and a configured extractor)"
         )
 
+    # ---- submission state (§46) ----------------------------------------
+    from . import submission as submission_mod
+
+    picks = [f.pick for f in recommendation.fixtures]
+    submission_record = submission_mod.reconcile(
+        season, rnd.round_number, picks, rnd.deadline_at, now
+    )
+    if submission_record.drift:
+        notes.append(submission_mod.describe(submission_record))
+
     summary = service.build_round_summary(
-        rnd, recommendation, markets, availabilities
+        rnd, recommendation, markets, availabilities,
+        submission_state=submission_record.state,
     )
     return EngineRunResult(
         round_summary=summary,
@@ -220,6 +232,7 @@ def format_engine_report(result: EngineRunResult) -> str:
             f"(Sky interval {summary.golden_goal.sky_interval})"
         )
     lines.append(f"Expected round score: {summary.expected_round_score:.2f}")
+    lines.append(f"Submission state: {summary.submission_state}")
 
     lines += ["", "=== MARKET INTELLIGENCE ==="]
     lines.append(
