@@ -18,7 +18,7 @@ extract 1 per 5 successfully extracted pages.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 import requests
@@ -68,6 +68,34 @@ def extract_cost(url_count: int) -> int:
     return -(-url_count // EXTRACT_PAGES_PER_CREDIT)
 
 
+def normalise_published(value: str | None) -> str | None:
+    """Tavily returns RFC 2822 dates ("Tue, 04 Aug 2026 09:17:27 GMT").
+
+    Found in live verification: the rest of the system stores ISO8601 with
+    an explicit offset (§26), and the three-clock model is worthless if
+    `published_at` silently fails to parse — so it is converted here, at
+    the boundary, rather than everywhere downstream.
+    """
+    if not value:
+        return None
+    text = value.strip()
+    try:
+        from email.utils import parsedate_to_datetime
+
+        return parsedate_to_datetime(text).astimezone(timezone.utc).isoformat(
+            timespec="seconds"
+        )
+    except (TypeError, ValueError):
+        pass
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc).isoformat(timespec="seconds")
+
+
 def search(
     query: str,
     api_key: str,
@@ -75,6 +103,7 @@ def search(
     max_results: int = 5,
     include_domains: list[str] | None = None,
     days: int | None = None,
+    topic: str = "news",
     quota_path: Path | None = None,
     registry_path: Path = DEFAULT_REGISTRY_PATH,
     now: datetime | None = None,
@@ -85,14 +114,18 @@ def search(
     cost = search_cost(depth)
     check(QUOTA, cost, quota_path, now)
 
+    # topic="news" is required to get published_date at all — the general
+    # search topic omits the field entirely (confirmed live), which would
+    # leave every claim without a publication clock.
     payload = {
         "query": query,
         "search_depth": depth,
         "max_results": max_results,
+        "topic": topic,
     }
     if include_domains:
         payload["include_domains"] = include_domains
-    if days is not None:
+    if days is not None and topic == "news":
         payload["days"] = days
 
     response = requests.post(
@@ -114,7 +147,7 @@ def parse_search(payload: dict) -> list[SearchHit]:
                 url=item.get("url", ""),
                 title=item.get("title", ""),
                 snippet=item.get("content", "") or "",
-                published_at=item.get("published_date"),
+                published_at=normalise_published(item.get("published_date")),
                 score=item.get("score"),
             )
         )
@@ -159,7 +192,7 @@ def parse_extract(payload: dict) -> list[ExtractedPage]:
                 url=item.get("url", ""),
                 content=item.get("raw_content", "") or "",
                 title=item.get("title", "") or "",
-                published_at=item.get("published_date"),
+                published_at=normalise_published(item.get("published_date")),
             )
         )
     return pages

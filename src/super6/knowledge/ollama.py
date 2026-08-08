@@ -117,15 +117,23 @@ def claims_json_schema() -> dict[str, Any]:
                             "enum": ["NONE DIRECTLY"],
                         },
                     },
-                    # player_name and certainty are required because a
-                    # claim without a subject or a certainty says nothing.
-                    # Live testing showed the model fills exactly the
-                    # required set and leaves everything else null.
+                    # Live testing (llama3.1:8b) showed the model fills
+                    # EXACTLY the required set and leaves every optional
+                    # field null — twice, with the boundary moving each
+                    # time it was widened. So everything an availability
+                    # claim needs to mean anything is required here.
+                    #
+                    # This biases the schema toward AVAILABILITY claims,
+                    # which is honest: no expected-lineup source exists
+                    # yet (§4.11 leaves that gap deliberately open), and
+                    # `is_incomplete` validates both shapes correctly
+                    # whatever a future model emits.
                     "required": [
                         "claim_type",
                         "supporting_evidence",
                         "player_name",
                         "certainty",
+                        "availability",
                     ],
                 },
             }

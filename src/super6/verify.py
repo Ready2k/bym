@@ -338,9 +338,15 @@ def verify_ollama(config=None) -> SourceVerification:
         )
         return v
 
+    # Deliberately contains two unambiguous, differently-shaped claims. A
+    # single hedged sentence is a poor probe: the model may reasonably
+    # emit nothing, and "0 claims" would then read as a pass whether the
+    # pipeline worked or not.
     sample = (
-        "Chelsea head coach confirmed on Friday that Cole Palmer will be "
-        "assessed tomorrow after a knock in training."
+        "Chelsea head coach Enzo Maresca confirmed on Friday that Cole "
+        "Palmer will be assessed tomorrow after picking up a knock in "
+        "training. Robert Sanchez is suspended for this fixture after his "
+        "red card."
     )
     evidence = EvidenceDocument(
         url="https://example.test/verification",
@@ -360,13 +366,21 @@ def verify_ollama(config=None) -> SourceVerification:
         return v
     v.add(
         "schema-constrained extraction",
-        OK,
-        f"{len(claims)} claim(s) survived schema validation",
+        OK if claims else ABSENT,
+        f"{len(claims)} claim(s) passed schema validation"
+        + ("" if claims else " — the model found nothing in a sample that "
+                            "contains two clear claims; check the model is "
+                            "suited to structured extraction"),
     )
+
+    from .knowledge.extractor import validate
+
+    outcome = validate(claims, evidence)
     v.add(
         "deterministic validators still apply",
         OK,
-        "grounding, injection-shape and inference checks are enforced "
+        f"{len(outcome.accepted)} accepted, {len(outcome.rejected)} rejected "
+        "by grounding/injection/inference/completeness checks — enforced "
         "regardless of provider",
     )
     return v
@@ -375,11 +389,11 @@ def verify_ollama(config=None) -> SourceVerification:
 def verify_all(
     registry_path: Path = DEFAULT_REGISTRY_PATH, season: int = 2026
 ) -> list[SourceVerification]:
+    from .secrets import get_key
+
     return [
-        verify_odds_api(os.environ.get("ODDS_API_KEY"), registry_path),
-        verify_api_football(
-            os.environ.get("API_FOOTBALL_KEY"), season, registry_path
-        ),
-        verify_tavily(os.environ.get("TAVILY_API_KEY"), registry_path),
+        verify_odds_api(get_key("ODDS_API_KEY"), registry_path),
+        verify_api_football(get_key("API_FOOTBALL_KEY"), season, registry_path),
+        verify_tavily(get_key("TAVILY_API_KEY"), registry_path),
         verify_ollama(),
     ]

@@ -8,3 +8,6 @@ config/odds_api_quota.json
 *.db
 config/*_quota.json
 .env
+
+#API Keys
+secrets/

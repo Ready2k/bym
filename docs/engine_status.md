@@ -18,14 +18,14 @@ An adapter existing is **not** "live".
 |---|---|---|
 | Phase 1 forecast core | BUILT, TESTED OFFLINE, **ACTIVE** | `PHASE1_MODEL_V1`, frozen, holdout spent |
 | Prospective ledger | BUILT, TESTED OFFLINE, ACTIVE | append-only, arms pre-registered |
-| The Odds API adapter | BUILT, TESTED OFFLINE | `REVIEW_REQUIRED` — no live call yet |
-| API-Football adapter | BUILT, TESTED OFFLINE | `REVIEW_REQUIRED` — no live call yet |
-| Tavily adapter | BUILT, TESTED OFFLINE | `REVIEW_REQUIRED` — no live call yet |
+| The Odds API adapter | **LIVE VERIFIED** | 20 UK books, consensus confirmed |
+| API-Football adapter | **BLOCKED — free plan** | adapter correct vs 2024; current season paywalled |
+| Tavily adapter | **LIVE VERIFIED** | `topic=news` required for dates |
 | Market movement / divergence | BUILT, TESTED OFFLINE | needs live odds to exercise |
 | Scheduler | BUILT, TESTED OFFLINE | restart-safe, SQLite, three job types |
 | Always-on orchestration | BUILT, TESTED OFFLINE | odds + availability + event-driven knowledge |
 | Submission state (§46) | BUILT, TESTED OFFLINE, ACTIVE | drift detection after entry |
-| Availability intelligence | BUILT, TESTED OFFLINE | no live feed yet |
+| Availability intelligence | BUILT, TESTED OFFLINE | **no usable live feed** — see API-Football |
 | Knowledge agent | BUILT, TESTED OFFLINE | **SHADOW** by default |
 | Ollama extractor | BUILT, TESTED OFFLINE, **LIVE VERIFIED** | `llama3.1:8b` on Desktop-HomePC.local; extraction confirmed |
 | API read-model contracts | BUILT, TESTED OFFLINE | frozen for the future UI |
@@ -108,10 +108,10 @@ failure — a lineup not yet published and an empty injury list are both
 Current live verification status:
 
 ```text
-the_odds_api   BLOCKED  (REVIEW_REQUIRED — awaiting account + approval)
-api_football   BLOCKED  (REVIEW_REQUIRED — awaiting account + approval)
-tavily         BLOCKED  (REVIEW_REQUIRED — awaiting account + approval)
-ollama         LIVE VERIFIED  (llama3.1:8b, real extraction confirmed 2026-08-08)
+the_odds_api   LIVE VERIFIED  (20 bookmakers, de-vig + consensus confirmed)
+api_football   FAILED         (free plan covers 2022-2024 ONLY; 2026 paywalled)
+tavily         LIVE VERIFIED  (news topic required for published_date)
+ollama         LIVE VERIFIED  (llama3.1:8b, 2 claims accepted end-to-end)
 ```
 
 Approval remains a manual act:
