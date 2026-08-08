@@ -17,6 +17,8 @@ from super6.web import (
     save_results,
     save_settings,
 )
+from super6 import prediction_history
+from super6.prospective import load_ledger
 
 
 def payload() -> dict:
@@ -133,3 +135,28 @@ def test_ollama_is_not_probed_when_the_optional_extractor_is_disabled(monkeypatc
     health, config = ollama_status()
     assert health is None
     assert config.kind == "null"
+
+
+def test_manual_entry_freezes_prospective_arms_and_results_score_them(tmp_path):
+    config = configured_round(tmp_path)
+    config = WebConfig(
+        **{**config.__dict__, "ledger_path": tmp_path / "ledger.csv", "arm_registry_path": tmp_path / "arms.json", "prediction_history_path": tmp_path / "history.json"}
+    )
+    picks = ["2-0", "1-0", "2-1", "1-2", "3-0", "1-2"]
+    prediction_history.capture_round_summary(
+        2026,
+        {
+            "round_number": 14,
+            "model_version": "PHASE1_MODEL_V1",
+            "fixtures": [
+                {"home_team": fixture["home"], "away_team": fixture["away"], "pick": pick}
+                for fixture, pick in zip(payload()["fixtures"], picks)
+            ],
+        },
+        path=config.prediction_history_path,
+    )
+    mark_round_entered({"picks": picks}, config)
+    save_results({"results": ["2-0", "1-1", None, "1-2", "3-0", "1-2"]}, config)
+    ledger = load_ledger(config.ledger_path)
+    assert set(ledger["arm"]) == {"PHASE1_MODEL_V1", "SUBMITTED"}
+    assert set(ledger["status"].dropna()) == {"OK", "VOID"}

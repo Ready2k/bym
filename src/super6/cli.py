@@ -95,6 +95,72 @@ def cmd_predict(args) -> int:
     return 0
 
 
+def cmd_forecast(args) -> int:
+    """Forecast a single ad-hoc fixture — a sanity check, not a Super 6 round.
+
+    Deliberately separate from `predict`, which requires exactly six
+    fixtures because that is what a Super 6 round is (§9.1).
+    """
+    from .config import FROZEN_PHASE1_V1
+    from .data.football_data import load_matches
+    from .model import golden_goal
+    from .recommend import recommend_fixture
+
+    matches = load_matches(Path(args.data), _season_range(args), tuple(args.divisions))
+    known = set(matches["home_team"]) | set(matches["away_team"])
+
+    unknown = [t for t in (args.home, args.away) if t not in known]
+    router = _fit_router(matches, FROZEN_PHASE1_V1.xi, FROZEN_PHASE1_V1)
+    params = router(args.home, args.away)
+
+    odds = tuple(args.odds) if args.odds else None
+    rec = recommend_fixture(
+        params, args.home, args.away, FROZEN_PHASE1_V1, odds=odds
+    )
+
+    print(f"\n{args.home.upper()} v {args.away.upper()}\n")
+    if unknown:
+        print("  !! WARNING — NOT A TRUSTWORTHY FORECAST")
+        for team in unknown:
+            print(f"     '{team}' is not in the training corpus.")
+        print(
+            "     The model only knows the Premier League and Championship\n"
+            "     (Football-Data.co.uk, §18). An unknown team is given the\n"
+            "     league-average prior, so a lower-division side is treated\n"
+            "     as an average team of the division it is compared against.\n"
+            "     Expect it to be materially overrated.\n"
+        )
+
+    lam_h, lam_a = params.lambdas(args.home, args.away, FROZEN_PHASE1_V1)
+    print(f"  Expected goals   {args.home} {lam_h:.2f} — {lam_a:.2f} {args.away}")
+    print(f"  Pick             {rec.pick}")
+    print(f"  P(result)        {rec.p_result:.1%}")
+    print(f"  P(exact score)   {rec.p_score:.1%}")
+    print(f"  Expected points  {rec.ev:.2f}")
+    print(f"  Confidence       {rec.confidence}")
+    if odds:
+        print(f"  Market blended   yes (w={FROZEN_PHASE1_V1.market_blend_weight})")
+    else:
+        print("  Market blended   no odds supplied — pure statistical model")
+
+    print("\n  Result probabilities")
+    print(f"    home {rec.matrix.p_home_win:.1%}   "
+          f"draw {rec.matrix.p_draw:.1%}   away {rec.matrix.p_away_win:.1%}")
+
+    print("\n  Top alternatives by expected points")
+    for score, probability, ev_value in rec.alternatives(6):
+        marker = " <- pick" if score == rec.pick else ""
+        print(f"    {score:>5s}  P {probability:>6.1%}   EV {ev_value:.2f}{marker}")
+
+    gg = golden_goal.forecast([lam_h + lam_a])
+    print(
+        f"\n  Golden Goal      minute {gg.recommended_minute} "
+        f"(Sky interval {golden_goal.sky_interval(gg.recommended_minute)})"
+    )
+    print("  (single fixture — a real round combines all six hazards)\n")
+    return 0
+
+
 def cmd_backtest(args) -> int:
     from .backtest.walk_forward import compare
     from .data.football_data import load_matches
@@ -1019,6 +1085,18 @@ def main(argv: list[str] | None = None) -> int:
              "APPROVED the_odds_api registry entry)",
     )
     p.set_defaults(func=cmd_predict)
+
+    p = sub.add_parser(
+        "forecast", help="forecast one ad-hoc fixture (sanity check)"
+    )
+    common(p)
+    p.add_argument("--home", required=True)
+    p.add_argument("--away", required=True)
+    p.add_argument(
+        "--odds", nargs=3, type=float, metavar=("H", "D", "A"),
+        help="decimal odds, to blend the market in as the real engine would",
+    )
+    p.set_defaults(func=cmd_forecast)
 
     p = sub.add_parser("backtest", help="walk-forward ablation table (§16/§28)")
     common(p)

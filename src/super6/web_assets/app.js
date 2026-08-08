@@ -4,6 +4,7 @@ let appData;
 let countdownTimer;
 let roundTab = "predictions";
 let pendingRound;
+let activityFilter = "ALL";
 
 // Football-Data crest IDs for the clubs in the supplied Super 6 round.
 // Unknown teams retain the accessible initials fallback inside teamBadge.
@@ -48,6 +49,19 @@ function effectivePick(fixture) {
   return fixture.user_pick || fixture.strategy_pick || fixture.pick;
 }
 
+function fixtureChange(index) {
+  return (appData.round.changes_since_last_visit || []).find((change) => change.fixture_index === index && change.kind === "CHANGED");
+}
+
+function leagueSummary() {
+  const league = appData.league;
+  const row = league.standings.find((item) => item.participant === appData.settings.player_name);
+  if (!row) return `<article class="league-summary"><p class="eyebrow">Your league</p><strong>—</strong><span>Add entered picks and results to build your table.</span></article>`;
+  const leader = league.standings[0];
+  const probability = league.finish_first ? percent(league.finish_first.probability) : "Not estimated";
+  return `<article class="league-summary"><p class="eyebrow">Your league</p><strong>${row.rank}${row.rank === 1 ? "st" : row.rank === 2 ? "nd" : row.rank === 3 ? "rd" : "th"} · ${row.points} pts</strong><span>Leader: ${escapeHtml(leader.participant)} · ${row.points - leader.points} gap · P(1st): ${probability}</span></article>`;
+}
+
 function quality(fixtures) {
   const levels = fixtures.map((fixture) => fixture.availability?.data_quality || "LIMITED");
   const hasMarketForAll = fixtures.every((fixture) => fixture.market?.available);
@@ -83,11 +97,13 @@ function pageHeader(eyebrow, title, copy, actions = "") {
 function fixtureCard(fixture, index, compact = false) {
   const pick = effectivePick(fixture);
   const overridden = fixture.user_pick && fixture.user_pick !== fixture.pick;
-  return `<button class="fixture-card ${overridden ? "overridden" : ""} ${compact ? "compact" : ""}" data-fixture="${index}" aria-label="View detail for ${escapeHtml(fixture.home_team)} versus ${escapeHtml(fixture.away_team)}">
+  const change = fixtureChange(index);
+  const changedCopy = change ? `<div class="change-note">Changed · ${escapeHtml(change.fields.map((field) => `${field.was} → ${field.now}`).join(" · "))}</div>` : "";
+  return `<button class="fixture-card ${overridden ? "overridden" : ""} ${change ? "changed" : ""} ${compact ? "compact" : ""}" data-fixture="${index}" aria-label="View detail for ${escapeHtml(fixture.home_team)} versus ${escapeHtml(fixture.away_team)}">
     <div class="card-topline"><div class="teams"><span class="team-line">${teamBadge(fixture.home_team)}${escapeHtml(fixture.home_team)}</span><span class="team-line">${teamBadge(fixture.away_team)}${escapeHtml(fixture.away_team)}</span></div>${overridden ? '<span class="status-pill neutral">YOUR PICK</span>' : '<span class="versus">v</span>'}</div>
     <div class="score" aria-label="Recommended score ${pick}"><strong>${pick.split("-")[0]}</strong><span>–</span><strong>${pick.split("-")[1]}</strong></div>
     <div class="metric-row"><div class="metric"><span>Result</span><strong>${percent(fixture.result_probability)}</strong></div><div class="metric"><span>Score</span><strong>${percent(fixture.score_probability)}</strong></div><div class="metric"><span>EV</span><strong>${fixture.expected_points.toFixed(2)}</strong></div></div>
-    <div class="card-footer"><span>${overridden ? `Model: ${fixture.pick}` : `Model pick: ${fixture.model_pick}`}</span><span class="confidence ${fixture.confidence.toLowerCase()}">${fixture.confidence}</span></div>
+    <div class="card-footer"><span>${overridden ? `Model: ${fixture.pick}` : `Model pick: ${fixture.model_pick}`}</span><span class="confidence ${fixture.confidence.toLowerCase()}">${fixture.confidence}</span></div>${changedCopy}
     <div class="card-footer"><span class="card-link">Why this pick?</span><span aria-hidden="true">›</span></div>
   </button>`;
 }
@@ -111,8 +127,11 @@ function homeView() {
   const [submissionState, submissionDetail] = submissionMessage(round);
   const [dataQuality, qualityCopy] = quality(round.fixtures);
   const changed = round.submission_state === "CHANGED_AFTER_SUBMISSION" || round.submission_state === "CHANGED_SINCE_REVIEW";
-  return `${pageHeader(`Super 6 — Round ${round.round_number}`, "Your round, in one view.", `Deadline ${displayDate(round.deadline_at)}`, '<div class="monitor-card"><span class="monitor-dot"></span><span>Monitoring active</span><small>Forecast refreshed just now</small></div>')}
+  const alerts = appData.alerts?.items || [];
+  return `${pageHeader(`Super 6 — Round ${round.round_number}`, "Your round, in one view.", `Deadline ${displayDate(round.deadline_at)}`, `<div class="monitor-card"><span class="monitor-dot"></span><span>Monitoring active</span><small>Forecast refreshed ${displayDate(round.meta.generated_at)}</small></div>`)}
     <section class="command-strip" aria-label="Round status"><div class="deadline-card"><span class="eyebrow">Time to deadline</span><strong id="countdown">—</strong><span>${displayDate(round.deadline_at)}</span></div><div class="round-kpi"><span>Expected round score <button class="info" data-info="ev" aria-label="Explain expected points">?</button></span><strong>${round.expected_round_score.toFixed(2)}</strong><small>Across all six picks</small></div><div class="round-kpi submission-kpi"><span>Entry status</span><strong>${submissionState}</strong><small>${submissionDetail}</small></div></section>
+    ${leagueSummary()}
+    ${alerts.length ? `<button class="alert-strip" data-page="activity"><strong>${alerts.length} material update${alerts.length === 1 ? "" : "s"}</strong><span>${escapeHtml(alerts[0].summary)}</span><b>Review ›</b></button>` : ""}
     <section class="section-heading"><div><p class="eyebrow">Recommended picks</p><h2>Six scores to enter</h2></div><div class="button-row"><button class="button secondary-button" data-action="edit-picks">Edit picks</button><button class="button secondary-button" data-action="copy-picks">Copy picks</button></div></section>
     ${changed ? `<div class="change-alert"><strong>Action needed</strong> ${escapeHtml(submissionDetail)}. This app does not update Super 6 for you.</div>` : ""}
     <div class="fixture-grid">${round.fixtures.map((fixture, index) => fixtureCard(fixture, index)).join("")}</div>
@@ -131,7 +150,11 @@ function roundView() {
   const tabs = ["predictions", "intelligence", "changes", "setup", "results"];
   let content;
   if (roundTab === "intelligence") content = intelligenceView();
-  else if (roundTab === "changes") content = round.submission?.drift?.length ? `<div class="feed-list">${round.submission.drift.map((change) => `<article class="feed-item"><span class="severity critical">Changed</span><div><h3>${escapeHtml(round.fixtures[change.index].home_team)} v ${escapeHtml(round.fixtures[change.index].away_team)}</h3><p>${escapeHtml(change.was)} → ${escapeHtml(change.now)}</p><small>Update the prediction in Super 6 yourself if you choose the new recommendation.</small></div></article>`).join("")}</div>` : emptyState("No changes since your last review", "The current recommendations are stable against your recorded picks.");
+  else if (roundTab === "changes") {
+    const visitChanges = round.changes_since_last_visit || [];
+    const submissionChanges = round.submission?.drift || [];
+    content = visitChanges.length || submissionChanges.length ? `<div class="feed-list">${visitChanges.map((change) => `<article class="feed-item"><span class="severity important">Changed</span><div><h3>${escapeHtml(change.home_team)} v ${escapeHtml(change.away_team)}</h3><p>${escapeHtml(change.fields.map((field) => `${titleCase(field.field)}: ${field.was} → ${field.now}`).join(" · "))}</p><small>Recorded in forecast version history. Review the fixture for its full audit trail.</small></div></article>`).join("")}${submissionChanges.map((change) => `<article class="feed-item"><span class="severity critical">Entry drift</span><div><h3>${escapeHtml(round.fixtures[change.index].home_team)} v ${escapeHtml(round.fixtures[change.index].away_team)}</h3><p>${escapeHtml(change.was)} → ${escapeHtml(change.now)}</p><small>Update the prediction in Super 6 yourself if you choose the new recommendation.</small></div></article>`).join("")}</div>` : emptyState("No changes since your last review", "The current recommendations are stable against your recorded picks.");
+  }
   else if (roundTab === "setup") content = roundSetupView();
   else if (roundTab === "results") content = resultsView(results);
   else content = `<div class="fixture-grid">${round.fixtures.map((fixture, index) => fixtureCard(fixture, index)).join("")}</div>`;
@@ -154,10 +177,11 @@ function emptyState(title, copy, action = "") {
 }
 
 function leagueView() {
-  const opponents = Object.entries(appData.opponents);
+  const league = appData.league;
   const name = appData.settings.league_name;
-  if (!opponents.length) return `${pageHeader(name, "League position", "Add opponent predictions after each deadline to build a private-league picture.")}${emptyState("No opponent history yet", "Import your mates’ selections after a deadline. We will only estimate league strategy once sufficient recorded evidence exists.", '<button class="button" data-page="opponents">Import opponent predictions</button>')}`;
-  return `${pageHeader(name, "League position", "Opponent picks are recorded. Finish probabilities stay unavailable until enough scored rounds exist.")}<section class="stat-table-card"><table><thead><tr><th>Player</th><th>Recorded rounds</th><th>Current-round picks</th><th>Finish first</th></tr></thead><tbody><tr class="you-row"><td>${escapeHtml(appData.settings.player_name)}</td><td>—</td><td>Current recommendation</td><td>Not estimated</td></tr>${opponents.map(([name, data]) => `<tr><td>${escapeHtml(name)}</td><td>${Object.keys(data.rounds || {}).length}</td><td>${data.rounds?.[roundKey()] ? "Imported" : "None"}</td><td>Not estimated</td></tr>`).join("")}</tbody></table></section><section class="callout"><strong>Strategy: NORMAL</strong><span>Strategy optimisation is not active until league and opponent evidence support it. The recommendation shown remains the maximum-EV model pick.</span></section>`;
+  if (!league.standings.length) return `${pageHeader(name, "League position", "Add opponent predictions and entered picks, then record final results to build the private-league table.")}${emptyState("No scored private-league rounds yet", "Opponent selections are kept locally and never collected from Sky.", '<button class="button" data-page="opponents">Import opponent predictions</button>')}`;
+  const first = league.finish_first ? percent(league.finish_first.probability) : "Not estimated";
+  return `${pageHeader(name, "League position", "Every point below is calculated from your recorded picks and final results.")}<section class="stat-table-card"><table><thead><tr><th>Rank</th><th>Player</th><th>Points</th><th>Exact</th><th>Rounds</th><th>P(Finish 1st)</th></tr></thead><tbody>${league.standings.map((row) => `<tr class="${row.participant === appData.settings.player_name ? "you-row" : ""}"><td>${row.rank}</td><td>${escapeHtml(row.participant)}</td><td>${row.points}</td><td>${row.exact_scores}</td><td>${row.rounds_scored}</td><td>${row.participant === appData.settings.player_name ? first : "—"}</td></tr>`).join("")}</tbody></table></section><section class="callout"><strong>Strategy: ${escapeHtml(league.strategy.mode)}</strong><span>${escapeHtml(league.strategy.reason)} ${escapeHtml(league.finish_first_reason)}</span></section>`;
 }
 
 function roundKey() {
@@ -165,9 +189,9 @@ function roundKey() {
 }
 
 function opponentsView() {
-  const entries = Object.entries(appData.opponents);
+  const profiles = appData.league.profiles || [];
   return `${pageHeader("Opponent modelling", "Your private league", "Import selections supplied through permitted channels. We never collect them from Sky.")}
-  <section class="split-layout"><div>${entries.length ? `<div class="opponent-list">${entries.map(([name, data]) => { const picks = data.rounds?.[roundKey()] || []; return `<article class="opponent-card"><h2>${escapeHtml(name)}</h2><p>${Object.keys(data.rounds || {}).length} recorded round${Object.keys(data.rounds || {}).length === 1 ? "" : "s"}</p><small>${picks.length ? `Current round: ${picks.join(" · ")}` : "No current-round import"}</small></article>`; }).join("")}</div>` : emptyState("No opponent history yet", "Add selections after each deadline. The system will learn only from recorded evidence.")}</div><section class="form-card"><p class="eyebrow">Manual import</p><h2>Import six selections</h2><p class="subtitle">Paste six scores in fixture order, one per line — for example 2-0.</p><form id="opponent-form"><label>Name<input required name="name" maxlength="80" placeholder="e.g. Dave"></label><label>Predictions<textarea required name="picks" rows="7" placeholder="2-0&#10;1-1&#10;2-1&#10;1-2&#10;3-0&#10;1-2"></textarea></label><div class="form-actions"><button class="button" type="submit">Import selections</button></div></form></section></section>`;
+  <section class="split-layout"><div>${profiles.length ? `<div class="opponent-list">${profiles.map((profile) => `<article class="opponent-card"><h2>${escapeHtml(profile.participant)}</h2><p>${profile.picks} recorded picks · ${profile.rounds} round${profile.rounds === 1 ? "" : "s"}</p><small>Home ${percent(profile.home_result_rate)} · Draw ${percent(profile.draw_result_rate)} · Away ${percent(profile.away_result_rate)} · Avg goals ${profile.average_total_goals}</small><small>Common scores: ${profile.common_scores.map(([score, count]) => `${score} (${count})`).join(" · ") || "Not enough history"}</small></article>`).join("")}</div>` : emptyState("No opponent history yet", "Add selections after each deadline. The system will learn only from recorded evidence.")}</div><section class="form-card"><p class="eyebrow">Manual import</p><h2>Import six selections</h2><p class="subtitle">Paste six scores in fixture order, one per line — for example 2-0. You will see the saved picks immediately; no Sky integration is used.</p><form id="opponent-form"><label>Name<input required name="name" maxlength="80" placeholder="e.g. Dave"></label><label>Predictions<textarea required name="picks" rows="7" placeholder="2-0&#10;1-1&#10;2-1&#10;1-2&#10;3-0&#10;1-2"></textarea></label><div class="form-actions"><button class="button" type="submit">Import selections</button></div></form></section></section>`;
 }
 
 function performanceView() {
@@ -181,13 +205,16 @@ function activityItem(event) {
 }
 
 function activityView() {
-  return `${pageHeader("Decision history", "Activity", "A chronological audit of material forecast, intelligence, strategy, and manual events.")}${appData.activity.length ? `<div class="feed-list">${appData.activity.map(activityItem).join("")}</div>` : emptyState("No material activity yet", "Routine no-change refreshes are intentionally quiet. Material events will appear here.")}`;
+  const filters = { ALL: () => true, PREDICTIONS: (event) => /PREDICTION|CONFIDENCE/.test(event.event_type), INTELLIGENCE: (event) => /CLAIM|AVAILABILITY/.test(event.event_type), MARKETS: (event) => /MARKET/.test(event.event_type), LINEUPS: (event) => /LINEUP/.test(event.event_type), SYSTEM: (event) => /POLL|FORECAST/.test(event.event_type) };
+  const visible = appData.activity.filter(filters[activityFilter] || filters.ALL);
+  return `${pageHeader("Decision history", "Activity", "A chronological audit of material forecast, intelligence, strategy, and manual events.")}<div class="tabs activity-tabs">${Object.keys(filters).map((filter) => `<button class="tab ${activityFilter === filter ? "active" : ""}" data-activity-filter="${filter}">${titleCase(filter)}</button>`).join("")}</div>${visible.length ? `<div class="feed-list">${visible.map(activityItem).join("")}</div>` : emptyState("No matching activity", "Routine no-change refreshes are intentionally quiet.")}`;
 }
 
 function modelView() {
   const config = appData.model.frozen_config;
+  const transparency = appData.model.transparency;
   const values = [["Model version", appData.model.version], ["Training config", "Frozen Phase 1"], ["Time decay ξ", config.xi], ["Market blend", config.market_blend_weight], ["Tail tolerance", config.tail_tolerance], ["Goal grid", `${config.min_goals_grid}–${config.max_goals_cap}`], ["Promoted-team priors", config.use_promoted_priors ? "Enabled" : "Disabled"]];
-  return `${pageHeader("Expert", "Model Lab", "Technical detail is available here without competing with the weekly decision.")}<section class="callout muted"><strong>Frozen evaluation model</strong><span>${escapeHtml(appData.model.note)}</span></section><section class="spec-grid">${values.map(([label, value]) => `<article><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></article>`).join("")}</section><section class="form-card"><h2>How a pick is selected</h2><p>The scoreline with the highest expected Super 6 value is recommended. Expected points uses the probability of the selected match result plus the probability of the exact score; confidence remains a separate category.</p></section>`;
+  return `${pageHeader("Expert", "Model Lab", "Technical detail is available here without competing with the weekly decision.")}<section class="callout muted"><strong>Frozen evaluation model</strong><span>${escapeHtml(appData.model.note)} ${escapeHtml(transparency.evaluation_reason || "")}</span></section><section class="spec-grid">${values.map(([label, value]) => `<article><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></article>`).join("")}</section><section class="form-card"><h2>How a pick is selected</h2><p>The scoreline with the highest expected Super 6 value is recommended. Expected points uses the probability of the selected match result plus the probability of the exact score; confidence remains a separate category.</p><p class="subtitle">Score matrices, calculation breakdowns and source freshness are available in each fixture’s detail view.</p></section>`;
 }
 
 function sourcesView() {
@@ -204,7 +231,8 @@ function healthView() {
 function settingsView() {
   const { settings } = appData;
   const toggles = Object.entries(settings.notifications).map(([key, enabled]) => `<label class="toggle-row"><span>${escapeHtml(titleCase(key))}</span><input type="checkbox" name="notification_${key}" ${enabled ? "checked" : ""}><i></i></label>`).join("");
-  return `${pageHeader("Your preferences", "Settings", "Settings control presentation and alerts. They do not alter the forecasting model.")}<form id="settings-form" class="settings-grid"><section class="form-card"><p class="eyebrow">League</p><label>League name<input required name="league_name" maxlength="80" value="${escapeHtml(settings.league_name)}"></label><label>Your name<input required name="player_name" maxlength="80" value="${escapeHtml(settings.player_name)}"></label></section><section class="form-card"><p class="eyebrow">Notifications</p>${toggles}</section><section class="form-card"><p class="eyebrow">Budget</p><label>Target monthly spend<input required name="target_monthly" type="number" min="0" step="1" value="${settings.budget.target_monthly}"></label><label>Hard monthly ceiling<input required name="hard_ceiling" type="number" min="0" step="1" value="${settings.budget.hard_ceiling}"></label><p class="subtitle">Current source spend is not yet connected; limits are saved here for the source-promotion flow.</p></section><div class="form-actions"><button class="button" type="submit">Save settings</button></div></form>`;
+  const delivery = settings.notification_delivery || { in_app: true, email: false };
+  return `${pageHeader("Your preferences", "Settings", "Settings control presentation and alerts. They do not alter the forecasting model.")}<form id="settings-form" class="settings-grid"><section class="form-card"><p class="eyebrow">League</p><label>League name<input required name="league_name" maxlength="80" value="${escapeHtml(settings.league_name)}"></label><label>Your name<input required name="player_name" maxlength="80" value="${escapeHtml(settings.player_name)}"></label></section><section class="form-card"><p class="eyebrow">Notifications</p>${toggles}<label class="toggle-row"><span>In-app delivery</span><input type="checkbox" name="delivery_in_app" ${delivery.in_app ? "checked" : ""}><i></i></label><label class="toggle-row"><span>Email delivery</span><input type="checkbox" name="delivery_email" ${delivery.email ? "checked" : ""}><i></i></label><label>Email address<input name="notification_email" type="email" value="${escapeHtml(settings.notification_email || "")}" placeholder="you@example.com"></label><p class="subtitle">Email sends material prediction changes through your configured SMTP relay.</p></section><section class="form-card"><p class="eyebrow">Budget</p><label>Target monthly spend<input required name="target_monthly" type="number" min="0" step="1" value="${settings.budget.target_monthly}"></label><label>Hard monthly ceiling<input required name="hard_ceiling" type="number" min="0" step="1" value="${settings.budget.hard_ceiling}"></label><p class="subtitle">Current source spend is not yet connected; limits are saved here for the source-promotion flow.</p></section><div class="form-actions"><button class="button" type="submit">Save settings</button></div></form>`;
 }
 
 function moreView() {
@@ -312,11 +340,13 @@ document.addEventListener("click", async (event) => {
   if (page) location.hash = `#${page.dataset.page}`;
   const tab = event.target.closest("[data-round-tab]");
   if (tab) { roundTab = tab.dataset.roundTab; renderPage(); }
+  const activityTab = event.target.closest("[data-activity-filter]");
+  if (activityTab) { activityFilter = activityTab.dataset.activityFilter; renderPage(); }
   const action = event.target.closest("[data-action]")?.dataset.action;
   if (action === "mark-entered") openEntryDialog();
   if (action === "copy-picks") await copyPicks();
   if (action === "edit-picks") { location.hash = "#round"; roundTab = "predictions"; }
-  if (action === "golden-detail") openInfo("Golden Goal", appData.round.golden_goal.rationale);
+  if (action === "golden-detail") { const distribution = appData.round.golden_goal.distribution; openInfo("Golden Goal", `${appData.round.golden_goal.rationale}${distribution ? ` Most likely intervals: ${Object.entries(distribution.interval_probabilities).map(([label, value]) => `${label} ${percent(value)}`).join(", ")}. No goal: ${percent(distribution.no_goal_probability)}.` : ""}`); }
   if (event.target.closest("[data-info='ev']")) openInfo("Expected points", "This is the average Super 6 score this prediction would earn if the match were replayed many times under the model’s current probabilities. It is not a promise for one match.");
   const close = event.target.closest("[data-close]");
   if (close) $("#" + close.dataset.close).close();
@@ -347,7 +377,7 @@ document.addEventListener("submit", async (event) => {
       await post("/api/results", { results }); toast("Round results saved."); await loadApp();
     } else if (form.id === "settings-form") {
       const notifications = Object.keys(appData.settings.notifications).reduce((out, key) => ({ ...out, [key]: form.elements[`notification_${key}`].checked }), {});
-      await post("/api/settings", { league_name: form.elements.league_name.value, player_name: form.elements.player_name.value, notifications, budget: { target_monthly: form.elements.target_monthly.value, hard_ceiling: form.elements.hard_ceiling.value } });
+      await post("/api/settings", { league_name: form.elements.league_name.value, player_name: form.elements.player_name.value, notifications, notification_delivery: { in_app: form.elements.delivery_in_app.checked, email: form.elements.delivery_email.checked }, notification_email: form.elements.notification_email.value, budget: { target_monthly: form.elements.target_monthly.value, hard_ceiling: form.elements.hard_ceiling.value } });
       toast("Settings saved."); await loadApp();
     }
   } catch (error) { toast(error.message); }

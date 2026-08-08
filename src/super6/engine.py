@@ -26,7 +26,7 @@ from .api.contracts import AvailabilityState, MarketState, RoundSummary
 from .config import FROZEN_PHASE1_V1
 from .db import utcnow
 from .knowledge.config import ExtractorConfig, ExtractorMode
-from .recommend import recommend_round
+from .recommend import RoundRecommendation, recommend_round
 from .round import Round
 from .sources import pipeline
 
@@ -46,6 +46,7 @@ QUANTITATIVE_NOTE = (
 @dataclass
 class EngineRunResult:
     round_summary: RoundSummary
+    recommendation: RoundRecommendation | None = None
     market_layer: dict = field(default_factory=dict)
     availability_layer: dict = field(default_factory=dict)
     knowledge_layer: dict = field(default_factory=dict)
@@ -64,6 +65,7 @@ def run_engine(
     now: datetime | None = None,
     run_knowledge: bool = False,
     season: int = 2026,
+    submission_path: Path | None = None,
     **kwargs,
 ) -> EngineRunResult:
     """One full engine pass. Every external step degrades to 'absent'
@@ -179,8 +181,9 @@ def run_engine(
     from . import submission as submission_mod
 
     picks = [f.pick for f in recommendation.fixtures]
+    reconcile_kwargs = {"path": submission_path} if submission_path is not None else {}
     submission_record = submission_mod.reconcile(
-        season, rnd.round_number, picks, rnd.deadline_at, now
+        season, rnd.round_number, picks, rnd.deadline_at, now, **reconcile_kwargs
     )
     if submission_record.drift:
         notes.append(submission_mod.describe(submission_record))
@@ -191,6 +194,7 @@ def run_engine(
     )
     return EngineRunResult(
         round_summary=summary,
+        recommendation=recommendation,
         market_layer={
             "fixtures_with_market": sum(
                 1 for m in markets.values() if m.available
