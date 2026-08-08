@@ -193,6 +193,50 @@ def _append_forecast_change_events(snapshot: dict, rnd: Round, config: WebConfig
     return created
 
 
+def _emit_deadline_reminders(rnd: Round, submission_state: str, config: WebConfig) -> None:
+    """Record any newly crossed deadline threshold for this round.
+
+    Fires on page load, which alone only helps someone already looking —
+    `super6 watch` covers the rest. Each threshold is emitted once, guarded
+    by what is already in the append-only log, so refreshing does not
+    manufacture reminders.
+    """
+    from . import reminders
+
+    existing = events.load(config.event_log_path)
+    created = reminders.build_events(
+        rnd.deadline_at, datetime.now(timezone.utc), submission_state,
+        existing, rnd.round_number,
+    )
+    if not created:
+        return
+    events.append(created, config.event_log_path)
+    state = load_ui_state(config.ui_state_path)
+    if not (
+        state["notifications"].get("deadline_reminder")
+        and state["notification_delivery"]["email"]
+        and state["notification_email"]
+    ):
+        return
+    from smtplib import SMTPException
+
+    from .notifications import email_delivery_status, send_email_alert
+
+    if email_delivery_status(True, state["notification_email"]) != "READY":
+        return
+    try:
+        send_email_alert(
+            destination=state["notification_email"],
+            subject=f"Super 6 — Round {rnd.round_number} deadline approaching",
+            body="\n\n".join(event.summary for event in created),
+        )
+    except (OSError, RuntimeError, ValueError, SMTPException) as exc:
+        events.append([events.make_event(
+            events.EventType.POLL_FAILED, events.Severity.INFORMATIONAL,
+            f"Deadline reminder email was not delivered: {exc}", rnd.round_number,
+        )], config.event_log_path)
+
+
 def _fixture_history_payload(season: int, summary: dict, config: WebConfig) -> None:
     """Attach compact, human-readable audit versions to each fixture."""
     from .prediction_history import fixture_history
@@ -228,7 +272,16 @@ def _fixture_history_payload(season: int, summary: dict, config: WebConfig) -> N
 
 
 def dashboard_payload(config: WebConfig) -> dict:
-    """Build a fresh decision payload from the live engine contracts."""
+    return _dashboard(config)[0]
+
+
+def _dashboard(config: WebConfig):
+    """Build a fresh decision payload, and hand back the engine result too.
+
+    The strategy layer needs the recommendation's score matrices to
+    simulate from, and re-running the engine to get them would double the
+    cost of every page load.
+    """
     rnd = load_round(config.round_path)
     matches = load_matches(
         config.data_path,
@@ -330,6 +383,7 @@ def dashboard_payload(config: WebConfig) -> dict:
         summary["golden_goal"]["distribution"] = golden_goal_distribution(
             result.recommendation
         ).to_dict()
+    _emit_deadline_reminders(rnd, record.state, config)
     summary["changes_since_last_visit"] = changes_for_visit(
         season, rnd.round_number, path=config.prediction_history_path
     )
@@ -354,7 +408,7 @@ def dashboard_payload(config: WebConfig) -> dict:
             )
         },
         "teams": sorted(known_teams),
-    }
+    }, result
 
 
 def _cup_corpus(config: WebConfig, extended: bool) -> tuple[tuple[str, ...], list[int]]:
@@ -697,7 +751,9 @@ def _results_payload(rnd: Round, summary: dict, state: dict) -> dict:
     }
 
 
-def _league_payload(rnd: Round, state: dict, config: WebConfig) -> dict:
+def _league_payload(
+    rnd: Round, state: dict, config: WebConfig, recommendation=None
+) -> dict:
     """Score only the participant picks and results the user has recorded."""
     from .league import (
         OpponentRound, league_standings, load_opponent_history, opponent_profiles,
@@ -745,7 +801,21 @@ def _league_payload(rnd: Round, state: dict, config: WebConfig) -> dict:
         except (TypeError, ValueError):
             continue
     table = league_standings(history, results)
-    return {
+    # You belong in your own league table from the start. Without this you
+    # appear only once a round of yours has been scored, which also means
+    # the P(finish 1st) column has nobody to show a figure against.
+    player = state["player_name"]
+    if player and not any(row.participant == player for row in table):
+        from .league import LeagueStanding
+
+        # Ranked by the same rule as everyone else — joint with the others
+        # on nil points, not stranded at the bottom of a table of zeros.
+        table = (*table, LeagueStanding(
+            participant=player,
+            rank=1 + sum(1 for row in table if row.points > 0),
+            points=0, exact_scores=0, fixtures_scored=0, rounds_scored=0,
+        ))
+    payload = {
         "standings": [asdict(row) for row in table],
         "profiles": [asdict(profile) for profile in opponent_profiles(history)],
         "finish_first": None,
@@ -756,7 +826,113 @@ def _league_payload(rnd: Round, state: dict, config: WebConfig) -> dict:
         "strategy": {
             "mode": "NORMAL",
             "active": False,
-            "reason": "No complete opponent-aware round simulation is recorded yet; the maximum-EV model picks remain in use.",
+            "reason": (
+                "Import every rival's picks for this round to compare "
+                "strategies. Until the field is complete the maximum-EV "
+                "model picks remain in use."
+            ),
+        },
+    }
+    payload.update(_strategy_payload(rnd, table, history, state, recommendation))
+    return payload
+
+
+def _strategy_payload(rnd, standings, history, state, recommendation) -> dict:
+    """Rank pick sets by simulated P(finish first), when the field is known.
+
+    Returns an empty dict — leaving the honest "not active" default in
+    place — whenever the inputs are incomplete. `recommend_strategy`
+    already refuses a partial field; this only decides whether to ask.
+    """
+    from .league import recommend_strategy
+    from .strategy import DEFAULT_SCENARIOS, build_candidates, describe_candidate, simulate_scenarios
+
+    from .league import LeagueStanding
+
+    if recommendation is None:
+        return {}
+    season, player = _season_for(rnd), state["player_name"]
+    # You enter the standings only once a round of yours has been scored,
+    # but strategy advice is worthless after you have already entered — it
+    # exists to tell you what to enter. So join the table on nil points
+    # rather than making the feature wait for a result.
+    if not any(row.participant == player for row in standings):
+        standings = [
+            *standings,
+            LeagueStanding(participant=player, rank=len(standings) + 1, points=0,
+                           exact_scores=0, fixtures_scored=0, rounds_scored=0),
+        ]
+    if len(standings) < 2:
+        return {}
+    # Only the rivals: `recommend_strategy` checks the supplied picks cover
+    # exactly the opponents, and evaluates the player's own row from each
+    # candidate instead.
+    round_picks = [
+        record for record in history
+        if record.season == season
+        and record.round_number == rnd.round_number
+        and record.participant != player
+    ]
+    opponents = {row.participant for row in standings} - {player}
+    if not opponents or {r.participant for r in round_picks} != opponents:
+        return {}
+
+    candidates = build_candidates(recommendation, round_picks)
+    scenarios = simulate_scenarios(recommendation)
+    result = recommend_strategy(
+        standings, round_picks, candidates, scenarios,
+        participant=player, season=season, round_number=rnd.round_number,
+        minimum_scenarios=min(DEFAULT_SCENARIOS, len(scenarios)),
+    )
+    if result is None:
+        return {}
+
+    from .strategy import preferred
+
+    evaluations = (result.recommended, *result.alternatives)
+    by_name = {candidate.name: candidate for candidate in candidates}
+    max_ev = next(e for e in evaluations if e.name == "MAX_EV")
+    # `recommend_strategy` ranks on the raw simulated figures. Deviating
+    # costs certain expected points, so it is only worth doing when the
+    # gain survives the simulation's own sampling error.
+    chosen = preferred(evaluations, len(scenarios))
+    picks = by_name[chosen.name].picks
+    return {
+        "finish_first": {
+            "probability": chosen.finish_first_probability,
+            "expected_final_points": chosen.expected_round_points,
+            "simulations": chosen.simulations,
+        },
+        "finish_first_reason": (
+            f"Estimated from {chosen.simulations} simulated rounds drawn from "
+            "the model's own score distributions, against your rivals' "
+            "imported picks."
+        ),
+        "strategy": {
+            "mode": "NORMAL" if chosen.name == "MAX_EV" else "DIFFERENTIATE",
+            "active": chosen.name != "MAX_EV",
+            "reason": (
+                describe_candidate(by_name[chosen.name], recommendation)
+                + f" P(finish first) {chosen.finish_first_probability:.1%}"
+                + (
+                    ""
+                    if chosen.name == "MAX_EV"
+                    else f", against {max_ev.finish_first_probability:.1%} for the "
+                    f"maximum-EV picks — worth {max_ev.expected_round_points - chosen.expected_round_points:.2f} "
+                    "expected points to chase."
+                )
+            ),
+            "picks": [f"{h}-{a}" for h, a in picks],
+            "candidates": [
+                {
+                    "name": evaluation.name,
+                    "finish_first_probability": evaluation.finish_first_probability,
+                    "expected_round_points": evaluation.expected_round_points,
+                    "description": describe_candidate(by_name[evaluation.name], recommendation),
+                    "recommended": evaluation.name == chosen.name,
+                }
+                for evaluation in (result.recommended, *result.alternatives)
+            ],
         },
     }
 
@@ -770,6 +946,7 @@ def _alerts_payload(activity: list[dict], state: dict) -> dict:
         "MARKET_MAJOR_MOVEMENT": "market_movement",
         "LINEUP_CONFIRMED": "lineup_impact",
         "LINEUP_SURPRISE": "lineup_impact",
+        "DEADLINE_APPROACHING": "deadline_reminder",
     }
     enabled = state["notifications"]
     visible = [
@@ -792,7 +969,7 @@ def _alerts_payload(activity: list[dict], state: dict) -> dict:
 
 def app_payload(config: WebConfig) -> dict:
     """One truthful payload for all UI phases; absent evidence remains absent."""
-    payload = dashboard_payload(config)
+    payload, engine_result = _dashboard(config)
     rnd = load_round(config.round_path)
     state = load_ui_state(config.ui_state_path)
     registry = load_registry(config.registry_path)
@@ -812,7 +989,9 @@ def app_payload(config: WebConfig) -> dict:
             },
             "results": _results_payload(rnd, payload["round"], state),
             "opponents": state["opponents"],
-            "league": _league_payload(rnd, state, config),
+            "league": _league_payload(
+                rnd, state, config, engine_result.recommendation
+            ),
             "sources": sources,
             "model": {
                 "version": payload["round"]["model_version"],

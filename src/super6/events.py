@@ -47,6 +47,9 @@ class EventType(str, Enum):
     CLAIM_REJECTED = "CLAIM_REJECTED"
     CLAIM_SUPERSEDED = "CLAIM_SUPERSEDED"
     KNOWLEDGE_EXTRACTION_FAILED = "KNOWLEDGE_EXTRACTION_FAILED"
+    # Increment 5 — deadline reminders. A missed deadline scores nothing,
+    # which costs more than any forecasting improvement can recover.
+    DEADLINE_APPROACHING = "DEADLINE_APPROACHING"
 
 
 class Severity(str, Enum):

@@ -281,7 +281,36 @@ function leagueView() {
   const name = appData.settings.league_name;
   if (!league.standings.length) return `${pageHeader(name, "League position", "Add opponent predictions and entered picks, then record final results to build the private-league table.")}${emptyState("No scored private-league rounds yet", "Opponent selections are kept locally and never collected from Sky.", '<button class="button" data-page="opponents">Import opponent predictions</button>')}`;
   const first = league.finish_first ? percent(league.finish_first.probability) : "Not estimated";
-  return `${pageHeader(name, "League position", "Every point below is calculated from your recorded picks and final results.")}<section class="stat-table-card"><table><thead><tr><th>Rank</th><th>Player</th><th>Points</th><th>Exact</th><th>Rounds</th><th>P(Finish 1st)</th></tr></thead><tbody>${league.standings.map((row) => `<tr class="${row.participant === appData.settings.player_name ? "you-row" : ""}"><td>${row.rank}</td><td>${escapeHtml(row.participant)}</td><td>${row.points}</td><td>${row.exact_scores}</td><td>${row.rounds_scored}</td><td>${row.participant === appData.settings.player_name ? first : "—"}</td></tr>`).join("")}</tbody></table></section><section class="callout"><strong>Strategy: ${escapeHtml(league.strategy.mode)}</strong><span>${escapeHtml(league.strategy.reason)} ${escapeHtml(league.finish_first_reason)}</span></section>`;
+  return `${pageHeader(name, "League position", "Every point below is calculated from your recorded picks and final results.")}<section class="stat-table-card"><table><thead><tr><th>Rank</th><th>Player</th><th>Points</th><th>Exact</th><th>Rounds</th><th>P(Finish 1st)</th></tr></thead><tbody>${league.standings.map((row) => `<tr class="${row.participant === appData.settings.player_name ? "you-row" : ""}"><td>${row.rank}</td><td>${escapeHtml(row.participant)}</td><td>${row.points}</td><td>${row.exact_scores}</td><td>${row.rounds_scored}</td><td>${row.participant === appData.settings.player_name ? first : "—"}</td></tr>`).join("")}</tbody></table></section>${strategyPanel()}<section class="callout muted"><strong>How P(1st) is estimated</strong><span>${escapeHtml(league.finish_first_reason)}</span></section>`;
+}
+
+// The frozen model maximises points for one player alone. A private
+// league is a different game: when the field converges on the same
+// favourites, shared picks cannot separate you from it. This panel shows
+// what deviating costs in points and buys in P(finish first) — it never
+// applies anything on its own.
+function strategyPanel() {
+  const strategy = appData.league.strategy;
+  const candidates = strategy.candidates || [];
+  if (!candidates.length) {
+    return `<section class="callout muted"><strong>Strategy: ${escapeHtml(strategy.mode)}</strong><span>${escapeHtml(strategy.reason)}</span></section>`;
+  }
+  const best = candidates.find((candidate) => candidate.recommended) || candidates[0];
+  const maxEv = candidates.find((candidate) => candidate.name === "MAX_EV");
+  const rows = candidates.map((candidate) => `<tr class="${candidate.recommended ? "recommended" : ""}">
+    <td>${candidate.name === "MAX_EV" ? "Maximum EV" : `Differentiate (${candidate.name.split("_").pop()})`}</td>
+    <td>${percent(candidate.finish_first_probability)}</td>
+    <td>${candidate.expected_round_points.toFixed(2)}</td>
+    <td class="strategy-detail">${escapeHtml(candidate.description)}</td></tr>`).join("");
+  const gain = maxEv ? best.finish_first_probability - maxEv.finish_first_probability : 0;
+  const cost = maxEv ? maxEv.expected_round_points - best.expected_round_points : 0;
+  return `<section class="strategy-card ${strategy.active ? "active" : ""}">
+    <div class="section-heading"><div><p class="eyebrow">Opponent-aware strategy</p><h2>${strategy.active ? "Deviating improves your chance of winning" : "The maximum-EV picks are already best"}</h2>
+    <p class="subtitle">${escapeHtml(strategy.reason)}</p></div>
+    ${strategy.active ? `<button class="button" data-action="apply-strategy">Use these picks</button>` : ""}</div>
+    ${strategy.active ? `<p class="subtitle strategy-tradeoff"><b>+${(gain * 100).toFixed(1)}pp</b> chance of finishing first, for <b>${cost.toFixed(2)}</b> expected points given up. Winning a league is about finishing above your rivals, not scoring well in isolation — but this is a gamble, and it loses more often than it wins.</p>` : ""}
+    <div class="stat-table-card"><table><thead><tr><th>Approach</th><th>P(finish 1st)</th><th>Expected pts</th><th>Deviation</th></tr></thead><tbody>${rows}</tbody></table></div>
+  </section>`;
 }
 
 function roundKey() {
@@ -554,6 +583,15 @@ document.addEventListener("click", async (event) => {
   if (activityTab) { activityFilter = activityTab.dataset.activityFilter; renderPage(); }
   const action = event.target.closest("[data-action]")?.dataset.action;
   if (action === "mark-entered") openEntryDialog();
+  if (action === "apply-strategy") {
+    const picks = appData.league.strategy.picks;
+    if (picks?.length) {
+      try {
+        await saveOverrides(picks);
+        toast("Strategy picks saved as your picks. The model recommendation is unchanged underneath.");
+      } catch (error) { toast(error.message); }
+    }
+  }
   if (action === "cup-extended" && cupForecast) {
     try {
       cupForecast = await post("/api/cup-prediction", { home: cupForecast.fixture.home_team, away: cupForecast.fixture.away_team, extended: true });
