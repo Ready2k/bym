@@ -303,3 +303,81 @@ def test_engine_reports_market_movement_against_the_previous_poll(conn, router, 
     report = engine.format_engine_report(result)
     assert "moved:" in report
     assert "model vs market" in report
+
+
+def _corpus_round(*, odds_on_unknown):
+    """Round where 'Nowhere FC' is outside any corpus we hand the engine."""
+    from super6.round import Fixture, Round
+
+    return Round(
+        round_number=14,
+        deadline_at=ROUND.deadline_at,
+        fixtures=(
+            Fixture("Strong", "Nowhere FC",
+                    odds=(1.30, 5.0, 9.0) if odds_on_unknown else None),
+            Fixture("Strong", "Weak", odds=(2.0, 3.4, 3.6)),
+        ),
+    )
+
+
+def test_priced_fixture_outside_the_corpus_falls_back_to_the_market(conn, router):
+    """A cup tie against an unknown team is forecast from the market rather
+    than from the league-average prior, and is never called PHASE1_MODEL_V1."""
+    from super6.model.market import implied_result_probs
+
+    result = engine.run_engine(
+        conn, _corpus_round(odds_on_unknown=True), router, now=NOW,
+        known_teams={"Strong", "Weak"}, corpus="E0+E1",
+    )
+    fallback, normal = result.round_summary.fixtures
+    assert fallback.forecast_basis == "MARKET_ONLY_FALLBACK"
+    assert fallback.modellability.modellable is False
+    assert normal.forecast_basis == "PHASE1_MODEL_V1"
+
+    # w=1.0 means the result probabilities ARE the market's.
+    market_h, _, _ = implied_result_probs(1.30, 5.0, 9.0)
+    recommended = result.recommendation.fixtures[0]
+    assert recommended.matrix.p_home_win == pytest.approx(market_h, abs=1e-9)
+    assert any("market-only" in n for n in result.notes)
+
+
+def test_unpriced_fixture_outside_the_corpus_has_no_forecast_at_all(conn, router):
+    result = engine.run_engine(
+        conn, _corpus_round(odds_on_unknown=False), router, now=NOW,
+        known_teams={"Strong", "Weak"}, corpus="E0+E1",
+    )
+    assert result.round_summary.fixtures[0].forecast_basis == "NONE"
+    assert any("no odds either" in n for n in result.notes)
+
+
+def test_market_fallback_leaves_modellable_fixtures_bit_identical(conn, router):
+    """The fallback must not perturb the fixtures the frozen model owns."""
+    priced = _corpus_round(odds_on_unknown=True)
+    with_fallback = engine.run_engine(
+        conn, priced, router, now=NOW,
+        known_teams={"Strong", "Weak"}, corpus="E0+E1",
+    )
+    without = engine.run_engine(conn, priced, router, now=NOW)  # no corpus => all modellable
+    a = with_fallback.round_summary.fixtures[1]
+    b = without.round_summary.fixtures[1]
+    assert (a.pick, a.expected_points, a.result_probability, a.confidence) == (
+        b.pick, b.expected_points, b.result_probability, b.confidence
+    )
+
+
+def test_golden_goal_still_counts_market_only_fixtures(conn, router):
+    """The GG hazard uses lambda_home + lambda_away — the goal *total*.
+
+    A neutral prior is a defensible total even when it is a useless guess
+    at who wins, whereas dropping the fixture would assert it produces no
+    goals and push the recommended minute later across the whole round.
+    """
+    priced = _corpus_round(odds_on_unknown=True)
+    fallback = engine.run_engine(
+        conn, priced, router, now=NOW,
+        known_teams={"Strong", "Weak"}, corpus="E0+E1",
+    )
+    plain = engine.run_engine(conn, priced, router, now=NOW)
+    assert fallback.round_summary.golden_goal.minute == (
+        plain.round_summary.golden_goal.minute
+    )

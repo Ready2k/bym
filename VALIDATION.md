@@ -60,7 +60,46 @@ and exact% are "market result + naive score heuristic".
 | 2026-08-07 | Determinism fix (v1.0.1), holdout NOT re-run | Hash-randomised set iteration made runs vary ~0.02 pts/round; no model semantics changed |
 | 2026-08-08 | **PROTOCOL BREACH — spent holdout re-run and grid-searched. NO modelling change made.** | Logged below. Model untouched: `FROZEN_PHASE1_V1` unchanged, no ξ/blend/ablation decision taken |
 | 2026-08-08 | Market blend weight RE-EXAMINED on legitimate seasons, w=0.5 RETAINED | 2023/24 favours w=1.0 (8.35 vs 8.28), 2024/25 favours w=0.5 (8.24 vs 8.14). Seasons disagree; mean pts/round over w∈[0.5,1.0] spans 0.04 — noise. Pure model (w=0) is clearly worst (7.68 mean). No basis to move a frozen parameter |
+| 2026-08-08 | Market-only fallback (w=1.0) ADOPTED for fixtures outside the corpus; unpriced ones get no forecast | Not a model change — in-corpus fixtures byte-identical, `FROZEN_PHASE1_V1` unmodified. Unvalidatable here: the corpus contains zero cross-division matches. Rests on the three-season w-flatness plus a structural argument; must be judged prospectively on 2026/27. Detail below |
 | 2026-08-08 | CONF v1 bands CHECKED and found sound — no change | Pooled 2,796 fixtures: HIGH 1.892 pts (stated 67.9%, realised 72.6%), MEDIUM 1.375 (54.8/53.4), LOW 1.212 (44.3/44.5). Monotone in points, calibrated within 1.4pp on MEDIUM and 0.3pp on LOW. An earlier claim that the bands were inverted was an analysis error — see below |
+
+## Market-only fallback for out-of-corpus fixtures, 2026-08-08
+
+Super 6 rounds include FA Cup ties a few times a season. Those can pair a
+corpus team with one the model has never seen, and PHASE1_MODEL_V1 then
+issues the league-average prior — which does not merely add uncertainty,
+it can make a lower-division side favourite. Refusing to show a pick was
+honest but left the user with a blank on a weekend they must still enter
+six scores.
+
+Such a fixture is now forecast at **w=1.0** when odds exist: result
+probabilities entirely from the market, within-result scoreline shape from
+the matrix. The split is deliberate — for an unknown team it is the
+relative strength that is broken, not the shape of a 1-0 versus a 2-0
+given a home win. Labelled `MARKET_ONLY_FALLBACK`, never PHASE1_MODEL_V1.
+With no odds the basis is `NONE` and no pick is shown.
+
+**This is not a model change.** Fixtures inside the corpus are untouched
+and byte-identical (pinned by test). `FROZEN_PHASE1_V1` is unmodified. The
+only path that changes is one that previously produced either a knowingly
+wrong number or nothing.
+
+**It cannot be validated on this corpus.** Football-Data.co.uk ships one
+file per division-season, so every one of the 17,630 matches is
+within-division: there is not a single cross-division fixture to hold out.
+The w=1.0 choice rests on the three-season evidence that w∈[0.5,1.0] is
+flat on Super 6 points while log loss mildly favours more market weight,
+plus the structural argument above — not on a measurement of this case.
+
+It must therefore be judged **prospectively on 2026/27**, like any other
+decision touching w. Note the constraint compounds: 2025/26 is already
+spent and grid-searched, so it cannot be used to revisit this either.
+
+Known limitation, recorded rather than discovered later: the trigger is an
+*unknown team*, not *a cup match*. An FA Cup tie between two corpus teams
+passes the check and is forecast exactly as if it were a league game, with
+squad rotation unmodelled. `Fixture` has no competition field, so the
+system cannot currently tell those two cases apart.
 
 ## Protocol breach, 2026-08-08
 

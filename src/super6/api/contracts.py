@@ -174,6 +174,14 @@ class FixtureForecast(Contract):
     confidence: str               # HIGH | MEDIUM | LOW — never a number
     model_pick: str
     modellability: Modellability = field(default_factory=Modellability)
+    # What produced this forecast. Round-level `model_version` cannot say
+    # this, because one fixture in a round may be outside the model's reach
+    # while the other five are not.
+    #   PHASE1_MODEL_V1      the frozen model
+    #   MARKET_ONLY_FALLBACK unmodellable, but priced — result from the
+    #                        market, scoreline shape from a neutral prior
+    #   NONE                 unmodellable and unpriced; no usable forecast
+    forecast_basis: str = "PHASE1_MODEL_V1"
     strategy_pick: str | None = None
     user_pick: str | None = None
     status: str = "SCHEDULED"

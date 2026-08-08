@@ -22,7 +22,12 @@ from pathlib import Path
 
 from . import events as ev
 from .api import service
-from .api.contracts import AvailabilityState, MarketState, RoundSummary
+from .api.contracts import (
+    AvailabilityState,
+    MarketState,
+    Modellability,
+    RoundSummary,
+)
 from .config import FROZEN_PHASE1_V1
 from .db import utcnow
 from .knowledge.config import ExtractorConfig, ExtractorMode
@@ -35,6 +40,8 @@ def to_iso_safe(value: datetime) -> str:
 
     return to_iso(value)
 
+
+_MODELLABLE = Modellability()
 
 QUANTITATIVE_NOTE = (
     "Team and news intelligence at this phase has quantitative impact: "
@@ -214,8 +221,44 @@ def run_engine(
             "no dispersion available)"
         )
 
+    # ---- modellability, decided BEFORE the forecast ----------------------
+    # It has to come first: a fixture the model cannot judge is forecast
+    # differently, not merely annotated afterwards.
+    modellabilities = {}
+    if known_teams is not None:
+        modellabilities = {
+            (f.home, f.away): service.build_modellability(
+                f.home, f.away, known_teams, corpus
+            )
+            for f in rnd.fixtures
+        }
+    market_only = {
+        (f.home, f.away)
+        for f in rnd.fixtures
+        if not modellabilities.get((f.home, f.away), _MODELLABLE).modellable
+        and f.odds is not None
+    }
+    unpriced = {
+        (f.home, f.away)
+        for f in rnd.fixtures
+        if not modellabilities.get((f.home, f.away), _MODELLABLE).modellable
+        and f.odds is None
+    }
+    if market_only:
+        notes.append(
+            f"forecast: {len(market_only)} fixture(s) outside the {corpus} "
+            "corpus fell back to market-only (w=1.0); not PHASE1_MODEL_V1"
+        )
+    if unpriced:
+        notes.append(
+            f"forecast: {len(unpriced)} fixture(s) outside the {corpus} "
+            "corpus have no odds either — no usable forecast for them"
+        )
+
     # ---- forecast layer -------------------------------------------------
-    recommendation = recommend_round(router, rnd, FROZEN_PHASE1_V1)
+    recommendation = recommend_round(
+        router, rnd, FROZEN_PHASE1_V1, market_only=market_only
+    )
 
     # ---- market attention layer (§6, §21, §33) --------------------------
     # Movement and divergence are computed here and nowhere near the
@@ -283,8 +326,7 @@ def run_engine(
     summary = service.build_round_summary(
         rnd, recommendation, markets, availabilities,
         submission_state=submission_record.state,
-        known_teams=known_teams,
-        corpus=corpus,
+        modellabilities=modellabilities,
     )
     return EngineRunResult(
         round_summary=summary,

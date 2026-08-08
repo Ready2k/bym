@@ -18,7 +18,7 @@ from ..availability.model import LineupKind
 from ..availability.reconcile import resolve_state
 from ..db import to_iso
 from ..model import golden_goal
-from ..recommend import RoundRecommendation
+from ..recommend import MARKET_ONLY_BASIS, RoundRecommendation
 from ..round import Round
 from ..sources.consensus import Consensus
 from .contracts import (
@@ -158,6 +158,20 @@ def build_modellability(
     )
 
 
+def _basis_of(recommendation, modellability: Modellability | None) -> str:
+    """Resolve what actually produced this forecast.
+
+    A fixture the model cannot judge and which has no market to fall back
+    on yields NONE: numbers still exist in the recommendation, but nothing
+    in them is worth calling a forecast, and the UI needs to be told that
+    rather than inferring it.
+    """
+    basis = getattr(recommendation, "basis", "PHASE1_MODEL_V1")
+    if modellability is not None and not modellability.modellable:
+        return basis if basis == MARKET_ONLY_BASIS else "NONE"
+    return basis
+
+
 def build_fixture_forecast(
     recommendation,
     market: MarketState | None = None,
@@ -186,6 +200,7 @@ def build_fixture_forecast(
         confidence=recommendation.confidence,
         model_pick=recommendation.pick,
         modellability=modellability or Modellability(),
+        forecast_basis=_basis_of(recommendation, modellability),
         alternatives=alternatives,
         market=market,
         availability=availability,
@@ -198,21 +213,24 @@ def build_round_summary(
     markets: dict[tuple[str, str], MarketState] | None = None,
     availabilities: dict[tuple[str, str], AvailabilityState] | None = None,
     submission_state: str = "NOT_READY",
-    known_teams: set[str] | None = None,
-    corpus: str = "E0+E1",
+    modellabilities: dict[tuple[str, str], Modellability] | None = None,
 ) -> RoundSummary:
+    """`modellabilities` are decided by the caller, not re-derived here.
+
+    The verdict changes how a fixture is *forecast*, so it must already
+    have been made before the recommendation existed. Recomputing it at
+    read-model time would create a second copy of the same decision, free
+    to drift from the one the forecast actually used.
+    """
     markets = markets or {}
     availabilities = availabilities or {}
+    modellabilities = modellabilities or {}
     fixtures = [
         build_fixture_forecast(
             fixture,
             markets.get((fixture.home, fixture.away)),
             availabilities.get((fixture.home, fixture.away)),
-            modellability=(
-                build_modellability(fixture.home, fixture.away, known_teams, corpus)
-                if known_teams is not None
-                else None
-            ),
+            modellability=modellabilities.get((fixture.home, fixture.away)),
         )
         for fixture in recommendation.fixtures
     ]

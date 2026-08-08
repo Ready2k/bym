@@ -57,6 +57,20 @@ function isUnmodellable(fixture) {
   return fixture.modellability?.modellable === false;
 }
 
+// A fixture outside the corpus but with a market has a usable forecast —
+// the market's, not the model's. Only an unpriced one has nothing.
+function isMarketOnly(fixture) {
+  return fixture.forecast_basis === "MARKET_ONLY_FALLBACK";
+}
+
+function hasNoForecast(fixture) {
+  return fixture.forecast_basis === "NONE";
+}
+
+function marketOnlyNote(fixture) {
+  return `${unknownTeamList(fixture.modellability)} outside the ${fixture.modellability?.corpus || "training"} corpus, so this pick comes from the betting market rather than the model — the result probabilities are the market's, the scoreline shape a neutral prior. It is not PHASE1_MODEL_V1.`;
+}
+
 function unknownTeamList(modellability) {
   const teams = modellability?.unknown_teams || [];
   return teams.length === 1 ? `${teams[0]} is` : `${teams.join(" and ")} are`;
@@ -115,11 +129,11 @@ function fixtureCard(fixture, index, compact = false) {
   const pick = effectivePick(fixture);
   const overridden = fixture.user_pick && fixture.user_pick !== fixture.pick;
   const change = fixtureChange(index);
-  if (isUnmodellable(fixture) && !fixture.user_pick) {
+  if (hasNoForecast(fixture) && !fixture.user_pick) {
     return `<button class="fixture-card unmodellable ${compact ? "compact" : ""}" data-fixture="${index}" aria-label="No recommendation for ${escapeHtml(fixture.home_team)} versus ${escapeHtml(fixture.away_team)}">
       <div class="card-topline"><div class="teams"><span class="team-line">${teamBadge(fixture.home_team)}${escapeHtml(fixture.home_team)}</span><span class="team-line">${teamBadge(fixture.away_team)}${escapeHtml(fixture.away_team)}</span></div><span class="status-pill prohibited">NO PICK</span></div>
       <div class="score no-pick" aria-label="No recommendation available">—</div>
-      <p class="unmodellable-note">${escapeHtml(modellabilityNote(fixture.modellability))}</p>
+      <p class="unmodellable-note">${escapeHtml(modellabilityNote(fixture.modellability))} Add odds for this fixture and a market-based pick becomes available.</p>
       <div class="card-footer"><span class="card-link">See what the model returned</span><span aria-hidden="true">›</span></div>
     </button>`;
   }
@@ -128,7 +142,8 @@ function fixtureCard(fixture, index, compact = false) {
     <div class="card-topline"><div class="teams"><span class="team-line">${teamBadge(fixture.home_team)}${escapeHtml(fixture.home_team)}</span><span class="team-line">${teamBadge(fixture.away_team)}${escapeHtml(fixture.away_team)}</span></div>${overridden ? '<span class="status-pill neutral">YOUR PICK</span>' : '<span class="versus">v</span>'}</div>
     <div class="score" aria-label="Recommended score ${pick}"><strong>${pick.split("-")[0]}</strong><span>–</span><strong>${pick.split("-")[1]}</strong></div>
     <div class="metric-row"><div class="metric"><span>Result</span><strong>${percent(fixture.result_probability)}</strong></div><div class="metric"><span>Score</span><strong>${percent(fixture.score_probability)}</strong></div><div class="metric"><span>EV</span><strong>${fixture.expected_points.toFixed(2)}</strong></div></div>
-    <div class="card-footer"><span>${overridden ? `Model: ${fixture.pick}` : `Model pick: ${fixture.model_pick}`}</span><span class="confidence ${fixture.confidence.toLowerCase()}">${fixture.confidence}</span></div>${changedCopy}
+    <div class="card-footer"><span>${isMarketOnly(fixture) ? `Market pick: ${escapeHtml(fixture.pick)}` : overridden ? `Model: ${fixture.pick}` : `Model pick: ${fixture.model_pick}`}</span><span class="confidence ${fixture.confidence.toLowerCase()}">${fixture.confidence}</span></div>${changedCopy}
+    ${isMarketOnly(fixture) ? `<p class="basis-note">Market-derived — outside the model's corpus. Not PHASE1_MODEL_V1.</p>` : ""}
     <div class="card-footer"><span class="card-link">Why this pick?</span><span aria-hidden="true">›</span></div>
   </button>`;
 }
@@ -167,8 +182,14 @@ function homeView() {
   const [dataQuality, qualityCopy] = quality(round.fixtures);
   const changed = round.submission_state === "CHANGED_AFTER_SUBMISSION" || round.submission_state === "CHANGED_SINCE_REVIEW";
   const alerts = appData.alerts?.items || [];
-  const unmodellable = round.fixtures.filter(isUnmodellable);
-  const unmodellableBanner = unmodellable.length ? `<div class="change-alert danger"><strong>${unmodellable.length} fixture${unmodellable.length === 1 ? "" : "s"} cannot be modelled</strong> ${escapeHtml(unmodellable.map((fixture) => `${fixture.home_team} v ${fixture.away_team}`).join("; "))} — outside the ${escapeHtml(unmodellable[0].modellability.corpus)} training corpus. No pick is shown. The expected round score above still counts ${unmodellable.length === 1 ? "this fixture" : "these fixtures"}, so it is overstated.</div>` : "";
+  const blank = round.fixtures.filter(hasNoForecast);
+  const marketOnly = round.fixtures.filter(isMarketOnly);
+  const name = (fixture) => `${fixture.home_team} v ${fixture.away_team}`;
+  const corpus = (blank[0] || marketOnly[0])?.modellability?.corpus || "training";
+  const unmodellableBanner = [
+    blank.length ? `<div class="change-alert danger"><strong>${blank.length} fixture${blank.length === 1 ? "" : "s"} cannot be forecast</strong> ${escapeHtml(blank.map(name).join("; "))} — outside the ${escapeHtml(corpus)} corpus with no odds to fall back on. No pick is shown. The expected round score above still counts ${blank.length === 1 ? "this fixture" : "these fixtures"}, so it is overstated.</div>` : "",
+    marketOnly.length ? `<div class="change-alert notice"><strong>${marketOnly.length} market-derived pick${marketOnly.length === 1 ? "" : "s"}</strong> ${escapeHtml(marketOnly.map(name).join("; "))} — outside the ${escapeHtml(corpus)} corpus, so the market supplied the result probabilities instead of the model. Usable, but not PHASE1_MODEL_V1.</div>` : "",
+  ].join("");
   return `${pageHeader(`Super 6 — Round ${round.round_number}`, "Your round, in one view.", `Deadline ${displayDate(round.deadline_at)}`, monitorCard())}
     <section class="command-strip" aria-label="Round status"><div class="deadline-card"><span class="eyebrow">Time to deadline</span><strong id="countdown">—</strong><span>${displayDate(round.deadline_at)}</span></div><div class="round-kpi"><span>Expected round score <button class="info" data-info="ev" aria-label="Explain expected points">?</button></span><strong>${round.expected_round_score.toFixed(2)}</strong><small>Across all six picks</small></div><div class="round-kpi submission-kpi"><span>Entry status</span><strong>${submissionState}</strong><small>${submissionDetail}</small></div></section>
     ${leagueSummary()}
@@ -352,10 +373,12 @@ function openFixture(index) {
   const evidence = fixture.availability?.items?.length ? fixture.availability.items.map((item) => `<li>${escapeHtml(item.player_name)} — ${escapeHtml(titleCase(item.status))}; ${escapeHtml(item.certainty)} via ${escapeHtml(item.source)}.</li>`).join("") : `<li>No individual team-news item is recorded for this fixture.</li>`;
   const history = fixture.history?.length ? fixture.history.map((version) => `<li>${escapeHtml(displayDate(version.recorded_at))}: ${escapeHtml(version.pick)} — ${escapeHtml(version.reason || "Forecast recorded")}</li>`).join("") : `<li>No earlier forecast version is persisted yet.</li>`;
   const [home, away] = effectivePick(fixture).split("-");
-  const unmodellable = isUnmodellable(fixture);
+  const unmodellable = hasNoForecast(fixture);
   const unmodellableBanner = unmodellable
-    ? `<section class="danger-card"><p class="eyebrow">No recommendation</p><h3>The model cannot forecast this fixture.</h3><p>${escapeHtml(modellabilityNote(fixture.modellability))}</p><p class="subtitle">The figures below are raw model output, kept visible so the failure can be checked. That does not make them usable.</p></section>`
-    : "";
+    ? `<section class="danger-card"><p class="eyebrow">No recommendation</p><h3>The model cannot forecast this fixture.</h3><p>${escapeHtml(modellabilityNote(fixture.modellability))}</p><p class="subtitle">Add odds for this fixture and a market-based pick becomes available. The figures below are raw model output, kept visible so the failure can be checked. That does not make them usable.</p></section>`
+    : isMarketOnly(fixture)
+      ? `<section class="notice-card"><p class="eyebrow">Market-derived pick</p><h3>This forecast comes from the market, not the model.</h3><p>${escapeHtml(marketOnlyNote(fixture))}</p></section>`
+      : "";
   // Leading with the scoreline would present the fallback as a recommendation,
   // which is the exact failure the banner underneath is there to prevent.
   const headlineScore = unmodellable ? "—" : escapeHtml(effectivePick(fixture).replace("-", " – "));
@@ -373,9 +396,14 @@ function openInfo(title, content) {
 
 function openEntryDialog() {
   const round = appData.round;
-  const rows = round.fixtures.map((fixture) => `<div><span>${shortTeam(fixture.home_team)} ${escapeHtml(fixture.home_team)} v ${escapeHtml(fixture.away_team)} ${shortTeam(fixture.away_team)}</span><strong>${effectivePick(fixture)}</strong>${isUnmodellable(fixture) ? '<em class="entry-flag">not modelled</em>' : ""}</div>`).join("");
-  const unmodellable = round.fixtures.filter(isUnmodellable);
-  const unmodellableWarning = unmodellable.length ? `<section class="danger-card"><h3>${unmodellable.length} fixture${unmodellable.length === 1 ? " has" : "s have"} no model recommendation.</h3><p>${escapeHtml(unmodellable.map((fixture) => `${fixture.home_team} v ${fixture.away_team}`).join("; "))} — the score shown is raw model output for a team outside the training corpus, not a recommendation. Choose it yourself before recording this entry.</p></section>` : "";
+  const rows = round.fixtures.map((fixture) => `<div><span>${shortTeam(fixture.home_team)} ${escapeHtml(fixture.home_team)} v ${escapeHtml(fixture.away_team)} ${shortTeam(fixture.away_team)}</span><strong>${effectivePick(fixture)}</strong>${hasNoForecast(fixture) ? '<em class="entry-flag">no forecast</em>' : isMarketOnly(fixture) ? '<em class="entry-flag market">market</em>' : ""}</div>`).join("");
+  const blank = round.fixtures.filter(hasNoForecast);
+  const marketOnly = round.fixtures.filter(isMarketOnly);
+  const label = (fixture) => `${fixture.home_team} v ${fixture.away_team}`;
+  const unmodellableWarning = [
+    blank.length ? `<section class="danger-card"><h3>${blank.length} fixture${blank.length === 1 ? " has" : "s have"} no forecast at all.</h3><p>${escapeHtml(blank.map(label).join("; "))} — the score shown is raw model output for a team outside the training corpus, not a recommendation. Choose it yourself before recording this entry.</p></section>` : "",
+    marketOnly.length ? `<section class="notice-card"><h3>${marketOnly.length} pick${marketOnly.length === 1 ? " is" : "s are"} market-derived.</h3><p>${escapeHtml(marketOnly.map(label).join("; "))} — taken from the odds you entered, not from the model. Usable, but worth your own sanity check.</p></section>` : "",
+  ].join("");
   $("#entry-detail").innerHTML = `<p class="eyebrow">Manual entry confirmation</p><h2>Have you entered these in Super 6?</h2><p class="subtitle">This only records your confirmation. It does not submit or update anything on Sky.</p>${unmodellableWarning}<div class="entry-list">${rows}<div><span>Golden Goal</span><strong>Minute ${round.golden_goal.minute}</strong></div></div><div class="dialog-actions"><button class="plain-button" data-close="entry-dialog">Not yet</button><button class="button" id="confirm-entered">Yes — mark as entered</button></div>`;
   $("#entry-dialog").showModal();
 }
