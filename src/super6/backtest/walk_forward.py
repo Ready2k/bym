@@ -35,6 +35,7 @@ import pandas as pd
 from ..config import DEFAULT_MODEL, FROZEN_PHASE1_V1, ModelConfig
 from ..model import dixon_coles, elo, market, priors
 from ..model.matrix import score_matrix
+from ..recommend import confidence_v1
 from .metrics import BacktestMetrics, evaluate
 
 FAVOURITE_SCORELINES = {"H": (2, 1), "D": (1, 1), "A": (1, 2)}
@@ -162,6 +163,7 @@ def run_model(
                 )
                 m = market.blend_matrix(m, mh, md, ma, market_blend)
             ph, pa = m.best_pick()
+            p_result, p_score = m.p_result(ph, pa), m.p_score(ph, pa)
             rows.append(
                 {
                     "date": date,
@@ -174,6 +176,13 @@ def run_model(
                     "p_h": m.p_home_win,
                     "p_d": m.p_draw,
                     "p_a": m.p_away_win,
+                    # §20's own columns, so CONF can be calibration-tested
+                    # here rather than only inspected live. Without p_score
+                    # the confidence rule cannot be reproduced offline at
+                    # all — it reads both probabilities, not just the result.
+                    "p_result": p_result,
+                    "p_score": p_score,
+                    "confidence": confidence_v1(p_result, p_score, cfg),
                 }
             )
 

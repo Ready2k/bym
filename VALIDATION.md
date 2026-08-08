@@ -58,11 +58,62 @@ and exact% are "market result + naive score heuristic".
 | 2026-08-07 | **MODEL FROZEN — PHASE1_MODEL_V1** (see MANIFEST.md) | No further modelling changes before the 2025/26 holdout runs |
 | 2026-08-07 | **HOLDOUT SPENT — 2025/26 evaluated once** | 7.47 pts/round vs fair market 7.42; paired CI [-0.470, +0.541], P(ahead) 0.543 → statistically indistinguishable from market. §24 target not demonstrated, not refuted. results/final_test_2025_26.md |
 | 2026-08-07 | Determinism fix (v1.0.1), holdout NOT re-run | Hash-randomised set iteration made runs vary ~0.02 pts/round; no model semantics changed |
+| 2026-08-08 | **PROTOCOL BREACH — spent holdout re-run and grid-searched. NO modelling change made.** | Logged below. Model untouched: `FROZEN_PHASE1_V1` unchanged, no ξ/blend/ablation decision taken |
+| 2026-08-08 | Market blend weight RE-EXAMINED on legitimate seasons, w=0.5 RETAINED | 2023/24 favours w=1.0 (8.35 vs 8.28), 2024/25 favours w=0.5 (8.24 vs 8.14). Seasons disagree; mean pts/round over w∈[0.5,1.0] spans 0.04 — noise. Pure model (w=0) is clearly worst (7.68 mean). No basis to move a frozen parameter |
+| 2026-08-08 | CONF v1 bands CHECKED and found sound — no change | Pooled 2,796 fixtures: HIGH 1.892 pts (stated 67.9%, realised 72.6%), MEDIUM 1.375 (54.8/53.4), LOW 1.212 (44.3/44.5). Monotone in points, calibrated within 1.4pp on MEDIUM and 0.3pp on LOW. An earlier claim that the bands were inverted was an analysis error — see below |
+
+## Protocol breach, 2026-08-08
+
+The 2025/26 holdout was re-run and a market-blend weight grid
+(w ∈ {0, .25, .5, .75, 1}) was evaluated **on it**, during an
+investigation into cup-fixture accuracy. The protocol above forbids this:
+a spent holdout may not be re-tested, and no modelling choice may react to
+its results.
+
+What was looked at: frozen-model metrics for 2025/26; the full §28
+ablation table on 2025/26; the w-grid on 2025/26; per-band CONF outcomes
+and p_result calibration on 2025/26.
+
+**No modelling change was made as a result, and none may now be justified
+by it.** `FROZEN_PHASE1_V1` is byte-identical, no ablation decision was
+taken, and the two decisions logged above were made on 2023/24 and 2024/25
+evidence only. The sole code change from this work is additive backtest
+instrumentation (`p_result`, `p_score`, `confidence` columns), which does
+not touch prediction semantics.
+
+Reruns reported 7.45 pts/round against the 7.47 on record. That gap is a
+reproducibility observation belonging to the v1.0.1 determinism entry
+above, not a modelling signal: 0.02 pts/round is immaterial beside the
+±0.5-ish uncertainty already established for this measurement.
+
+Descriptively, 2025/26 was materially less predictable for both the frozen
+model and the market benchmarks than 2023/24 or 2024/25. Recorded as an
+observation only — the evidence does not establish why.
+
+The lasting cost is that 2025/26 is now not merely spent but
+*grid-searched*, so it can never serve as evidence for any blend-weight or
+confidence-threshold choice, even indirectly. Treat any future proposal on
+those two parameters as requiring 2026/27 prospective evidence.
+
+### Analysis error that prompted it, recorded so it is not repeated
+
+An interim finding claimed the CONF bands were inverted (MEDIUM scoring
+below LOW) and that probabilities were systematically overdispersed. Both
+were artefacts. `confidence_v1` gates on `p_result` **and** `p_score`, but
+the backtest frame stored only H/D/A marginals, so the analysis
+reimplemented the rule from `p_result` alone — placing 160 fixtures in
+HIGH for 2025/26 where the real rule places 69. Pooling three seasons with
+the real rule shows the bands are monotone and well calibrated.
+
+The instrumentation added to `walk_forward.run_model` exists so this class
+of error is not available again: §20's CONF is now calibration-testable
+offline instead of only reproducible by hand, with
+`test_predictions_carry_the_columns_conf_calibration_needs` pinning it.
 
 ## Holdout status
 
 ```text
-2025/26   SPENT (2026-08-07)
+2025/26   SPENT (2026-08-07), GRID-SEARCHED (2026-08-08) — unusable
 ```
 
 There is no unspent holdout season remaining. Any future modelling change
