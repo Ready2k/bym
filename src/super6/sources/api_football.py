@@ -208,6 +208,20 @@ def fetch_injuries(
     )
 
 
+def fetch_injuries_for_fixture(
+    fixture_id: str, api_key: str, **kwargs
+) -> list[InjuryRecord]:
+    """Injuries for a single fixture.
+
+    The batch `ids` parameter is paid-only (confirmed live: "Free plans do
+    not have access to the Ids parameter"), so anything running on the
+    free tier must ask one fixture at a time.
+    """
+    return parse_injuries(
+        _request("injuries", api_key, {"fixture": fixture_id}, **kwargs)
+    )
+
+
 def parse_lineups(payload: list[dict], fixture_id: str) -> list[LineupRecord]:
     records = []
     for item in payload:

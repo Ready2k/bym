@@ -482,6 +482,118 @@ def cmd_shadow_report(args) -> int:
     return 0
 
 
+def cmd_research(args) -> int:
+    """AVAILABILITY_ORACLE_RESEARCH_V1 — sampling, harvest, prevalence.
+
+    Research only: never touches production data or the forecast path.
+    """
+    from .research import harvest as harvest_mod
+    from .research import prevalence, store as research_store
+    from .secrets import get_key
+
+    db_path = Path(args.research_db)
+
+    if args.research_action == "status":
+        with research_store.connect(db_path) as conn:
+            size = research_store.sample_size(conn)
+            if not size:
+                print("No sample drawn yet. Run: super6 research sample")
+                return 0
+            counts = research_store.progress(conn)
+            total = sum(counts.values())
+            done = sum(
+                counts.get(s, 0) for s in research_store.TERMINAL_STATES
+            )
+            print(f"{STUDY_LABEL}\n")
+            print(f"  sampled fixtures  {size}")
+            print(f"  requests          {done}/{total} settled")
+            for state, count in sorted(counts.items()):
+                print(f"    {state:18s} {count}")
+            for row in research_store.freezes(conn):
+                print(
+                    f"\n  FROZEN {row['frozen_at']}: {row['fixture_count']} "
+                    f"fixtures, sample_sha {row['sample_sha']}"
+                )
+        return 0
+
+    api_key = get_key("API_FOOTBALL_KEY")
+    if not api_key and args.research_action in {"sample", "harvest"}:
+        print("No API-Football key found.", file=sys.stderr)
+        return 1
+
+    if args.research_action == "sample":
+        with research_store.connect(db_path) as conn:
+            if research_store.sample_size(conn):
+                print(
+                    "Sample already drawn and frozen — the frame is "
+                    "immutable by design."
+                )
+                return 0
+            print("Building fixture universe (4 requests)...")
+            universe = harvest_mod.build_universe(api_key)
+            print(f"  universe: {len(universe)} fixtures")
+            outcome = harvest_mod.create_sample(conn, universe)
+            print(f"  sampled:  {outcome['created']} fixtures, seed {outcome['seed']}")
+            print(f"  requests: {outcome['requests']} queued")
+            for stratum, count in outcome["strata"].items():
+                print(f"    {stratum}: {count}")
+        return 0
+
+    if args.research_action == "harvest":
+        with research_store.connect(db_path) as conn:
+            result = harvest_mod.harvest(
+                conn, api_key, max_requests=args.max_requests,
+                pace_seconds=args.pace_seconds,
+            )
+            print(result.describe())
+            for note in result.notes:
+                print(f"  ! {note}")
+            written = harvest_mod.derive_facts(conn)
+            print(f"derived facts for {written} fixture(s)")
+            counts = research_store.progress(conn)
+            settled = sum(
+                counts.get(s, 0) for s in research_store.TERMINAL_STATES
+            )
+            print(f"progress: {settled}/{sum(counts.values())} requests settled")
+            if settled < sum(counts.values()):
+                print("Not complete. Re-run when quota allows; state is persisted.")
+        return 0
+
+    if args.research_action == "prevalence":
+        with research_store.connect(db_path) as conn:
+            counts = research_store.progress(conn)
+            settled = sum(
+                counts.get(s, 0) for s in research_store.TERMINAL_STATES
+            )
+            total = sum(counts.values())
+            if total and settled < total:
+                print(
+                    f"REFUSED: harvest is {settled}/{total} complete.\n"
+                    "The pre-registration says analyse the full sample once, "
+                    "not peek as it accumulates. Finish the harvest first, or "
+                    "pass --allow-partial if you accept that this is not the "
+                    "pre-registered analysis.",
+                    file=sys.stderr,
+                )
+                if not args.allow_partial:
+                    return 2
+            print(prevalence.compute(conn).describe())
+        return 0
+
+    if args.research_action == "freeze":
+        with research_store.connect(db_path) as conn:
+            record = research_store.freeze(conn, STUDY_LABEL, args.notes or "")
+            print(f"FROZEN {record['study']} at {record['frozen_at']}")
+            for key in ("seed", "fixture_count", "request_count",
+                        "sample_sha", "payload_sha"):
+                print(f"  {key}: {record[key]}")
+        return 0
+    return 0
+
+
+STUDY_LABEL = "AVAILABILITY_ORACLE_RESEARCH_V1"
+
+
 def cmd_sources(args) -> int:
     from .sources.registry import (
         SourceNotApprovedError,
@@ -1018,6 +1130,30 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("shadow-report", help="shadow extraction metrics")
     p.add_argument("--db", default="data/super6.db")
     p.set_defaults(func=cmd_shadow_report)
+
+    p = sub.add_parser(
+        "research", help="AVAILABILITY_ORACLE_RESEARCH_V1 (research only)"
+    )
+    p.add_argument(
+        "research_action", nargs="?", default="status",
+        choices=["status", "sample", "harvest", "prevalence", "freeze"],
+    )
+    p.add_argument("--research-db", default="research/data/oracle_v1.db")
+    p.add_argument(
+        "--max-requests", type=int,
+        help="cap this harvest run; state persists so it resumes cleanly",
+    )
+    p.add_argument("--notes", help="freeze notes")
+    p.add_argument(
+        "--pace-seconds", type=float, default=6.5,
+        help="delay between requests to stay under the 10/min limit",
+    )
+    p.add_argument(
+        "--allow-partial", action="store_true",
+        help="run prevalence on an incomplete harvest (NOT the "
+             "pre-registered analysis)",
+    )
+    p.set_defaults(func=cmd_research)
 
     p = sub.add_parser("sources", help="source registry (§18.1)")
     p.add_argument(

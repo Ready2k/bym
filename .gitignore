@@ -10,4 +10,4 @@ config/*_quota.json
 .env
 
 #API Keys
-secrets/
+secrets/research/data/

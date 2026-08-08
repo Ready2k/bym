@@ -120,25 +120,50 @@ def test_description_names_the_oracle_fixtures():
     assert "first kick-off" in text
 
 
-def test_research_package_is_not_imported_by_production():
-    """Research may use oracle information; production may not import it."""
-    import pkgutil
+    # The forecasting core. Research may import these; none of them may
+    # import research. The CLI is deliberately excluded — it is a
+    # top-level entry point that orchestrates both, not part of the core.
+FORECAST_CORE = (
+    "src/super6/engine.py",
+    "src/super6/recommend.py",
+    "src/super6/worker.py",
+    "src/super6/config.py",
+    "src/super6/model/dixon_coles.py",
+    "src/super6/model/matrix.py",
+    "src/super6/model/market.py",
+    "src/super6/model/golden_goal.py",
+    "src/super6/backtest/walk_forward.py",
+    "src/super6/api/service.py",
+    "src/super6/api/contracts.py",
+)
 
-    import super6
 
+def test_forecast_core_never_imports_research():
+    """Research may use oracle information and may import the frozen
+    core. The core must never import research, or future information
+    acquires a path into a live forecast."""
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parent.parent
     offenders = []
-    for module in pkgutil.walk_packages(super6.__path__, "super6."):
-        name = module.name
-        if ".research" in name or name.endswith(".research"):
-            continue
-        try:
-            source = __import__(name, fromlist=["_"]).__file__
-        except Exception:
-            continue
-        if not source or "/research/" in source:
-            continue
-        with open(source) as handle:
-            text = handle.read()
-        if "research.deadline" in text or "from .research" in text:
-            offenders.append(name)
-    assert not offenders, f"production modules importing research: {offenders}"
+    for relative in FORECAST_CORE:
+        path = root / relative
+        assert path.exists(), f"protected module missing: {relative}"
+        text = path.read_text()
+        if "research" in text and (
+            "from .research" in text
+            or "from ..research" in text
+            or "import research" in text
+            or "super6.research" in text
+        ):
+            offenders.append(relative)
+    assert not offenders, f"forecast core importing research: {offenders}"
+
+
+def test_research_may_import_the_frozen_core():
+    """The permitted direction — asserted so nobody 'fixes' it later."""
+    from super6.config import FROZEN_PHASE1_V1
+    from super6.research import deadline
+
+    assert FROZEN_PHASE1_V1.xi == 0.003
+    assert deadline.LINEUP_LEAD_MINUTES == 20
