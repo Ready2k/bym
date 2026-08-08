@@ -369,3 +369,27 @@ def test_repeat_lineup_poll_is_idempotent(conn, monkeypatch, approved):
         conn, ROUND, "E0", 2026, "key", now=NOW, kickoff_at=KICKOFF
     )
     assert second.lineups_ingested == 0  # already have that confirmed XI
+
+
+def test_provider_header_overrides_drifted_local_count(tmp_path):
+    """Local counting drifts — it includes calls the provider did not
+    charge for. Refusing on a pessimistic local count while the provider
+    reports credits left would silently throttle allowed work."""
+    path = tmp_path / "q.json"
+    spec = api_football.QUOTA
+    quota_mod.record(spec, spec.limit, "18", path, NOW)   # local says exhausted
+    assert quota_mod.used(spec, path, NOW) == spec.limit
+    assert quota_mod.remaining(spec, path, NOW) == 18     # header wins
+    # checked a couple of minutes on, so the separate per-minute window
+    # (which this bulk record filled) is not what is under test here
+    later = NOW + timedelta(minutes=2)
+    assert quota_mod.remaining(spec, path, later) == 18
+    quota_mod.check(spec, 1, path, later)                 # and check agrees
+
+
+def test_header_exhaustion_is_respected(tmp_path):
+    path = tmp_path / "q.json"
+    spec = api_football.QUOTA
+    quota_mod.record(spec, 1, "0", path, NOW)
+    with pytest.raises(quota_mod.QuotaExceededError):
+        quota_mod.check(spec, 1, path, NOW)

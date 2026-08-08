@@ -69,6 +69,22 @@ def used(spec: QuotaSpec, path: Path | None = None, now: datetime | None = None)
 def remaining(
     spec: QuotaSpec, path: Path | None = None, now: datetime | None = None
 ) -> int:
+    """Credits left in the current period.
+
+    The provider's own header wins when we have one for this period. Local
+    counting drifts — it includes calls the provider did not charge for,
+    and its period boundary need not match theirs — and drifting in the
+    pessimistic direction silently throttles work that was actually
+    allowed. Falls back to local counting when no header has been seen.
+    """
+    state = load(path or spec.path)
+    entry = state.get(period_key(spec.period, now), {})
+    reported = entry.get("api_reported_remaining")
+    if reported is not None:
+        try:
+            return max(int(reported), 0)
+        except (TypeError, ValueError):
+            pass
     return max(spec.limit - used(spec, path, now), 0)
 
 
@@ -90,11 +106,15 @@ def check(
     """Raise if this request would exceed the budget or the rate limit."""
     now = now or datetime.now(timezone.utc)
     path = path or spec.path
-    consumed = used(spec, path, now)
-    if consumed + cost > spec.limit:
+    # Same authority rule as `remaining`: the provider's header wins when
+    # we have one. Checking against a drifted local count while reporting
+    # the header elsewhere would refuse requests the provider allows.
+    left = remaining(spec, path, now)
+    if cost > left:
+        consumed = used(spec, path, now)
         raise QuotaExceededError(
-            f"{spec.source_id}: request would cost {cost}; "
-            f"{consumed}/{spec.limit} already used this {spec.period}. "
+            f"{spec.source_id}: request would cost {cost} but only {left} "
+            f"remain this {spec.period} (local count {consumed}/{spec.limit}). "
             "Wait for the reset or raise the budget deliberately (§25)."
         )
     if spec.per_minute is not None:
