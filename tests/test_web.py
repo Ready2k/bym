@@ -85,12 +85,22 @@ def test_mark_entered_requires_six_scorelines(tmp_path):
 
 
 def configured_round(tmp_path):
+    """Every path WebConfig can write to must live under tmp_path — without
+    this, a test that calls import_opponent/save_results/etc. silently
+    reads and writes the real project data/ files (opponent_history.json,
+    prediction_history.json, ...) instead of an isolated fixture."""
     round_path = tmp_path / "round.json"
     round_path.write_text(json.dumps(payload()))
     return WebConfig(
         round_path=round_path,
         submissions_path=tmp_path / "submissions.json",
         ui_state_path=tmp_path / "ui_state.json",
+        opponent_history_path=tmp_path / "opponent_history.json",
+        prediction_history_path=tmp_path / "prediction_history.json",
+        database_path=tmp_path / "super6.db",
+        event_log_path=tmp_path / "events" / "activity.jsonl",
+        ledger_path=tmp_path / "ledger.csv",
+        arm_registry_path=tmp_path / "arms.json",
     )
 
 
@@ -131,6 +141,63 @@ def test_settings_opponents_and_results_use_local_explicit_state(tmp_path):
         {"results": ["2-0", "1-1", None, "1-2", "3-0", "1-2"]}, config
     )
     assert saved["results"][2] is None
+
+
+def test_golden_goal_guess_and_actual_are_saved_and_validated(tmp_path):
+    """§27: the private league's confirmed tiebreak needs both a rival's
+    Golden Goal guess (import_opponent) and the actual first-goal minute
+    (save_results) persisted, not just the six scorelines."""
+    config = configured_round(tmp_path)
+
+    opponents = import_opponent(
+        {"name": "Dave", "picks": ["2-0", "1-1", "2-1", "1-2", "3-0", "1-2"], "golden_goal": 9},
+        config,
+    )
+    assert opponents["opponents"]["Dave"]["golden_goal"]["2026:14"] == 9
+
+    # A blank guess means "not shared", never minute 0.
+    import_opponent(
+        {"name": "Steve", "picks": ["1-0", "1-1", "2-1", "1-2", "3-0", "1-2"], "golden_goal": ""},
+        config,
+    )
+    assert load_ui_state(config.ui_state_path)["opponents"]["Steve"]["golden_goal"]["2026:14"] is None
+
+    with pytest.raises(ValueError, match="between 1 and 90"):
+        import_opponent(
+            {"name": "Priya", "picks": ["1-0", "1-1", "2-1", "1-2", "3-0", "1-2"], "golden_goal": 91},
+            config,
+        )
+
+    saved = save_results(
+        {"results": ["2-0", "1-1", "2-1", "1-2", "3-0", "1-2"], "golden_goal_actual": 11}, config
+    )
+    assert saved["golden_goal_actual"] == 11
+    assert load_ui_state(config.ui_state_path)["golden_goal_actual"]["2026:14"] == 11
+
+    with pytest.raises(ValueError, match="between 1 and 90"):
+        save_results({"results": ["2-0", "1-1", "2-1", "1-2", "3-0", "1-2"], "golden_goal_actual": 0}, config)
+
+
+def test_league_payload_ranks_by_golden_goal_after_a_points_and_exact_tie(tmp_path):
+    """End-to-end through the web layer: two rivals tied on points and
+    exact scores must be separated by Golden Goal closeness, not split."""
+    from super6.web import _league_payload
+
+    config = configured_round(tmp_path)
+    tied = ["2-0", "1-1", "2-1", "1-2", "3-0", "1-2"]
+    import_opponent({"name": "Dave", "picks": tied, "golden_goal": 9}, config)
+    import_opponent({"name": "Steve", "picks": tied, "golden_goal": 30}, config)
+    save_results({"results": tied, "golden_goal_actual": 10}, config)
+
+    rnd = load_round(config.round_path)
+    state = load_ui_state(config.ui_state_path)
+    payload = _league_payload(rnd, state, config)
+    standings = {row["participant"]: row for row in payload["standings"]}
+    # Tied on points and exact scores; Dave's closer Golden Goal guess
+    # (|9-10|=1 vs Steve's |30-10|=20) must break the tie, not split it.
+    assert standings["Dave"]["rank"] < standings["Steve"]["rank"]
+    assert standings["Dave"]["golden_goal_average_distance"] == 1
+    assert standings["Steve"]["golden_goal_average_distance"] == 20
 
 
 def test_ollama_is_not_probed_when_the_optional_extractor_is_disabled(monkeypatch):

@@ -80,14 +80,14 @@ These are related but distinct optimisation targets, and the private league's ru
 Private League Objective
     maximise season points
     maximise probability of finishing first
-    optimise according to private-league tie/prize rules (§27 - to be confirmed)
+    optimise according to private-league tie/prize rules (§27 decision #7)
 
 National Super 6 Objectives
     maximise round points
     maximise exact-score count
     optimise Golden Goal for round-prize tiebreaks only (§15)
 ```
-Golden Goal does **not** score points and does **not** decide the Season League. Per the official rules, the Season League tiebreak for players tied on season points is, in order: (1) most correct exact scores across the season, then (2) split the prize if still tied. Golden Goal only breaks ties for round-level prizes (Jackpot, Top Scorer). §15's Golden Goal model therefore only has strategic value in round-prize weeks, not for the season-long private-league objective — unless the private league defines its own Golden Goal-based tiebreak — the one genuinely open question left in this spec, see §27.
+Golden Goal does **not** score points on the national game, and does **not** decide the national Season League: the official tiebreak for players tied on season points is (1) most correct exact scores, then (2) split. **This private league confirmed its own, stricter order (§27 decision #7):** points, then most correct exact scores (matching the national rule), then — where the national game would simply split — closest cumulative Golden Goal accuracy across the season. Only a tie surviving all three levels actually splits. §15's Golden Goal model therefore does carry season-long private-league strategic value here, not only round-prize value, and the season simulator (§13) must account for it as a genuine tiebreak level, not an afterthought.
 
 ## 2.2 Fixture Status Handling
 The prediction and scoring engine must support the following fixture states:
@@ -554,7 +554,7 @@ The private-league utility score always drives the actual submitted prediction (
 # 13. Strategic Optimisation (Season Monte Carlo Simulation)
 The strategic decision layer is a **season Monte Carlo simulator**, not a hand-weighted formula. For each candidate round-level prediction set, the system:
 1. draws many (e.g. 100,000) simulated completions of the remaining season, using our score distributions (§7), the opponent prediction model (§11) for known competitors, and the remaining fixture list — known rounds forecast exactly, unknown rounds via the Round Opportunity Model (§13.2);
-2. scores each simulated season under the league's actual points/tiebreak rules (§2.1, §27);
+2. scores each simulated season under the league's actual points/tiebreak rules (§2.1, §27 decision #7);
 3. estimates **P(Finish 1st)** for the candidate prediction set as the fraction of simulations where the user finishes top;
 4. selects the prediction set that maximises P(Finish 1st), subject to the risk constraints in §12.
 
@@ -734,7 +734,7 @@ Probability intervals:
 ```
 The recommendation should optimise expected tiebreak distance rather than merely selecting the modal minute.
 
-**Verified rule (Sky Sports Super 6, Aug 2026):** Sky defines 0:00–0:59 as the 1st minute, 1:00–1:59 as the 2nd, and so on — so a Golden Goal guess of minute *N* is scored as the band (N−1):00–(N−1):59 (e.g. guessing "6" wins if the first goal falls between 5:00 and 5:59, since minute 6 is the 6th one-minute interval starting at 5:00). This is one off from the naive N:00–N:59 reading, and the tiebreaker is closest-minute distance from that band to the actual first-goal minute, with ties splitting the prize equally. The model must therefore optimise over discrete one-minute bands, not a continuous minute value — select the band that minimises expected absolute distance to the true first-goal minute under the modelled hazard distribution, not the highest-probability band. This also means Golden Goal only decides ties/jackpots on the national game; if the private league uses it as a weekly or season tiebreaker among competitors, confirm that convention separately (§27).
+**Verified rule (Sky Sports Super 6, Aug 2026):** Sky defines 0:00–0:59 as the 1st minute, 1:00–1:59 as the 2nd, and so on — so a Golden Goal guess of minute *N* is scored as the band (N−1):00–(N−1):59 (e.g. guessing "6" wins if the first goal falls between 5:00 and 5:59, since minute 6 is the 6th one-minute interval starting at 5:00). This is one off from the naive N:00–N:59 reading, and the tiebreaker is closest-minute distance from that band to the actual first-goal minute, with ties splitting the prize equally. The model must therefore optimise over discrete one-minute bands, not a continuous minute value — select the band that minimises expected absolute distance to the true first-goal minute under the modelled hazard distribution, not the highest-probability band. On the national game Golden Goal only decides ties/jackpots for round-level prizes; this private league additionally uses it as a season-long tiebreak among competitors, confirmed as §27 decision #7 — the same closest-minute-distance convention, applied cumulatively (mean distance) rather than per round.
 ---
 # 16. Historical Backtesting
 Before trusting the model, run historical Super-6-style simulations.
@@ -1118,8 +1118,8 @@ super6-agent/
 * **Delivery (§20-21):** still unspecified — decide whether the pre-round report and alerts land as a local file, an email, or a chat notification; this determines whether §21's alerts need a push channel.
 * **Deployment:** Dockerised; runs comfortably as one FastAPI process, one Postgres instance, one worker, one scheduler, optionally Next.js — locally or on a cheap hosted box, well within the §25 budget.
 ---
-# 27. Decisions Log & Remaining Open Question
-Six of the seven previously open questions now have a settled engineering decision. Only one genuine external unknown remains.
+# 27. Decisions Log
+All seven previously open questions now have a settled engineering decision. None remain.
 
 ## Decisions
 | # | Question | Decision |
@@ -1127,15 +1127,13 @@ Six of the seven previously open questions now have a settled engineering decisi
 | 1 | Opponent data | No Sky scraping. Accumulate from Round 1 via `MANUAL_ENTRY`/`SHARED_MESSAGE`/`CSV_IMPORT`/`USER_OWNED_HISTORY` (§11). Does not block Phase 3. |
 | 2 | Golden Goal | Keep the model (§15), but Priority 3 (§1.1) — a simple first-goal hazard model is sufficient until it's shown to matter more. |
 | 3 | Budget | £10/month target, £40/month hard ceiling; paid-data promotion requires manual approval (§25). |
-| 4 | Technical stack | Python + FastAPI + Postgres + lightweight persisted scheduler; Next.js optional (§26). |
+| 4 | Technical stack | Python + FastAPI + Postgres + lightweight persisted scheduler; Next.js optional (§26). In practice the shipped local UI runs on stdlib `http.server` + SQLite/JSON, not FastAPI/Postgres — an implementation choice within this decision, not a reopening of it. |
 | 5 | Mode thresholds | Removed. NORMAL/DEFEND/ATTACK are explanatory labels on a season Monte Carlo optimiser's output, not fixed IF/THEN thresholds (§12-13). |
 | 6 | Scraping/ToS | Formal Source Acquisition Policy: API/RSS/licensed feeds first, arbitrary scraping never, every source registered with a `usage_status` (§18.1). |
-
-## Remaining open question
-**What are the actual prize/tiebreak rules in your mates' private league competition?** Everything else in this spec now has a sensible engineering decision behind it; this is the one fact that only the league admin/mates can supply, and it directly parameterises the season simulator's scoring function (§13) and the Season State's tiebreak-relevant fields (§13.1).
+| 7 | Private-league prize/tiebreak rules | **Confirmed with the league (2026-08-09).** Season League ranking: total points, then most correct exact scores (matching the national rule, §2.1), then — as this private league's own extra level, where the national game would simply split — closest cumulative Golden Goal accuracy: mean `\|guess − actual first-goal minute\|` across rounds where both are known, lower wins. Only players tied on both points and exact scores after that still split. Implemented in `league.league_standings` (`golden_goal_actual` parameter, `LeagueStanding.golden_goal_average_distance`) and carried into the season simulator's own tiebreak (§13.1, §13.3). |
 
 ## 27.1 Status
-**§1-27 = Functional Architecture Baseline — FROZEN (as of v0.3.2).** Objective, scoring, opponent data policy (with continuous, cliff-free confidence growth — §11), source acquisition policy, cost controls, round configuration, the Round Opportunity Model for unpublished rounds, Monte Carlo significance/efficiency rules, and the Football Brain / Opponent Brain / Strategy Brain separation are all settled. The architecture stays frozen pending only the one open question in this section — no further structural additions belong in §1-27.
+**§1-27 = Functional Architecture Baseline — FROZEN (as of v0.3.2), with §2.1's private-league tiebreak confirmed 2026-08-09 per decision #7 above.** Objective, scoring, opponent data policy (with continuous, cliff-free confidence growth — §11), source acquisition policy, cost controls, round configuration, the Round Opportunity Model for unpublished rounds, Monte Carlo significance/efficiency rules, the Football Brain / Opponent Brain / Strategy Brain separation, and the private-league tiebreak are all settled. No further structural additions belong in §1-27.
 
 **§28-36 = Mathematical & Algorithmic Pipeline (v0.4.1)**, merged into this document so architecture and mathematics live as one Vision rather than two cross-referencing files:
 ```text

@@ -10,8 +10,12 @@ PICKS_B = ((1, 0), (0, 0), (1, 2), (2, 0), (1, 1), (0, 2))
 RESULTS = ((2, 1), (1, 1), (0, 1), (2, 0), (2, 1), (1, 2))
 
 
-def opponent(name: str, picks=PICKS_A, round_number: int = 1) -> league.OpponentRound:
-    return league.OpponentRound(name, 2026, round_number, picks, "2026-08-08T10:00:00+00:00")
+def opponent(
+    name: str, picks=PICKS_A, round_number: int = 1, golden_goal: int | None = None
+) -> league.OpponentRound:
+    return league.OpponentRound(
+        name, 2026, round_number, picks, "2026-08-08T10:00:00+00:00", golden_goal
+    )
 
 
 def test_opponent_round_is_six_picks_and_history_is_append_only(tmp_path):
@@ -53,6 +57,78 @@ def test_private_league_standings_score_only_known_non_void_results():
     ]
     assert table[0].exact_scores == 3
     assert table[0].rounds_scored == 1
+
+
+def test_golden_goal_rejects_out_of_range_minutes():
+    with pytest.raises(ValueError, match="between 1 and 90"):
+        opponent("Alex", golden_goal=0)
+    with pytest.raises(ValueError, match="between 1 and 90"):
+        opponent("Alex", golden_goal=91)
+    opponent("Alex", golden_goal=1)
+    opponent("Alex", golden_goal=90)
+
+
+def test_golden_goal_round_trips_through_persisted_history(tmp_path):
+    path = tmp_path / "opponents.json"
+    recorded = league.record_opponent_round(
+        "Alex", 2026, 1, PICKS_A, golden_goal=9, path=path
+    )
+    assert recorded.golden_goal == 9
+    (loaded,) = league.load_opponent_history(path)
+    assert loaded.golden_goal == 9
+
+    # Historical rounds recorded before this field existed must still load.
+    path.write_text(path.read_text().replace('"golden_goal": 9,', ""))
+    (legacy,) = league.load_opponent_history(path)
+    assert legacy.golden_goal is None
+
+
+def test_standings_break_a_points_and_exact_tie_by_golden_goal_closeness():
+    """§27: the private league's confirmed order is points, then exact
+    scores, then Golden Goal distance — never a blind split while a real
+    tiebreak still has evidence to use."""
+    tied_picks = ((2, 1), (1, 1), (0, 1), (2, 0), (1, 0), (1, 2))
+    history = (
+        opponent("Dave", tied_picks, golden_goal=10),
+        opponent("Steve", tied_picks, golden_goal=25),
+    )
+    results = {(2026, 1, i): tied_picks[i] for i in range(6)}
+    golden_goal_actual = {(2026, 1): 12}  # Dave (|10-12|=2) closer than Steve (|25-12|=13)
+
+    table = league.league_standings(history, results, golden_goal_actual)
+    assert [row.participant for row in table] == ["Dave", "Steve"]
+    assert table[0].rank == 1
+    assert table[1].rank == 2
+    assert table[0].golden_goal_average_distance == 2
+    assert table[1].golden_goal_average_distance == 13
+
+
+def test_standings_rank_golden_goal_evidence_ahead_of_no_evidence():
+    tied_picks = ((2, 1), (1, 1), (0, 1), (2, 0), (1, 0), (1, 2))
+    history = (
+        opponent("Dave", tied_picks, golden_goal=50),  # miles off, but a real guess
+        opponent("Steve", tied_picks, golden_goal=None),  # no guess recorded at all
+    )
+    results = {(2026, 1, i): tied_picks[i] for i in range(6)}
+    golden_goal_actual = {(2026, 1): 12}
+
+    table = league.league_standings(history, results, golden_goal_actual)
+    assert [row.participant for row in table] == ["Dave", "Steve"]
+    assert table[1].golden_goal_average_distance is None
+
+
+def test_standings_still_split_when_golden_goal_also_ties():
+    tied_picks = ((2, 1), (1, 1), (0, 1), (2, 0), (1, 0), (1, 2))
+    history = (
+        opponent("Ann", tied_picks, golden_goal=10),
+        opponent("Bea", tied_picks, golden_goal=14),
+    )
+    results = {(2026, 1, i): tied_picks[i] for i in range(6)}
+    golden_goal_actual = {(2026, 1): 12}  # both |10-12| == |14-12| == 2
+
+    table = league.league_standings(history, results, golden_goal_actual)
+    assert table[0].rank == table[1].rank == 1
+    assert table[0].golden_goal_average_distance == table[1].golden_goal_average_distance == 2
 
 
 def test_finish_first_returns_none_without_complete_adequate_scenarios():

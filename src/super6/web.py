@@ -89,6 +89,11 @@ DEFAULT_UI_STATE = {
     "overrides": {},
     "opponents": {},
     "results": {},
+    # §27 decision: the private league's third tiebreak (after points, then
+    # exact scores) is Golden Goal closeness. Round-level, not per-fixture —
+    # keyed the same way as "results" above, one actual first-goal minute
+    # per round rather than one per fixture.
+    "golden_goal_actual": {},
 }
 
 
@@ -105,7 +110,7 @@ def load_ui_state(path: Path) -> dict:
         **state.get("notification_delivery", {}),
     }
     merged["notification_email"] = str(state.get("notification_email", ""))
-    for key in ("overrides", "opponents", "results"):
+    for key in ("overrides", "opponents", "results", "golden_goal_actual"):
         merged[key] = dict(state.get(key, {}))
     return merged
 
@@ -736,6 +741,17 @@ def save_settings(payload: dict, config: WebConfig) -> dict:
     )} | {"knowledge_extractor": extractor_settings_for_ui(config)}}
 
 
+def _golden_goal_minute(value) -> int | None:
+    """Parse an optional Golden Goal minute; blank/absent means no guess
+    was shared, never a guess of minute 0 or 1 by default."""
+    if value in (None, ""):
+        return None
+    minute = int(value)
+    if not 1 <= minute <= 90:
+        raise ValueError("Golden Goal minute must be between 1 and 90.")
+    return minute
+
+
 def import_opponent(payload: dict, config: WebConfig) -> dict:
     rnd = load_round(config.round_path)
     name = str(payload.get("name", "")).strip()
@@ -746,16 +762,19 @@ def import_opponent(payload: dict, config: WebConfig) -> dict:
         raise ValueError("Import exactly six opponent predictions.")
     for pick in picks:
         _scoreline(pick)
+    golden_goal = _golden_goal_minute(payload.get("golden_goal"))
     state = load_ui_state(config.ui_state_path)
     opponent = state["opponents"].setdefault(name, {"rounds": {}})
     opponent["rounds"][_round_key(rnd)] = picks
+    opponent.setdefault("golden_goal", {})[_round_key(rnd)] = golden_goal
     save_ui_state(state, config.ui_state_path)
     from .league import record_opponent_round
 
     try:
         record_opponent_round(
             name, _season_for(rnd), rnd.round_number,
-            [_scoreline(pick) for pick in picks], path=config.opponent_history_path,
+            [_scoreline(pick) for pick in picks], golden_goal=golden_goal,
+            path=config.opponent_history_path,
         )
     except ValueError as exc:
         if "already recorded" not in str(exc):
@@ -775,8 +794,10 @@ def save_results(payload: dict, config: WebConfig) -> dict:
         else:
             _scoreline(result)
             cleaned.append(result)
+    golden_goal_actual = _golden_goal_minute(payload.get("golden_goal_actual"))
     state = load_ui_state(config.ui_state_path)
     state["results"][_round_key(rnd)] = cleaned
+    state["golden_goal_actual"][_round_key(rnd)] = golden_goal_actual
     save_ui_state(state, config.ui_state_path)
     from .prospective import load_ledger, save_ledger, score_round
 
@@ -793,7 +814,7 @@ def save_results(payload: dict, config: WebConfig) -> dict:
             },
         )
         save_ledger(ledger, config.ledger_path)
-    return {"results": cleaned}
+    return {"results": cleaned, "golden_goal_actual": golden_goal_actual}
 
 
 def _performance_payload(config: WebConfig) -> dict:
@@ -844,6 +865,7 @@ def _results_payload(rnd: Round, summary: dict, state: dict) -> dict:
     return {
         "fixtures": fixtures,
         "summary": {"points": total, "exact": exact, "correct": correct, "void": voids},
+        "golden_goal_actual": state["golden_goal_actual"].get(_round_key(rnd)),
     }
 
 
@@ -869,6 +891,7 @@ def _league_payload(
                     history.append(OpponentRound(
                         participant, season, round_number,
                         tuple(_scoreline(pick) for pick in picks), "legacy-ui-import",
+                        data.get("golden_goal", {}).get(round_key),
                     ))
                     known.add(key)
             except (TypeError, ValueError):
@@ -882,6 +905,7 @@ def _league_payload(
                 state["player_name"], record.season, record.round_number,
                 tuple(_scoreline(pick) for pick in record.submitted_picks),
                 record.submitted_at or "recorded-by-user",
+                record.submitted_golden_goal,
             ))
             known.add(key)
 
@@ -896,7 +920,14 @@ def _league_payload(
                     results[(int(season_text), int(round_text), index)] = None
         except (TypeError, ValueError):
             continue
-    table = league_standings(history, results)
+    golden_goal_actual = {}
+    for round_key, minute in state["golden_goal_actual"].items():
+        try:
+            season_text, round_text = round_key.split(":", 1)
+            golden_goal_actual[(int(season_text), int(round_text))] = minute
+        except (TypeError, ValueError):
+            continue
+    table = league_standings(history, results, golden_goal_actual)
     # You belong in your own league table from the start. Without this you
     # appear only once a round of yours has been scored, which also means
     # the P(finish 1st) column has nobody to show a figure against.

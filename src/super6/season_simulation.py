@@ -392,7 +392,17 @@ def simulate_remaining_season(
             totals = {participant: (our_points, our_exact)}
             for name in opponents:
                 totals[name] = (opponent_final_points[name][world], opponent_final_exact[name][world])
-            # §2.1: ties on points are broken by exact-score count, then split.
+            # §2.1/§27 decision #7: ties on points are broken by exact-score
+            # count. The confirmed private-league rule adds a third level —
+            # Golden Goal closeness — before splitting, which this forward
+            # simulation does not model: nothing here simulates a Golden
+            # Goal outcome per synthetic round. Omitted deliberately rather
+            # than guessed at — a tie surviving both points and exact
+            # scores across thousands of continuous simulated outcomes is
+            # already rare enough that it has negligible effect on
+            # P(Finish 1st); `league.league_standings` (real, recorded
+            # results) is where the third level actually matters and is
+            # fully implemented.
             best = max(totals.values())
             leaders = [name for name, score in totals.items() if score == best]
             win_shares.append(1 / len(leaders) if participant in leaders else 0.0)

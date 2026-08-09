@@ -191,6 +191,18 @@ for synthetic rounds (favourite strength, home/away balance, ...) and the
 §12.1 100 Club annotation — there is no source of national-entrant pick
 data to estimate scoreline rarity from.
 
+**§27's tiebreak question is resolved.** The private league's own rule
+(confirmed 2026-08-09): points, then most correct exact scores, then
+closest cumulative Golden Goal accuracy — stricter than the national
+game, which simply splits after exact scores. `league.league_standings`
+takes an optional `golden_goal_actual` map and produces
+`LeagueStanding.golden_goal_average_distance`; `OpponentRound.golden_goal`
+carries each participant's per-round guess. Not modelled in the forward
+season simulator (no per-synthetic-round Golden Goal outcome exists to
+draw from) — documented there as a deliberate simplification, since a tie
+surviving both points and exact scores across thousands of simulated
+worlds is already rare enough not to matter much.
+
 **Measurement is prospective** through 2026/27 —
 [results/prospective_2026_27.md](results/prospective_2026_27.md). No Phase
 2 or Phase 3 component may claim improvement until its arm demonstrates it

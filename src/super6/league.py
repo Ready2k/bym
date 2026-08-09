@@ -52,6 +52,14 @@ class OpponentRound:
 
     These records are append-only in the JSON store.  Keeping the round key
     allows profiles to use history without overwriting an old set of picks.
+
+    ``golden_goal`` is optional (§27, §15): the private league's own
+    tiebreak — confirmed with the league — is points, then most correct
+    exact scores, then closeness of the Golden Goal guess to the actual
+    first-goal minute (§2.1's national-game order plus this one extra
+    private-league-specific level). It is ``None`` for any round recorded
+    before this was tracked, or for a mate who didn't share a Golden Goal
+    guess — absence, not a guess of zero.
     """
 
     participant: str
@@ -59,12 +67,15 @@ class OpponentRound:
     round_number: int
     picks: tuple[Scoreline, ...]
     recorded_at: str
+    golden_goal: int | None = None
 
     def __post_init__(self) -> None:
         if not self.participant.strip():
             raise ValueError("Participant name cannot be empty")
         if self.season < 0 or self.round_number < 1:
             raise ValueError("Season and round number must be valid")
+        if self.golden_goal is not None and not 1 <= self.golden_goal <= 90:
+            raise ValueError("Golden Goal minute must be between 1 and 90")
         object.__setattr__(self, "picks", _validated_picks(self.picks))
 
     def to_dict(self) -> dict:
@@ -96,6 +107,7 @@ def load_opponent_history(
             round_number=item["round_number"],
             picks=tuple(tuple(pick) for pick in item["picks"]),
             recorded_at=item["recorded_at"],
+            golden_goal=item.get("golden_goal"),
         )
         for item in rounds
     )
@@ -127,6 +139,7 @@ def record_opponent_round(
     round_number: int,
     picks: Sequence[Sequence[int]],
     *,
+    golden_goal: int | None = None,
     recorded_at: str | None = None,
     path: Path = DEFAULT_OPPONENT_HISTORY_PATH,
 ) -> OpponentRound:
@@ -138,6 +151,7 @@ def record_opponent_round(
         picks=_validated_picks(picks),
         recorded_at=recorded_at
         or datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        golden_goal=golden_goal,
     )
     history = load_opponent_history(path)
     key = (record.participant.casefold(), record.season, record.round_number)
@@ -245,21 +259,42 @@ class LeagueStanding:
     exact_scores: int
     fixtures_scored: int
     rounds_scored: int
+    # §27 decision: the private league's third tiebreak, after points and
+    # exact scores — mean |Golden Goal guess - actual first-goal minute|
+    # across rounds where both are known. Lower is better. `None` when the
+    # participant has no round with both a guess and a known actual, which
+    # ranks behind every participant who does (§2.1's ordering can't skip a
+    # level just because one player's evidence is missing).
+    golden_goal_average_distance: float | None = None
 
 
 ResultKey = tuple[int, int, int]
+RoundKey = tuple[int, int]  # (season, round_number)
+
+# Sentinel used only for sorting/grouping so "no Golden Goal evidence"
+# reliably ranks behind any real distance, however large.
+_NO_GOLDEN_GOAL_EVIDENCE = float("inf")
 
 
 def league_standings(
     history: Iterable[OpponentRound],
     results: Mapping[ResultKey, Scoreline | None],
+    golden_goal_actual: Mapping[RoundKey, int | None] | None = None,
 ) -> tuple[LeagueStanding, ...]:
     """Build a private league table from entered picks and actual results.
 
-    ``None`` means a VOID fixture and is excluded, matching the core scoring
-    semantics. Missing results are not treated as a zero-point loss.
+    ``None`` in ``results`` means a VOID fixture and is excluded, matching
+    the core scoring semantics. Missing results are not treated as a
+    zero-point loss.
+
+    Ranking order (§27, confirmed with the league; §2.1 is the same order
+    the national game uses through exact scores, with Golden Goal distance
+    added as this private league's own extra level rather than splitting):
+    points, then exact scores, then Golden Goal closeness.
     """
+    golden_goal_actual = golden_goal_actual or {}
     totals: dict[str, dict[str, int | set[tuple[int, int]]]] = {}
+    golden_goal_distances: dict[str, list[int]] = {}
     for record in history:
         entry = totals.setdefault(
             record.participant,
@@ -276,15 +311,34 @@ def league_standings(
             rounds = entry["rounds"]
             assert isinstance(rounds, set)
             rounds.add((record.season, record.round_number))
+        if record.golden_goal is not None:
+            actual_minute = golden_goal_actual.get((record.season, record.round_number))
+            if actual_minute is not None:
+                golden_goal_distances.setdefault(record.participant, []).append(
+                    abs(record.golden_goal - actual_minute)
+                )
+
+    def _golden_goal_average(participant: str) -> float:
+        distances = golden_goal_distances.get(participant)
+        if not distances:
+            return _NO_GOLDEN_GOAL_EVIDENCE
+        return sum(distances) / len(distances)
+
     ordered = sorted(
         totals.items(),
-        key=lambda pair: (-int(pair[1]["points"]), -int(pair[1]["exact"]), pair[0].casefold()),
+        key=lambda pair: (
+            -int(pair[1]["points"]),
+            -int(pair[1]["exact"]),
+            _golden_goal_average(pair[0]),
+            pair[0].casefold(),
+        ),
     )
     table: list[LeagueStanding] = []
-    previous: tuple[int, int] | None = None
+    previous: tuple[int, int, float] | None = None
     rank = 0
     for index, (participant, values) in enumerate(ordered, start=1):
-        score = (int(values["points"]), int(values["exact"]))
+        golden_goal_avg = _golden_goal_average(participant)
+        score = (int(values["points"]), int(values["exact"]), golden_goal_avg)
         if score != previous:
             rank = index
             previous = score
@@ -298,6 +352,10 @@ def league_standings(
                 exact_scores=score[1],
                 fixtures_scored=int(values["fixtures"]),
                 rounds_scored=len(rounds),
+                golden_goal_average_distance=(
+                    None if golden_goal_avg is _NO_GOLDEN_GOAL_EVIDENCE
+                    else round(golden_goal_avg, 2)
+                ),
             )
         )
     return tuple(table)

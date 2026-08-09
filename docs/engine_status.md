@@ -35,6 +35,7 @@ An adapter existing is **not** "live".
 | Opponent history + profiles (§11) | BUILT, TESTED OFFLINE, ACTIVE | descriptive + model-relative — see caveat below |
 | Opponent-aware strategy, single round (§12-14) | BUILT, TESTED OFFLINE, ACTIVE | current round only, kept alongside the season simulator below |
 | Season Monte Carlo simulator (§13, `season_simulation.py`) | BUILT, TESTED OFFLINE, ACTIVE | Round Opportunity Model, paired significance test, ATTACK/DEFEND/NORMAL labels — see caveat below |
+| Private-league tiebreak (§27 decision #7) | BUILT, TESTED OFFLINE, ACTIVE | points → exact scores → Golden Goal closeness, `league.league_standings` |
 | **100 Club annotation (§12.1)** | **DEFERRED — not started** | no national-entrant data exists to estimate rarity from |
 | **Increment 5 player-impact model (evidence → λ)** | **DEFERRED — not started** | deliberate, gated on `QUANTITATIVE_IMPACT_MODEL_ENABLED` |
 
@@ -158,6 +159,37 @@ genuinely superseded by the season simulator wherever there is a
 `recommendation` and at least one other participant in the standings; the
 League page shows both panels, labelled by scope, so the difference is
 visible rather than silently swapped.
+
+## Private-league tiebreak (§27 decision #7)
+
+SPEC.md's one remaining open question is now closed: the private league's
+own tiebreak, confirmed 2026-08-09, is **points → most correct exact
+scores → closest cumulative Golden Goal accuracy**, and only a tie
+surviving all three levels actually splits (stricter than the national
+game, which splits after exact scores).
+
+```text
+league.OpponentRound.golden_goal          per-round guess, optional, 1-90
+web.py: DEFAULT_UI_STATE["golden_goal_actual"]   per-round actual, optional
+league.league_standings(history, results, golden_goal_actual)
+    -> LeagueStanding.golden_goal_average_distance
+       mean |guess - actual| over rounds where both are known;
+       None (never 0) ranks behind any participant with real evidence
+```
+
+Deliberately **not** modelled in the forward-looking `season_simulation.py`
+Monte Carlo — nothing there simulates a Golden Goal outcome per synthetic
+round, so ties surviving both points and exact scores across thousands of
+simulated worlds fall back to a plain split. Documented as a stated
+simplification (`simulate_remaining_season`'s tiebreak comment): such ties
+are already rare enough with continuous simulated point totals that this
+has negligible effect on P(Finish 1st), and `league_standings` — the real,
+recorded table — is where the third level is fully implemented and
+actually matters.
+
+Surfaced in the UI: a Golden Goal field on the opponent-import form
+(`#opponents`), an actual-minute field on the results form (`#round` →
+Results), and a "Golden Goal avg." column on the League standings table.
 
 ## Ollama
 
@@ -319,7 +351,7 @@ the run, so a forecast is produced with no credentials at all.
 ## Tests
 
 ```text
-521 passing, 6 skipped (live)
+528 passing, 6 skipped (live)
 ```
 
 Network access is blocked at the socket layer for the entire ordinary
