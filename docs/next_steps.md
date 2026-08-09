@@ -22,11 +22,11 @@ VALIDATION.md):
 
 1. Everything below — items 1 and 2 are now waiting on elapsed rounds
    rather than on anyone's time, so pick up the rest opportunistically in
-   the meantime. §3's §19 strategy-snapshot linkage is the cheapest
-   genuinely-ready work now that §5's two ablations are retired: it is
-   well-scoped and reuses `prediction_history.py`'s pattern directly.
+   the meantime. What is left is genuinely optional: §3 needs a
+   historical-odds source that may not exist, §4 needs a budget decision
+   from you, and §5-6 are both "nothing blocking, do it when it'd help".
 
-Two items left this file on 2026-08-09. The round-file rename is done —
+Four items left this file on 2026-08-09. The round-file rename is done —
 `rounds/` now holds one real round per file, named
 `<season>_round_<NN>.json`, and nothing there reads as a template.
 Team-specific opponent bias is built: the design question it was blocked
@@ -34,6 +34,12 @@ on was answered in favour of a market-sourced club-reputation signal
 (bookmaker odds already persisted with each forecast) rather than the
 fitted model's own team strength, so `opponent_intelligence.py` keeps its
 independence from the forecasting core. See `team_bias_profiles`.
+Shin's method and MOV-Elo were run through the ablation ladder and both
+rejected (results/ablation_007). §19's `opponent_snapshot` /
+`strategy_prediction` linkage is built: `strategy_history.py` persists
+every round-level and season-length recommendation append-only, with the
+raw picks it deviated from, the opponent data that existed at the time,
+and the `forecast_version` it was taken against.
 
 **On items 1 and 2 below.** Neither can be finished without data that
 only accrues by playing rounds. What *was* buildable — and was built the
@@ -129,29 +135,7 @@ sit at zero indefinitely without that.
 
 ---
 
-## 3. §19 `opponent_snapshot` / `strategy_prediction` linkage
-
-**What.** A `forecast_run` record currently can't say which strategy
-recommendation was chosen (raw model pick vs. strategy-adjusted pick),
-or what opponent data existed at the moment a decision was made.
-
-**Why deferred.** No strategy recommendation is persisted anywhere
-today — `_strategy_payload`/`_season_strategy_payload` in `web.py`
-compute it fresh on every page load. There's nothing to link a snapshot
-to yet.
-
-**Unblock.** Persist strategy/season-strategy recommendations the same
-way `prediction_history.py` already persists forecasts (a parallel
-append-only snapshot store, or an extension of the existing one), then
-link `forecast_run` → `strategy_run` the way the spec's `forecast_run`
-example already links to `feature_snapshot`/`odds_snapshot`.
-
-**Effort.** Medium — well-scoped, reuses `prediction_history.py`'s
-existing pattern directly.
-
----
-
-## 4. Asian handicap / BTTS / correct-score markets (§6)
+## 3. Asian handicap / BTTS / correct-score markets (§6)
 
 **What.** Only `h2h` and opt-in `totals` are fetched today
 (`sources/odds_api.py`).
@@ -171,7 +155,7 @@ fetch itself.
 
 ---
 
-## 5. xG (Shin's method and MOV-Elo: retired 2026-08-09)
+## 4. xG (Shin's method and MOV-Elo: retired 2026-08-09)
 
 **What.** Standing ablation candidates from §7, §29.4, §32.1.
 
@@ -204,7 +188,7 @@ Promoting one now needs prospective evidence (`results/prospective_*`).
 
 ---
 
-## 6. "Ask the agent" conversational entry (§67)
+## 5. "Ask the agent" conversational entry (§67)
 
 **What.** A chat-style Q&A layer over the existing forecast/strategy
 data ("Why have we gone 1-0 rather than 2-0?").
@@ -224,7 +208,7 @@ recomputing something new and possibly inconsistent) is the real work.
 
 ---
 
-## 7. WCAG accessibility audit
+## 6. WCAG accessibility audit
 
 **What.** A formal accessibility conformance pass.
 

@@ -245,9 +245,20 @@ forecast change. Caught live against real stored data
 (`data/prediction_history.json`, `data/events/activity.jsonl`), both
 cleaned up; see `test_a_newly_tracked_field_does_not_spuriously_diff_an_existing_round`.
 
-Not covered: `opponent_snapshot`/`strategy_prediction` linkage (no
-strategy recommendation is persisted anywhere to link to yet), and a
-per-request `feature_snapshot` hash (the frozen model's training data is
+`opponent_snapshot`/`strategy_prediction` linkage: COVERED by
+`strategy_history.py` (new). Round-level (§12) and season-length (§13)
+recommendations are persisted append-only and versioned separately, each
+carrying the raw picks it deviated from, an `opponent_snapshot` (rival
+count, names, whether the field was complete) and the `forecast_version`
+it was computed against. `for_forecast_version` answers §19's question by
+join. The link deliberately runs strategy → forecast, not the diagram's
+forecast → strategy: writing the forecast and then amending it once the
+strategy exists is what an append-only store forbids. Recording is
+best-effort — an audit write must never take down the page showing the
+decision — and a page refresh does not create a version, only a changed
+recommendation does.
+
+Not covered: a per-request `feature_snapshot` hash (the frozen model's training data is
 already hash-pinned once, permanently, in MANIFEST.md — a new hash per
 forecast run would only add value once the model refits on a rolling
 basis).

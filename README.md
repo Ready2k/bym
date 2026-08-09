@@ -102,6 +102,7 @@ src/super6/
 ├── movement.py          material market-move detection (§6)
 ├── divergence.py        model-vs-market disagreement
 ├── prediction_history.py  append-only forecast/change log + input snapshots (§10, §19, §43)
+├── strategy_history.py   append-only strategy decisions, linked to the forecast they came from (§19)
 ├── prospective.py       2026/27 round-by-round arm comparison
 ├── submission.py        submission-state machine (§46)
 ├── reminders.py         deadline alerts
@@ -215,9 +216,14 @@ worlds is already rare enough not to matter much.
 and availability state actually consumed — not just the output pick — so
 "why did we predict Wolves 3-0 on 17 January" is answerable from what was
 recorded, not only from the current live state. A `basis` change is
-tracked as a material diff (§21) like a score or confidence change. Still
-open: §19's `opponent_snapshot`/`strategy_prediction` linkage — no
-strategy recommendation is persisted anywhere yet to point one at — and
+tracked as a material diff (§21) like a score or confidence change.
+§19's `opponent_snapshot`/`strategy_prediction` linkage is now covered by
+`strategy_history.py`: every strategy and season-strategy recommendation
+is persisted append-only with the raw picks it deviated from, the
+opponent data that existed at the time, and the `forecast_version` it was
+taken against. The reference points strategy → forecast rather than the
+spec diagram's forecast → strategy, because an append-only forecast
+record cannot be reopened to add a field derived from it. Still open:
 `feature_snapshot` beyond MANIFEST.md's static hash pin for the frozen
 model (a genuine per-request corpus hash would only matter once the
 model refits on a rolling basis, which it does not yet).

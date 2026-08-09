@@ -159,10 +159,15 @@ def normalise_fixture(fixture: Mapping[str, Any] | Any, index: int) -> dict[str,
     forecast actually consumed. Reproducibility for the two things that
     can currently move a forecast (§30's model, §32's market blend);
     availability is recorded for provenance even though nothing yet routes
-    from it to a probability (docs/phase2_increment3.md). Opponent/strategy
-    snapshot linkage (§19's `opponent_snapshot`, `strategy_prediction`) is
-    not included — no strategy recommendation is persisted anywhere yet to
-    link to, so there would be nothing honest to point at.
+    from it to a probability (docs/phase2_increment3.md).
+
+    §19's `opponent_snapshot` and `strategy_prediction` are deliberately
+    *not* fields here. They live on the strategy snapshot instead
+    (`strategy_history.py`), which names the `forecast_version` it was
+    computed from. Putting them here would mean writing a forecast record
+    and then reaching back to amend it once the strategy derived from it
+    exists — exactly what an append-only store forbids. Join on
+    `strategy_history.for_forecast_version` to answer §19's question.
 
     The function accepts either a read-model contract or the dictionary it
     serialises to.  It keeps the raw team labels for display but deliberately

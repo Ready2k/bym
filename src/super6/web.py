@@ -18,7 +18,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
 
-from . import db, events, submission
+from . import db, events, prediction_history, strategy_history, submission
 from .api import service
 from .config import FROZEN_PHASE1_V1
 from .data.football_data import load_matches
@@ -42,6 +42,7 @@ class WebConfig:
     ledger_path: Path = Path("results/prospective_ledger.csv")
     ui_state_path: Path = Path("data/ui_state.json")
     prediction_history_path: Path = Path("data/prediction_history.json")
+    strategy_history_path: Path = Path("data/strategy_history.json")
     opponent_history_path: Path = Path("data/opponent_history.json")
     arm_registry_path: Path = Path("results/prospective_arms.json")
     seasons: tuple[int, int] = (2019, 2025)
@@ -1033,10 +1034,42 @@ def _league_payload(
             ),
         },
     }
-    payload.update(_strategy_payload(rnd, table, history, state, recommendation))
+    round_strategy = _strategy_payload(rnd, table, history, state, recommendation)
+    payload.update(round_strategy)
     payload["season_strategy"] = _season_strategy_payload(
         rnd, table, history, favourite, recommendation, state, config
     )
+
+    # §19: persist whichever recommendations were actually produced, so a
+    # forecast_run has a strategy decision to link to. The raw picks are
+    # the model's own — the thing a strategy pick is a deviation *from*.
+    if recommendation is not None:
+        raw_picks = [f"{f.pick_home}-{f.pick_away}" for f in recommendation.fixtures]
+        season = _season_for(rnd)
+        rivals = {
+            record.participant
+            for record in history
+            if record.season == season and record.round_number == rnd.round_number
+            and record.participant != state["player_name"]
+        }
+        opponent = strategy_history.opponent_snapshot(
+            rivals,
+            # The round payload is only produced at all when every rival's
+            # picks are in (`_strategy_payload` returns {} otherwise), so a
+            # recorded round decision is always a complete-field one.
+            field_complete=bool(round_strategy),
+            rounds_of_history=len(history),
+            joined_picks=sum(len(record.picks) for record in history),
+        )
+        for scope, produced in (
+            (strategy_history.SCOPE_ROUND, round_strategy),
+            (strategy_history.SCOPE_SEASON, payload["season_strategy"]),
+        ):
+            if produced:
+                _record_strategy_decision(
+                    rnd, produced, scope=scope, raw_picks=raw_picks,
+                    opponent=opponent, config=config,
+                )
     return payload
 
 
@@ -1344,6 +1377,51 @@ def _strategy_payload(rnd, standings, history, state, recommendation) -> dict:
             ],
         },
     }
+
+
+def _current_forecast_version(season: int, round_number: int, config: WebConfig) -> int | None:
+    """The forecast version a strategy decision is being taken against (§19)."""
+    snapshots = prediction_history.round_snapshots(
+        season, round_number, config.prediction_history_path
+    )
+    return snapshots[-1]["version"] if snapshots else None
+
+
+def _record_strategy_decision(
+    rnd: Round,
+    payload: dict,
+    *,
+    scope: str,
+    raw_picks,
+    opponent,
+    config: WebConfig,
+) -> None:
+    """Persist a computed recommendation so §19's linkage has a target.
+
+    Best-effort by design: a decision record failing to write must never
+    take down the page that shows the decision. The store is an audit
+    trail, not a dependency of the recommendation itself.
+    """
+    strategy = payload.get("strategy") if scope == strategy_history.SCOPE_ROUND else payload
+    if not strategy or not strategy.get("picks"):
+        return
+    season = _season_for(rnd)
+    try:
+        strategy_history.record_strategy(
+            season,
+            rnd.round_number,
+            scope=scope,
+            mode=strategy.get("mode", "NORMAL"),
+            active=bool(strategy.get("active")),
+            raw_picks=raw_picks,
+            strategy_picks=strategy["picks"],
+            reason=strategy.get("reason", ""),
+            opponent=opponent,
+            forecast_version=_current_forecast_version(season, rnd.round_number, config),
+            path=config.strategy_history_path,
+        )
+    except (OSError, ValueError):
+        pass
 
 
 def _alerts_payload(activity: list[dict], state: dict) -> dict:

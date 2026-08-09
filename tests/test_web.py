@@ -1,6 +1,7 @@
 """Local web UI actions keep the same round and submission rules as the CLI."""
 
 import json
+from dataclasses import fields
 from pathlib import Path
 
 import pytest
@@ -606,3 +607,106 @@ def test_the_service_script_uses_the_same_state_files_as_the_cli():
     assert "super6-ui-submissions.json" not in code
     assert "$ROOT_DIR/data/super6.db" in code
     assert "$ROOT_DIR/data/submissions.json" in code
+
+
+def strategy_config(tmp_path):
+    base = configured_round(tmp_path)
+    return WebConfig(
+        **{**{f.name: getattr(base, f.name) for f in fields(base)},
+           "strategy_history_path": tmp_path / "strategy_history.json"}
+    )
+
+
+def test_a_strategy_decision_is_persisted_for_19_linkage(tmp_path):
+    """§19: a forecast_run could not say which recommendation was chosen,
+    because none was ever persisted. `_record_strategy_decision` is the
+    wiring that fixes that — driven here directly, since faking a whole
+    RoundRecommendation would test the fake, not the linkage."""
+    from super6 import strategy_history
+    from super6.web import _record_strategy_decision
+
+    config = strategy_config(tmp_path)
+    rnd = load_round(config.round_path)
+    prediction_history.record_snapshot(
+        2026, 14,
+        [{"home_team": "Arsenal", "away_team": "Everton", "result": "HOME", "score": "2-0"}],
+        path=config.prediction_history_path,
+    )
+    payload_in = {
+        "strategy": {
+            "mode": "DIFFERENTIATE", "active": True,
+            "picks": ["3-0", "1-0", "2-1", "1-2", "3-0", "1-2"],
+            "reason": "differentiating improves P(finish first)",
+        }
+    }
+    _record_strategy_decision(
+        rnd, payload_in, scope=strategy_history.SCOPE_ROUND,
+        raw_picks=["2-0", "1-0", "2-1", "1-2", "3-0", "1-2"],
+        opponent=strategy_history.opponent_snapshot(["Dave"], field_complete=True),
+        config=config,
+    )
+
+    recorded = strategy_history.round_snapshots(2026, 14, config.strategy_history_path)
+    assert len(recorded) == 1
+    latest = recorded[0]
+    # Both sides — a strategy pick means nothing without the raw pick it
+    # deviated from.
+    assert latest["raw_picks"][0] == "2-0"
+    assert latest["strategy_picks"][0] == "3-0"
+    assert latest["mode"] == "DIFFERENTIATE" and latest["active"] is True
+    assert latest["opponent_snapshot"]["participant_names"] == ["Dave"]
+    # And it names the forecast it was taken against, so §19's question
+    # resolves by join.
+    assert latest["forecast_version"] == 1
+    assert strategy_history.for_forecast_version(
+        2026, 14, 1, config.strategy_history_path
+    ) == recorded
+
+
+def test_recording_the_same_decision_twice_does_not_grow_the_record(tmp_path):
+    """_league_payload runs on every page load; a refresh is not a decision."""
+    from super6 import strategy_history
+    from super6.web import _record_strategy_decision
+
+    config = strategy_config(tmp_path)
+    rnd = load_round(config.round_path)
+    payload_in = {"strategy": {"mode": "NORMAL", "active": False, "picks": ["1-0"] * 6}}
+    for _ in range(3):
+        _record_strategy_decision(
+            rnd, payload_in, scope=strategy_history.SCOPE_ROUND,
+            raw_picks=["1-0"] * 6, opponent=None, config=config,
+        )
+    assert len(strategy_history.round_snapshots(2026, 14, config.strategy_history_path)) == 1
+
+
+def test_a_failed_decision_record_never_breaks_the_page(tmp_path):
+    """The store is an audit trail, not a dependency of the recommendation."""
+    from super6 import strategy_history
+    from super6.web import _record_strategy_decision
+
+    base = configured_round(tmp_path)
+    unwritable = WebConfig(
+        **{**{f.name: getattr(base, f.name) for f in fields(base)},
+           # A directory where a file must go: writing raises OSError.
+           "strategy_history_path": tmp_path}
+    )
+    rnd = load_round(unwritable.round_path)
+    _record_strategy_decision(
+        rnd, {"strategy": {"mode": "NORMAL", "active": False, "picks": ["1-0"] * 6}},
+        scope=strategy_history.SCOPE_ROUND, raw_picks=["1-0"] * 6,
+        opponent=None, config=unwritable,
+    )  # must not raise
+
+
+def test_no_recommendation_records_no_decision(tmp_path):
+    """Nothing was decided, so nothing is claimed to have been."""
+    from super6 import strategy_history
+    from super6.web import _league_payload
+
+    config = strategy_config(tmp_path)
+    import_opponent(
+        {"name": "Dave", "picks": ["2-0", "1-1", "2-1", "1-2", "3-0", "1-2"]}, config
+    )
+    rnd = load_round(config.round_path)
+    _league_payload(rnd, load_ui_state(config.ui_state_path), config)
+    assert strategy_history.round_snapshots(2026, 14, config.strategy_history_path) == []
