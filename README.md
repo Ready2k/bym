@@ -253,7 +253,9 @@ from the untouched 2025/26 final test once the design freezes.
 
 ## What's deliberately not here yet
 
-Per the phase gates in §23 and the ablation rule in §28:
+Per the phase gates in §23 and the ablation rule in §28. For what would
+actually unblock each of these — not just that they're missing — see
+[docs/next_steps.md](docs/next_steps.md).
 
 - **xG** (Phase 1B) — no confirmed free source; fields are nullable by design.
 - **Shin's method** for margin removal, MOV-Elo — future ablation

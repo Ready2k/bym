@@ -1,5 +1,9 @@
 # Engine Status
 
+For what's deferred and *why*, plus what would actually unblock each
+item, see [next_steps.md](next_steps.md) — this file is a snapshot of
+what's built, that one is the backlog.
+
 Status levels, used strictly:
 
 ```text
