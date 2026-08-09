@@ -181,6 +181,7 @@ def run_engine(
                 f"market: {acquired.covered}/6 fixtures covered, "
                 f"{acquired.credits_spent} credit(s)"
             )
+            notes.extend(f"market: {note}" for note in acquired.notes)
         except Exception as exc:
             notes.append(f"market acquisition unavailable: {exc}")
     else:

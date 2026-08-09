@@ -14,7 +14,7 @@ block it, and it is never imputed.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -41,6 +41,10 @@ class AcquisitionResult:
     fixtures: list[FixtureOdds]
     credits_spent: int
     fetched_at: str
+    # Competitions that could not be reached, and fixtures still unpriced
+    # after the cup pass. Reported rather than swallowed: "no market" and
+    # "we never looked in the right competition" are different problems.
+    notes: list[str] = field(default_factory=list)
 
     @property
     def covered(self) -> int:
@@ -70,28 +74,70 @@ def acquire_round_odds(
     now: datetime | None = None,
     odds_snapshot_path: Path = ODDS_SNAPSHOT_PATH,
     consensus_snapshot_path: Path = CONSENSUS_SNAPSHOT_PATH,
+    cup_divisions: tuple[str, ...] = odds_api.CUP_DIVISIONS,
     **fetch_kwargs,
 ) -> AcquisitionResult:
     """Fetch current odds for a round's six fixtures and persist both
-    provenance layers. One request per division covers all its fixtures."""
+    provenance layers. One request per competition covers all its fixtures.
+
+    Cup competitions are a *second pass*, attempted only when the league
+    feeds left a fixture unmatched. A cup tie is absent from both clubs'
+    league feeds, so without this a cup weekend has no market at all — but
+    every competition is another billed request, and on an ordinary
+    weekend the cup feeds would return nothing. Paying for them only when
+    something is missing keeps the common case free.
+    """
     now = now or datetime.now(timezone.utc)
     fetched_at = now.isoformat(timespec="seconds")
+    notes: list[str] = []
 
+    per_request = odds_api.request_cost(
+        fetch_kwargs.get("markets", odds_api.DEFAULT_MARKETS),
+        fetch_kwargs.get("regions", odds_api.DEFAULT_REGIONS),
+    )
     events: list[odds_api.EventOdds] = []
     credits = 0
     for division in divisions:
         events.extend(odds_api.fetch_odds(division, api_key, **fetch_kwargs))
-        credits += odds_api.request_cost(
-            fetch_kwargs.get("markets", odds_api.DEFAULT_MARKETS),
-            fetch_kwargs.get("regions", odds_api.DEFAULT_REGIONS),
-        )
+        credits += per_request
 
     round_teams = {t for f in rnd.fixtures for t in (f.home, f.away)}
-    matched: dict[tuple[str, str], odds_api.EventOdds] = {}
-    for event in events:
-        pair = teams.match_event(event.home_team, event.away_team, round_teams)
-        if pair is not None:
-            matched[pair] = event
+
+    def match_all(candidates):
+        found: dict[tuple[str, str], odds_api.EventOdds] = {}
+        for event in candidates:
+            pair = teams.match_event(event.home_team, event.away_team, round_teams)
+            if pair is not None:
+                found[pair] = event
+        return found
+
+    matched = match_all(events)
+
+    if cup_divisions and any(
+        (f.home, f.away) not in matched for f in rnd.fixtures
+    ):
+        for division in cup_divisions:
+            try:
+                cup_events = odds_api.fetch_odds(division, api_key, **fetch_kwargs)
+            except Exception as exc:
+                # Out of season, or a key the provider has retired. Neither
+                # is a failed acquisition — the league odds already fetched
+                # must still reach the forecast.
+                notes.append(f"{division}: {exc}")
+                continue
+            credits += per_request
+            matched.update(
+                {k: v for k, v in match_all(cup_events).items() if k not in matched}
+            )
+        still_missing = [
+            f"{f.home} v {f.away}" for f in rnd.fixtures
+            if (f.home, f.away) not in matched
+        ]
+        if still_missing:
+            notes.append(
+                "no market found in league or cup feeds for "
+                + "; ".join(still_missing)
+            )
 
     odds_rows: list[dict] = []
     consensus_rows: list[dict] = []
@@ -126,7 +172,7 @@ def acquire_round_odds(
     _append_csv(odds_rows, odds_snapshot_path)
     _append_csv(consensus_rows, consensus_snapshot_path)
 
-    return AcquisitionResult(results, credits, fetched_at)
+    return AcquisitionResult(results, credits, fetched_at, notes)
 
 
 def apply_to_round(rnd: Round, acquired: AcquisitionResult) -> Round:

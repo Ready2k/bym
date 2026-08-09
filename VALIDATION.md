@@ -95,11 +95,18 @@ It must therefore be judged **prospectively on 2026/27**, like any other
 decision touching w. Note the constraint compounds: 2025/26 is already
 spent and grid-searched, so it cannot be used to revisit this either.
 
-Known limitation, recorded rather than discovered later: the trigger is an
-*unknown team*, not *a cup match*. An FA Cup tie between two corpus teams
-passes the check and is forecast exactly as if it were a league game, with
-squad rotation unmodelled. `Fixture` has no competition field, so the
-system cannot currently tell those two cases apart.
+Known limitations, recorded rather than discovered later:
+
+* The trigger is an *unknown team*, not *a cup match*. An FA Cup tie
+  between two corpus teams passes the check and is forecast exactly as if
+  it were a league game, with squad rotation unmodelled. `Fixture` has no
+  competition field, so the system cannot tell those two cases apart.
+* The fallback needs odds, and The Odds API publishes **no National
+  League feed**. An EC club drawn against a corpus team therefore cannot
+  be priced from the approved source at all, and falls through to
+  `NONE` — no forecast — however the cup pass is configured. FA Cup and
+  EFL Cup feeds exist and are fetched; League One and League Two are
+  mapped too.
 
 ## Protocol breach, 2026-08-08
 
