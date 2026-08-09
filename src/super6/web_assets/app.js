@@ -228,7 +228,16 @@ function roundView() {
 function cupResultCard(result) {
   const prediction = result.fixture;
   const unmodellable = isUnmodellable(prediction);
-  const provenance = `<p class="subtitle">Corpus ${escapeHtml(result.corpus)} · seasons ${result.seasons[0]}–${result.seasons[1]} · model ${escapeHtml(result.model_version)}</p>`;
+  // A result can remain in memory while the local server is being restarted.
+  // Use the fixture's provenance where possible, and never let older response
+  // shapes prevent the user from seeing a valid forecast.
+  const provenanceData = prediction?.explanation?.provenance || {};
+  const corpus = result.corpus || prediction?.modellability?.corpus || "not recorded";
+  const seasons = Array.isArray(result.seasons) && result.seasons.length >= 2
+    ? `${result.seasons[0]}–${result.seasons[1]}`
+    : "not recorded";
+  const modelVersion = result.model_version || provenanceData.model_version || "not recorded";
+  const provenance = `<p class="subtitle">Corpus ${escapeHtml(corpus)} · seasons ${escapeHtml(seasons)} · model ${escapeHtml(modelVersion)}</p>`;
   if (unmodellable) {
     const retry = result.extended ? "" : `<div class="form-actions"><button class="button secondary-button" data-action="cup-extended">Retry with lower divisions</button></div>`;
     return `<section class="form-card cup-result"><p class="eyebrow">No recommendation</p><div class="detail-teams"><span>${teamBadge(prediction.home_team, "large")}${escapeHtml(prediction.home_team)}</span><b>v</b><span>${teamBadge(prediction.away_team, "large")}${escapeHtml(prediction.away_team)}</span></div><div class="detail-score no-pick">—</div><section class="danger-card"><h3>The model cannot forecast this tie.</h3><p>${escapeHtml(modellabilityNote(prediction.modellability))}</p></section>${provenance}${retry}<details class="disclosure"><summary>Show the raw model output anyway</summary><p class="subtitle">Kept visible so the failure can be checked. That does not make it usable.</p><div class="detail-grid"><div class="detail-metric"><span>Returned score</span><strong>${escapeHtml(prediction.pick)}</strong></div><div class="detail-metric"><span>Result probability</span><strong>${percent(prediction.result_probability)}</strong></div><div class="detail-metric"><span>Expected points</span><strong>${prediction.expected_points.toFixed(2)}</strong></div></div></details></section>`;
