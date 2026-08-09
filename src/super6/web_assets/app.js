@@ -44,7 +44,12 @@ function shortTeam(team) {
 function teamBadge(team, size = "") {
   const crest = TEAM_CRESTS[team];
   const image = crest ? `<img src="https://crests.football-data.org/${crest}.png" alt="" loading="lazy" onerror="this.hidden=true">` : "";
-  return `<span class="team-badge ${size}" role="img" aria-label="${escapeHtml(team)} badge"><b>${escapeHtml(shortTeam(team))}</b>${image}</span>`;
+  // The initials are a visual fallback for a crest that failed to load, not
+  // content: the team's full name is always rendered as real text beside the
+  // badge. role="img" already makes descendants presentational, and
+  // aria-hidden additionally keeps them out of the contrast calculation,
+  // which cannot resolve a one-letter glyph sitting under an image.
+  return `<span class="team-badge ${size}" role="img" aria-label="${escapeHtml(team)} badge"><b aria-hidden="true">${escapeHtml(shortTeam(team))}</b>${image}</span>`;
 }
 
 function effectivePick(fixture) {
@@ -448,8 +453,41 @@ function renderPage() {
   const views = { home: homeView, round: roundView, cup: cupView, league: leagueView, opponents: opponentsView, performance: performanceView, activity: activityView, model: modelView, sources: sourcesView, health: healthView, settings: settingsView, more: moreView };
   $("#app").innerHTML = (views[page] || homeView)();
   document.querySelectorAll("[data-page-link]").forEach((link) => link.classList.toggle("active", link.dataset.pageLink === page));
+  markScrollableRegions();
   updateCountdown();
 }
+
+// WCAG 2.1.1 (Keyboard, level A). The stat tables have a min-width, so on a
+// narrow viewport their card scrolls sideways — and a mouse or trackpad was
+// the only way to scroll it. A scrollable region has to be reachable by
+// keyboard, which means a tab stop.
+//
+// Applied only to cards that actually overflow, and re-evaluated on resize:
+// giving every table a permanent tab stop would add stops that lead
+// nowhere at desktop width, trading one keyboard problem for another. The
+// accessible name matters too — landing on an unnamed scroll box tells a
+// screen-reader user nothing about where they are.
+function markScrollableRegions() {
+  document.querySelectorAll(".stat-table-card").forEach((card) => {
+    const scrolls = card.scrollWidth > card.clientWidth;
+    if (scrolls) {
+      card.setAttribute("tabindex", "0");
+      card.setAttribute("role", "region");
+      if (!card.hasAttribute("aria-label")) {
+        const heading = card.querySelector("caption, th");
+        card.setAttribute(
+          "aria-label",
+          heading ? `${heading.textContent.trim()} table, scrollable` : "Scrollable table"
+        );
+      }
+    } else {
+      card.removeAttribute("tabindex");
+      card.removeAttribute("role");
+    }
+  });
+}
+
+window.addEventListener("resize", markScrollableRegions);
 
 // Movement and divergence describe the market, never the forecast. The
 // frozen model already consumed this consensus through its blend, so the

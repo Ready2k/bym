@@ -246,3 +246,75 @@ test("percent and shortTeam handle the values the payload really carries", () =>
   assert.equal(app.shortTeam("Manchester City"), "MC");
   assert.equal(app.shortTeam("Arsenal"), "A");
 });
+
+
+// ---- accessibility -------------------------------------------------------
+
+/** A .stat-table-card stub whose overflow the test controls. */
+function scrollCard({ scrollWidth, clientWidth, heading = "Rank" }) {
+  const attrs = {};
+  return {
+    scrollWidth, clientWidth, attrs,
+    setAttribute(name, value) { attrs[name] = value; },
+    removeAttribute(name) { delete attrs[name]; },
+    hasAttribute(name) { return name in attrs; },
+    getAttribute(name) { return attrs[name] ?? null; },
+    querySelector: () => (heading ? { textContent: heading } : null),
+  };
+}
+
+test("a table that overflows becomes a labelled keyboard-reachable region", () => {
+  // WCAG 2.1.1: the stat tables have a min-width, so on a narrow viewport
+  // the card scrolls sideways and a pointer was the only way to scroll it.
+  const app = loadApp(appData());
+  const card = scrollCard({ scrollWidth: 598, clientWidth: 341 });
+  app.__context.document.querySelectorAll = () => [card];
+
+  app.markScrollableRegions();
+  assert.equal(card.getAttribute("tabindex"), "0");
+  assert.equal(card.getAttribute("role"), "region");
+  assert.equal(card.getAttribute("aria-label"), "Rank table, scrollable");
+});
+
+test("a table that fits gets no tab stop, so focus order stays meaningful", () => {
+  // Making every table focusable would trade one keyboard problem for
+  // another: tab stops at desktop width that lead nowhere.
+  const app = loadApp(appData());
+  const card = scrollCard({ scrollWidth: 570, clientWidth: 570 });
+  app.__context.document.querySelectorAll = () => [card];
+
+  app.markScrollableRegions();
+  assert.equal(card.getAttribute("tabindex"), null);
+  assert.equal(card.getAttribute("role"), null);
+});
+
+test("a card that stops overflowing loses its tab stop again", () => {
+  const app = loadApp(appData());
+  const card = scrollCard({ scrollWidth: 598, clientWidth: 341 });
+  app.__context.document.querySelectorAll = () => [card];
+  app.markScrollableRegions();
+  assert.equal(card.getAttribute("tabindex"), "0");
+
+  card.clientWidth = 598; // the viewport widened
+  app.markScrollableRegions();
+  assert.equal(card.getAttribute("tabindex"), null);
+});
+
+test("an existing aria-label is not overwritten by the derived one", () => {
+  const app = loadApp(appData());
+  const card = scrollCard({ scrollWidth: 598, clientWidth: 341 });
+  card.setAttribute("aria-label", "Season standings");
+  app.__context.document.querySelectorAll = () => [card];
+
+  app.markScrollableRegions();
+  assert.equal(card.getAttribute("aria-label"), "Season standings");
+});
+
+test("badge initials are hidden from assistive tech, not just styled small", () => {
+  // The initials duplicate the team name rendered beside them and are a
+  // fallback for a crest that failed to load — decoration, not content.
+  const app = loadApp(appData());
+  const html = app.teamBadge("Arsenal");
+  assert.match(html, /<b aria-hidden="true">/);
+  assert.match(html, /aria-label="Arsenal badge"/);
+});

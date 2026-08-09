@@ -237,7 +237,10 @@ the forecast: Football-Data.co.uk, the backtesting corpus, has no
 historical totals odds to validate a use against per §28's ablation
 rule — captured for §6's "capture where available" and a future
 prospective ablation, not wired into `P(score)`. Asian handicap, BTTS and
-correct-score markets remain unfetched.
+correct-score markets remain unfetched — though the *historical* corpus
+does carry Asian handicap and over/under 2.5 at ~100% coverage (the
+parser has simply never read those columns), so that half is ablatable
+today. See next_steps.md item 3.
 
 **Measurement is prospective** through 2026/27 —
 [results/prospective_2026_27.md](results/prospective_2026_27.md). No Phase
@@ -269,7 +272,10 @@ Per the phase gates in §23 and the ablation rule in §28. For what would
 actually unblock each of these — not just that they're missing — see
 [docs/next_steps.md](docs/next_steps.md).
 
-- **xG** (Phase 1B) — no confirmed free source; fields are nullable by design.
+- **xG** (Phase 1B) — fields are nullable by design. The "no confirmed
+  free source" claim has never actually been researched, and a zero-cost
+  shots-based proxy is possible from data already on disk; only a *paid*
+  feed is a §25 budget decision. See next_steps.md item 4.
 - **Shin's method** for margin removal, **MOV-Elo** — both implemented and
   run through the ablation ladder on 2026-08-09, both **rejected**: Shin's
   is indistinguishable from proportional devigging on this corpus, and
@@ -297,6 +303,11 @@ actually unblock each of these — not just that they're missing — see
   waits on enough rounds for an ablation to have any power.
 - **100 Club annotation** (§12.1) — no source of national-entrant pick
   data exists to estimate scoreline rarity from.
+- **A screen-reader and hand-driven keyboard pass.** WCAG 2.1 A/AA was
+  audited with axe-core on 2026-08-09 (one level-A failure found and
+  fixed; see [docs/accessibility_audit.md](docs/accessibility_audit.md)),
+  but keyboard interaction could not be exercised through the browser
+  harness and nothing has been listened to with a screen reader.
 - **FastAPI/Postgres** (§26) — the local UI runs on stdlib `http.server`
   and SQLite; the modelling core is plain Python modules precisely so a
   framework/database swap doesn't require a rewrite.

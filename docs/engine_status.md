@@ -62,8 +62,16 @@ data entered through the UI itself; covered by tests run from pytest
 (`tests/js/`, `tests/test_web.py`).
 
 Not built: a conversational "Ask the agent" entry point (§67, itself
-Priority-low in the spec), and WCAG conformance has not been audited
-(basic aria-live/aria-label/skip-link markup is present, nothing more).
+Priority-low in the spec).
+
+WCAG 2.1 A/AA audited 2026-08-09 with axe-core against all 12 pages at
+desktop and mobile widths — see [accessibility_audit.md](accessibility_audit.md).
+One level-A failure found and fixed (WCAG 2.1.1: `overflow-x` stat tables
+had no tab stop, so keyboard users could not scroll to the columns off
+the right edge). No other violations. Keyboard interaction could not be
+exercised through the browser harness (it swallows synthetic key events),
+and no screen-reader pass has been done; both are recorded as outstanding
+rather than assumed.
 
 ## Opponent modelling & strategy — scope
 

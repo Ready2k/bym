@@ -27,7 +27,7 @@ const EXPOSED = [
   "quality", "submissionMessage", "fixtureCard", "monitorCard",
   "heatmapGrid", "evBreakdown", "sourceFreshness", "surpriseNote",
   "strategyPanel", "submissionRecord", "leagueView", "homeView",
-  "teamBadge", "activityItem", "emptyState",
+  "teamBadge", "activityItem", "emptyState", "markScrollableRegions",
 ];
 
 function elementStub() {

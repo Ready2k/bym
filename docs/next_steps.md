@@ -20,13 +20,24 @@ scores > Golden Goal/national prizes > 100 Club) and that measurement is
 prospective-only now (2025/26 holdout is spent and grid-searched,
 VALIDATION.md):
 
-1. Everything below — items 1 and 2 are now waiting on elapsed rounds
-   rather than on anyone's time, so pick up the rest opportunistically in
-   the meantime. What is left is genuinely optional: §3 needs a
-   historical-odds source that may not exist, §4 needs a budget decision
-   from you, and §5-6 are both "nothing blocking, do it when it'd help".
+1. **§3's Asian handicap + totals half** — highest potential leverage
+   left, and *not* blocked: the corpus has both markets at ~100% coverage
+   and the parser simply never read them (see the correction under item
+   3). They price supremacy and goal count, which bear on `λ` far more
+   directly than 1X2 does.
+2. **§4's free routes** — the shots-based proxy and the "is there really
+   no free xG source?" research, both of which were wrongly filed under a
+   budget decision that only applies to a paid feed.
+3. Items 1 and 2 wait on elapsed rounds rather than on anyone's time.
+   §5 whenever a conversational layer would genuinely help.
 
-Four items left this file on 2026-08-09. The round-file rename is done —
+Both §3 and §4 lead to ablations, and with the 2025/26 holdout spent an
+ablation can now only *retire* a candidate, not promote one — promotion
+needs prospective evidence. That is a reason to run them (retiring a
+candidate cheaply is worth it) but not a reason to expect a model change
+at the end.
+
+Five items left this file on 2026-08-09. The round-file rename is done —
 `rounds/` now holds one real round per file, named
 `<season>_round_<NN>.json`, and nothing there reads as a template.
 Team-specific opponent bias is built: the design question it was blocked
@@ -39,7 +50,11 @@ rejected (results/ablation_007). §19's `opponent_snapshot` /
 `strategy_prediction` linkage is built: `strategy_history.py` persists
 every round-level and season-length recommendation append-only, with the
 raw picks it deviated from, the opponent data that existed at the time,
-and the `forecast_version` it was taken against.
+and the `forecast_version` it was taken against. The WCAG audit is done
+— see [accessibility_audit.md](accessibility_audit.md). One real level-A
+failure was found and fixed (scrollable tables were unreachable by
+keyboard); everything else passed, with the keyboard-interaction and
+screen-reader passes explicitly recorded as not yet done.
 
 **On items 1 and 2 below.** Neither can be finished without data that
 only accrues by playing rounds. What *was* buildable — and was built the
@@ -140,18 +155,59 @@ sit at zero indefinitely without that.
 **What.** Only `h2h` and opt-in `totals` are fetched today
 (`sources/odds_api.py`).
 
-**Why deferred.** No historical odds for these markets exist in the
-Football-Data.co.uk backtesting corpus, so nothing fetched could be
-validated per §28 even once collected.
+**Correction, 2026-08-09.** This item previously said "no historical odds
+for these markets exist in the Football-Data.co.uk backtesting corpus".
+**That is false for Asian handicap and totals**, and the error made a
+ready piece of work look blocked. Checked directly against `data/`:
 
-**Unblock.** Either find a supplementary historical-odds source that
-covers these markets, or accumulate live 2026/27 data prospectively and
-treat a season of it as the validation set (slow, but requires no new
-data source).
+```text
+column                          coverage (2019-2025, E0 + E1)
+AHh, AvgAHH, AvgAHA, B365AHH…   ~100%   Asian handicap, pre-match
+AHCh, AvgCAHH, B365CAHH…        ~100%   Asian handicap, closing
+Avg>2.5, Avg<2.5, B365>2.5…     ~100%   over/under 2.5, pre-match
+AvgC>2.5, B365C>2.5…            ~100%   over/under 2.5, closing
+BTTS, correct score             absent  no such columns in any season
+```
 
-**Effort.** Small to fetch — the pattern mirrors the totals odds just
-added. The real cost is in validating any actual use of them, not the
-fetch itself.
+Both come with the pre-match/closing pair, so the MARKET-AVAILABLE vs
+MARKET-ORACLE split VALIDATION.md already relies on for h2h applies
+unchanged. The parser simply never read these columns
+(`data/football_data.py:_pick_odds` selects h2h only) — the data was
+always there.
+
+**So this splits in two.**
+
+*Asian handicap + totals — NOT blocked, and the more valuable half.* A
+1X2 price says nothing about how a result splits across scorelines, which
+is why §32.3 Option B has to preserve the model's own within-result
+shape. Asian handicap prices **supremacy** and totals price **goal
+count** — both of which map onto `λ_home`/`λ_away` far more directly than
+1X2 does, and Super 6 is scored on exact scorelines. This is a
+substantially stronger candidate than Shin's method was (ablation_007),
+and it can be ablated today on the 2024/25 validation season with no new
+data source.
+
+*BTTS + correct score — still blocked as originally described.* Neither
+appears in the corpus. Either find a supplementary historical source or
+accumulate live 2026/27 data prospectively and treat a season of it as
+the validation set.
+
+**Unblock (AH + totals).**
+1. Extend `_pick_odds` to read the handicap line and the AH/totals price
+   pair, pre-match and closing, alongside the existing h2h columns.
+2. Decide how they constrain the score matrix — the honest analogue of
+   §32.3 Option B is to constrain the supremacy and total-goals
+   *marginals* rather than the result distribution.
+3. Ablate against the current h2h-only blend on 2024/25 (§28).
+
+**Effort.** Medium. Step 1 is small and mechanical; step 2 is the real
+design work, and is a genuine modelling change rather than a
+re-parameterisation like Shin's.
+
+**Read this before starting.** With the 2025/26 holdout spent, a win on
+2024/25 cannot be promoted on its own — it would need prospective
+confirmation (see the note under item 4). An ablation can still retire
+the idea cheaply, which is worth doing either way.
 
 ---
 
@@ -171,13 +227,36 @@ about what per-division α/β already capture rather than about rating
 quality. Both stay available behind flags (`devig="shin"`,
 `use_elo=True, elo_mov=True`) and neither is in the frozen model path.
 
-**Why xG is still deferred.** No confirmed free source exists; paid
-options (e.g. Sportmonks) breach the £10/month target (§25).
+**Correction, 2026-08-09.** This item said flatly "xG needs a budget
+decision — your manual approval per §25, not an engineering call". That
+bundled three separate questions together and pushed all of them onto the
+one person who could not answer two of them. Only the third is actually a
+budget decision:
 
-**Unblock.** xG needs a budget decision — your manual approval per §25,
-not an engineering call.
+1. **A zero-cost proxy is already possible and nobody has tried it.**
+   `data/` carries shots, shots on target and corners at ~100% coverage
+   for every season and both divisions (`HS`, `AS`, `HST`, `AST`, `HC`,
+   `AC`). A shot-based goal-expectation proxy is buildable and ablatable
+   today at no cost. It is *not* xG — no shot locations, no chance
+   quality, and shot counts are a much cruder signal — but §28 does not
+   require a candidate to be the best possible version of itself before
+   being tested. If a crude proxy adds nothing, that is informative about
+   whether paying for the real thing is worth it.
+2. **"No confirmed free source exists" was asserted, never researched.**
+   It should not be carried as established fact. Checking what free or
+   licence-compatible xG sources exist is an engineering task, not a
+   spending decision.
+3. **A paid feed is the only part that is genuinely yours.** Sportmonks
+   and similar breach the £10/month target (§25), and spending money is
+   your call — but it should be the *last* question asked here, not the
+   first.
 
-**Effort.** Blocked on a budget decision, not effort.
+**Unblock.** Try (1), do the research in (2), and only bring (3) to a
+budget decision if the cheap routes look insufficient *and* the proxy
+suggested there is signal worth paying for.
+
+**Effort.** (1) small. (2) an afternoon of research. (3) not effort at
+all — a decision.
 
 **Worth knowing before adding another rung here.** With the 2025/26
 holdout spent, no ablation on the validation season can promote anything
@@ -202,22 +281,27 @@ The one hard constraint from §67: answers must come from the same
 persisted forecast/strategy data the structured UI already shows —
 "the conversational agent must not create a separate truth."
 
+**Two things to be clear-eyed about before calling this a quick win.**
+
+*It is Ollama-dependent, in its interesting form.* A genuinely
+conversational layer needs an LLM, and Ollama is the one available
+(Settings → Knowledge extractor). With the extractor off there is no
+model to answer with. A non-LLM version — a fixed set of questions
+answered from `transparency.py`'s existing explainability payloads — has
+no such dependency and no hallucination risk, but is a help panel rather
+than a conversation. Worth deciding which one is actually wanted before
+starting, because they share almost no implementation.
+
+*The LLM is not the hard part; §67's constraint is.* A model paraphrasing
+persisted data can state a number that contradicts the structured UI on
+the same screen, which is precisely the "separate truth" §67 forbids —
+and it fails in the most damaging possible way, by sounding authoritative.
+Every answer needs to be traceable to a stored value, which in practice
+means quoting the persisted figure rather than letting the model restate
+it. That discipline, not the chat UI, is the work.
+
 **Effort.** Medium — the UI-facing part is simple, the discipline of
 sourcing every answer from already-persisted data (rather than
 recomputing something new and possibly inconsistent) is the real work.
 
 ---
-
-## 6. WCAG accessibility audit
-
-**What.** A formal accessibility conformance pass.
-
-**Why deferred.** Never done. Only ad hoc `aria-live`/`aria-label`/
-skip-link markup exists today, added incidentally rather than audited.
-
-**Unblock.** Run an automated audit (e.g. axe-core against the local
-UI) plus a manual keyboard-navigation and screen-reader pass, then fix
-what it finds.
-
-**Effort.** Small–medium, mostly labour rather than design work — no
-open questions to resolve first, unlike most items above.
