@@ -4,6 +4,7 @@ __pycache__/
 *.egg-info/
 data/
 .pytest_cache/
+.run/
 config/odds_api_quota.json
 *.db
 config/*_quota.json

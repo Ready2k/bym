@@ -1,0 +1,108 @@
+#!/usr/bin/env bash
+# Manage the local Super 6 decision UI without relying on a terminal window.
+# Optional environment overrides: SUPER6_PORT, SUPER6_DB, SUPER6_SUBMISSIONS,
+# SUPER6_ROUND, SUPER6_DATA, SUPER6_SEASONS.
+
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+RUNTIME_DIR="$ROOT_DIR/.run"
+PID_FILE="$RUNTIME_DIR/super6-ui.pid"
+LOG_FILE="$RUNTIME_DIR/super6-ui.log"
+PORT="${SUPER6_PORT:-8000}"
+ROUND_FILE="${SUPER6_ROUND:-$ROOT_DIR/rounds/example_round.json}"
+DATA_DIR="${SUPER6_DATA:-$ROOT_DIR/data}"
+DATABASE="${SUPER6_DB:-$ROOT_DIR/data/super6-ui.db}"
+SUBMISSIONS="${SUPER6_SUBMISSIONS:-$ROOT_DIR/data/super6-ui-submissions.json}"
+SEASONS="${SUPER6_SEASONS:-2019 2025}"
+
+if [[ -x "$ROOT_DIR/.venv/bin/python" ]]; then
+  PYTHON="$ROOT_DIR/.venv/bin/python"
+else
+  PYTHON="${PYTHON:-python3}"
+fi
+
+usage() {
+  echo "Usage: $0 {start|stop|restart|status|logs}"
+}
+
+pid_is_running() {
+  [[ -f "$PID_FILE" ]] || return 1
+  local pid
+  pid="$(<"$PID_FILE")"
+  [[ "$pid" =~ ^[0-9]+$ ]] && kill -0 "$pid" 2>/dev/null
+}
+
+clear_stale_pid() {
+  if [[ -f "$PID_FILE" ]] && ! pid_is_running; then
+    rm -f "$PID_FILE"
+  fi
+}
+
+start() {
+  clear_stale_pid
+  if pid_is_running; then
+    echo "Super 6 UI is already running (PID $(<"$PID_FILE")) at http://127.0.0.1:$PORT"
+    return
+  fi
+  if lsof -tiTCP:"$PORT" -sTCP:LISTEN >/dev/null 2>&1; then
+    echo "Port $PORT is already in use. Stop that service or set SUPER6_PORT." >&2
+    return 1
+  fi
+  mkdir -p "$RUNTIME_DIR"
+  nohup "$PYTHON" -u -m super6.cli serve \
+    --round "$ROUND_FILE" \
+    --data "$DATA_DIR" \
+    --seasons $SEASONS \
+    --db "$DATABASE" \
+    --submissions "$SUBMISSIONS" \
+    --port "$PORT" >"$LOG_FILE" 2>&1 &
+  local pid=$!
+  echo "$pid" >"$PID_FILE"
+  sleep 1
+  if ! kill -0 "$pid" 2>/dev/null; then
+    rm -f "$PID_FILE"
+    echo "Super 6 UI did not start. See $LOG_FILE" >&2
+    return 1
+  fi
+  echo "Super 6 UI started (PID $pid): http://127.0.0.1:$PORT"
+}
+
+stop() {
+  clear_stale_pid
+  if ! pid_is_running; then
+    echo "Super 6 UI is not running from this service script."
+    return
+  fi
+  local pid
+  pid="$(<"$PID_FILE")"
+  kill "$pid"
+  for _ in {1..20}; do
+    kill -0 "$pid" 2>/dev/null || break
+    sleep 0.25
+  done
+  if kill -0 "$pid" 2>/dev/null; then
+    echo "Super 6 UI is still stopping (PID $pid)." >&2
+    return 1
+  fi
+  rm -f "$PID_FILE"
+  echo "Super 6 UI stopped."
+}
+
+status() {
+  clear_stale_pid
+  if pid_is_running; then
+    echo "Super 6 UI is running (PID $(<"$PID_FILE")): http://127.0.0.1:$PORT"
+  else
+    echo "Super 6 UI is stopped."
+  fi
+}
+
+case "${1:-}" in
+  start) start ;;
+  stop) stop ;;
+  restart) stop; start ;;
+  status) status ;;
+  logs) tail -n 80 "$LOG_FILE" 2>/dev/null || echo "No service log yet." ;;
+  *) usage; exit 2 ;;
+esac
