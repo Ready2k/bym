@@ -28,11 +28,29 @@ from .registry import DEFAULT_REGISTRY_PATH, assert_approved
 SOURCE_ID = "the_odds_api"
 BASE_URL = "https://api.the-odds-api.com/v4"
 
-# Competition keys for the two divisions Super 6 draws from.
+# Competition keys, verbatim from the provider's published sports list.
+#
+# Super 6 rounds are mostly league fixtures, but include FA Cup ties a few
+# times a season — and a cup tie appears in the *cup* feed, not either
+# club's league feed, so without these a cup weekend has no market at all.
 SPORT_KEYS = {
     "E0": "soccer_epl",
     "E1": "soccer_efl_champ",
+    "E2": "soccer_england_league1",
+    "E3": "soccer_england_league2",
+    "FA_CUP": "soccer_fa_cup",
+    "EFL_CUP": "soccer_england_efl_cup",
 }
+
+# Cup competitions, kept separate because they are fetched only as a
+# second pass: every extra competition is another billed request, and on
+# an ordinary league weekend they would return nothing.
+CUP_DIVISIONS: tuple[str, ...] = ("FA_CUP", "EFL_CUP")
+
+# The provider lists no National League feed, so an EC club's cup tie can
+# never be priced from this source. Recorded here rather than discovered
+# as a silent gap on the one weekend it matters.
+UNPRICEABLE_DIVISIONS: frozenset[str] = frozenset({"EC"})
 
 DEFAULT_REGIONS = "uk"
 DEFAULT_MARKETS = "h2h"

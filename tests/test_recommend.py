@@ -60,17 +60,31 @@ def test_report_contains_required_columns(rec):
 
 
 def test_odds_blend_shifts_toward_market():
-    """A fixture with strong market odds against the model's view must move
-    result probabilities toward the market (§32.3, w=0.5)."""
+    """§32.3 w=0.5: the blended result probability is the midpoint of the
+    model's and the market's.
+
+    Asserted as the exact midpoint rather than "moves upward". The old
+    directional form silently depended on the model landing *below* the
+    market, which is a property of whatever `synthetic_matches` happened
+    to generate — and that advances a shared RNG, so it varied with test
+    ordering. The midpoint identity holds for any fit.
+    """
+    from super6.model.market import implied_result_probs
     from super6.recommend import recommend_fixture
 
     params = dixon_coles.fit(synthetic_matches(), xi=0.0)
+    odds = (1.05, 12.0, 30.0)
     plain = recommend_fixture(params, "Strong", "Weak")
-    # market prices Strong far shorter than the model does
-    blended = recommend_fixture(
-        params, "Strong", "Weak", odds=(1.05, 12.0, 30.0)
-    )
-    assert blended.matrix.p_home_win > plain.matrix.p_home_win
+    blended = recommend_fixture(params, "Strong", "Weak", odds=odds)
+
+    market_h, market_d, market_a = implied_result_probs(*odds)
+    w = DEFAULT_MODEL.market_blend_weight
+    for blended_p, model_p, market_p in [
+        (blended.matrix.p_home_win, plain.matrix.p_home_win, market_h),
+        (blended.matrix.p_draw, plain.matrix.p_draw, market_d),
+        (blended.matrix.p_away_win, plain.matrix.p_away_win, market_a),
+    ]:
+        assert blended_p == pytest.approx(w * market_p + (1 - w) * model_p, abs=1e-9)
 
 
 def test_alternatives_ranked_by_ev(rec):

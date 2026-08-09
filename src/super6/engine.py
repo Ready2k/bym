@@ -22,7 +22,12 @@ from pathlib import Path
 
 from . import events as ev
 from .api import service
-from .api.contracts import AvailabilityState, MarketState, RoundSummary
+from .api.contracts import (
+    AvailabilityState,
+    MarketState,
+    Modellability,
+    RoundSummary,
+)
 from .config import FROZEN_PHASE1_V1
 from .db import utcnow
 from .knowledge.config import ExtractorConfig, ExtractorMode
@@ -36,11 +41,84 @@ def to_iso_safe(value: datetime) -> str:
     return to_iso(value)
 
 
+_MODELLABLE = Modellability()
+
 QUANTITATIVE_NOTE = (
     "Team and news intelligence at this phase has quantitative impact: "
     "NONE DIRECTLY. Only market consensus reaches the forecast, through "
     "PHASE1_MODEL_V1's frozen w=0.5 blend."
 )
+
+
+def _enrich_markets(
+    markets: dict,
+    consensus_by_fixture: dict,
+    recommendation,
+    now: datetime,
+    notes: list[str],
+    consensus_snapshot_path: Path | None = None,
+) -> dict:
+    """Attach movement and model-vs-market divergence to each market state.
+
+    Both are read-model concerns only. `movement` decides whether a move
+    deserves attention; `divergence` compares the model's own opinion with
+    the market. Neither may touch the forecast — the frozen model already
+    consumed this consensus through its w=0.5 blend, and adjusting again
+    here would count the same information twice (§32).
+
+    Degrades to the plain market state on any failure, in keeping with the
+    rest of the run: a missing snapshot history is a missing reference
+    point, not a failed engine pass.
+    """
+    if not consensus_by_fixture:
+        return markets
+
+    from . import divergence as divergence_mod
+    from . import movement as movement_mod
+
+    try:
+        history = (
+            movement_mod.ConsensusHistory.load(consensus_snapshot_path)
+            if consensus_snapshot_path is not None
+            else movement_mod.ConsensusHistory.load()
+        )
+    except (OSError, ValueError, KeyError) as exc:
+        notes.append(f"market movement unavailable: {exc}")
+        return markets
+
+    by_fixture = {(f.home, f.away): f for f in recommendation.fixtures}
+    moved = 0
+    for key, consensus in consensus_by_fixture.items():
+        fixture = by_fixture.get(key)
+        if fixture is None or consensus is None:
+            continue
+        try:
+            reports = movement_mod.reference_reports(consensus, history, now=now)
+            primary = reports.get(movement_mod.PREVIOUS_POLL)
+            report = divergence_mod.assess(
+                fixture.model_only_matrix,
+                consensus.p_home,
+                consensus.p_draw,
+                consensus.p_away,
+                consensus.dispersion,
+                consensus.bookmaker_count,
+            )
+            markets[key] = service.build_market_state(
+                consensus,
+                movement=primary,
+                divergence_report=report,
+                divergence_factor=divergence_mod.divergence_factor(report),
+            )
+            if primary is not None and primary.should_reforecast:
+                moved += 1
+        except (ValueError, KeyError, ZeroDivisionError) as exc:
+            notes.append(f"market attention skipped for {key[0]} v {key[1]}: {exc}")
+    if moved:
+        notes.append(
+            f"market: {moved} fixture(s) moved beyond the noise threshold "
+            "since the previous poll"
+        )
+    return markets
 
 
 @dataclass
@@ -66,10 +144,21 @@ def run_engine(
     run_knowledge: bool = False,
     season: int = 2026,
     submission_path: Path | None = None,
+    known_teams: set[str] | None = None,
+    corpus: str = "E0+E1",
+    consensus_snapshot_path: Path | None = None,
     **kwargs,
 ) -> EngineRunResult:
     """One full engine pass. Every external step degrades to 'absent'
-    rather than failing the run."""
+    rather than failing the run.
+
+    `known_teams` is the set of teams the router was actually fitted on.
+    Supplying it lets each fixture carry a modellability verdict, so the
+    UI can refuse to show a pick for a team the model has never seen
+    rather than presenting the league-average prior as a forecast. Omit
+    it and every fixture is reported as modellable, which is only honest
+    when the caller already knows the round is inside the corpus.
+    """
     now = now or utcnow()
     notes: list[str] = []
     all_events: list[ev.Event] = []
@@ -92,6 +181,7 @@ def run_engine(
                 f"market: {acquired.covered}/6 fixtures covered, "
                 f"{acquired.credits_spent} credit(s)"
             )
+            notes.extend(f"market: {note}" for note in acquired.notes)
         except Exception as exc:
             notes.append(f"market acquisition unavailable: {exc}")
     else:
@@ -132,8 +222,54 @@ def run_engine(
             "no dispersion available)"
         )
 
+    # ---- modellability, decided BEFORE the forecast ----------------------
+    # It has to come first: a fixture the model cannot judge is forecast
+    # differently, not merely annotated afterwards.
+    modellabilities = {}
+    if known_teams is not None:
+        modellabilities = {
+            (f.home, f.away): service.build_modellability(
+                f.home, f.away, known_teams, corpus
+            )
+            for f in rnd.fixtures
+        }
+    market_only = {
+        (f.home, f.away)
+        for f in rnd.fixtures
+        if not modellabilities.get((f.home, f.away), _MODELLABLE).modellable
+        and f.odds is not None
+    }
+    unpriced = {
+        (f.home, f.away)
+        for f in rnd.fixtures
+        if not modellabilities.get((f.home, f.away), _MODELLABLE).modellable
+        and f.odds is None
+    }
+    if market_only:
+        notes.append(
+            f"forecast: {len(market_only)} fixture(s) outside the {corpus} "
+            "corpus fell back to market-only (w=1.0); not PHASE1_MODEL_V1"
+        )
+    if unpriced:
+        notes.append(
+            f"forecast: {len(unpriced)} fixture(s) outside the {corpus} "
+            "corpus have no odds either — no usable forecast for them"
+        )
+
     # ---- forecast layer -------------------------------------------------
-    recommendation = recommend_round(router, rnd, FROZEN_PHASE1_V1)
+    recommendation = recommend_round(
+        router, rnd, FROZEN_PHASE1_V1, market_only=market_only
+    )
+
+    # ---- market attention layer (§6, §21, §33) --------------------------
+    # Movement and divergence are computed here and nowhere near the
+    # forecast: the frozen model has already consumed the latest consensus
+    # through its w=0.5 blend, so adjusting anything on the strength of a
+    # move would double-count it. These populate the read model only.
+    markets = _enrich_markets(
+        markets, consensus_by_fixture, recommendation, now, notes,
+        consensus_snapshot_path=consensus_snapshot_path,
+    )
 
     # ---- structured availability layer ----------------------------------
     availabilities: dict[tuple[str, str], AvailabilityState] = {}
@@ -191,6 +327,7 @@ def run_engine(
     summary = service.build_round_summary(
         rnd, recommendation, markets, availabilities,
         submission_state=submission_record.state,
+        modellabilities=modellabilities,
     )
     return EngineRunResult(
         round_summary=summary,
@@ -238,6 +375,19 @@ def format_engine_report(result: EngineRunResult) -> str:
     lines.append(f"Expected round score: {summary.expected_round_score:.2f}")
     lines.append(f"Submission state: {summary.submission_state}")
 
+    unmodellable = [f for f in summary.fixtures if not f.modellability.modellable]
+    if unmodellable:
+        lines += ["", "!! NOT A TRUSTWORTHY FORECAST — outside the training corpus"]
+        for fixture in unmodellable:
+            lines.append(
+                f"  {fixture.home_team} v {fixture.away_team}: "
+                f"{fixture.modellability.reason}"
+            )
+        lines.append(
+            "  The pick above is what the model returns, not what it knows. "
+            "Do not enter it."
+        )
+
     lines += ["", "=== MARKET INTELLIGENCE ==="]
     lines.append(
         f"Fixtures with a market view: "
@@ -257,6 +407,16 @@ def format_engine_report(result: EngineRunResult) -> str:
             f"{market.away_probability:.1%} "
             f"({market.bookmaker_count} books, dispersion {market.dispersion:.3f})"
         )
+        if market.last_movement:
+            lines.append(
+                f"      moved: {market.last_movement} "
+                f"[{market.materiality}, books {market.market_agreement}]"
+            )
+        if market.model_vs_market is not None:
+            lines.append(
+                f"      model vs market: TVD {market.model_vs_market:.3f} "
+                f"(divergence {market.market_divergence})"
+            )
 
     lines += ["", "=== STRUCTURED TEAM INTELLIGENCE ==="]
     for fixture in summary.fixtures:

@@ -121,8 +121,21 @@ def test_quota_blocks_when_budget_exhausted(tmp_path, monkeypatch):
 
 
 def test_unknown_division_rejected(tmp_path):
+    """EC is in the match corpus but the provider publishes no National
+    League feed, so it must be refused outright rather than requested."""
     path = tmp_path / "registry.json"
     reg.save_registry(reg.load_registry(path), path)
     reg.approve("the_odds_api", path=path)
     with pytest.raises(ValueError, match="No sport key"):
-        odds_api.fetch_odds("E2", "fake-key", registry_path=path)
+        odds_api.fetch_odds("EC", "fake-key", registry_path=path)
+    assert "EC" in odds_api.UNPRICEABLE_DIVISIONS
+    assert not odds_api.UNPRICEABLE_DIVISIONS & set(odds_api.SPORT_KEYS)
+
+
+def test_cup_competitions_are_mapped_and_kept_out_of_the_default_pass():
+    """A cup tie appears in the cup feed, not either club's league feed."""
+    assert odds_api.SPORT_KEYS["FA_CUP"] == "soccer_fa_cup"
+    assert odds_api.SPORT_KEYS["EFL_CUP"] == "soccer_england_efl_cup"
+    # Cups cost an extra billed request each, so they are a second pass.
+    assert set(odds_api.CUP_DIVISIONS) == {"FA_CUP", "EFL_CUP"}
+    assert all(division in odds_api.SPORT_KEYS for division in odds_api.CUP_DIVISIONS)

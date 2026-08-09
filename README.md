@@ -51,6 +51,18 @@ super6 serve --round rounds/example_round.json --seasons 2019 2025 --data data
 Then open [http://127.0.0.1:8000](http://127.0.0.1:8000). The server is
 local-only by default. It never submits predictions to Sky.
 
+To keep the local UI running outside a terminal, use:
+
+```bash
+./scripts/super6-service start
+./scripts/super6-service status
+./scripts/super6-service stop
+```
+
+`restart` and `logs` are also available. The script uses `.venv` when it is
+present; set `SUPER6_PORT`, `SUPER6_DB`, or `SUPER6_SUBMISSIONS` to override
+its local defaults.
+
 Walk-forward backtest against the §16/§28 baselines — MARKET-AVAILABLE
 (early odds — the fair target), MARKET-ORACLE (closing odds — theoretical
 gold standard), pure Poisson, and Dixon-Coles pooled vs per-division. See

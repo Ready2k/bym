@@ -198,14 +198,67 @@ def test_availability_alone_cannot_change_lambda():
 
 
 def test_forecast_path_has_no_availability_input():
-    """recommend_fixture takes params, teams, config and odds — there is
-    no argument through which team news could reach the model."""
+    """There must be no argument through which team news reaches the model.
+
+    Pinned as an exact set, not a subset: a new parameter has to be
+    justified here deliberately rather than slipped in. The permitted ones
+    are the fitted parameters, the two teams, the config, the market price,
+    the per-fixture blend weight, and a provenance label — none of which
+    can carry an injury, a suspension or a lineup.
+    """
     import inspect
 
     from super6.recommend import recommend_fixture
 
     params = set(inspect.signature(recommend_fixture).parameters)
-    assert params == {"params", "home", "away", "cfg", "odds"}
+    assert params == {
+        "params", "home", "away", "cfg", "odds", "blend_weight", "basis",
+    }
+
+
+def test_market_only_fallback_cannot_smuggle_news_into_the_forecast():
+    """The fallback changes how much of the market is used, nothing else.
+
+    `basis` is a label and must not alter any number; `blend_weight` may
+    only move the result probabilities toward the market.
+    """
+    import pandas as pd
+
+    from super6.config import FROZEN_PHASE1_V1
+    from super6.model.dixon_coles import DixonColesParams
+    from super6.recommend import recommend_fixture
+
+    # Built directly rather than fitted: test_dixon_coles.synthetic_matches
+    # advances a module-level RNG, so calling it here would silently change
+    # what every later test in the session fits on.
+    fitted = DixonColesParams(
+        teams=("Strong", "Weak"), mu=0.15, gamma=0.3,
+        alpha={"Strong": 0.4, "Weak": -0.4},
+        beta={"Strong": -0.3, "Weak": 0.3},
+        rho=-0.05, xi=0.0, reference_date=pd.Timestamp("2026-08-01"),
+        n_matches=100, log_likelihood=-1.0,
+    )
+    odds = (2.0, 3.4, 3.6)
+    labelled = recommend_fixture(
+        fitted, "Strong", "Weak", FROZEN_PHASE1_V1, odds=odds, basis="ANYTHING"
+    )
+    plain = recommend_fixture(fitted, "Strong", "Weak", FROZEN_PHASE1_V1, odds=odds)
+    assert labelled.pick == plain.pick
+    assert labelled.ev == plain.ev
+    assert labelled.p_result == plain.p_result
+
+    # w=1.0 must reproduce the market's result probabilities exactly.
+    from super6.model.market import implied_result_probs
+
+    market_only = recommend_fixture(
+        fitted, "Strong", "Weak", FROZEN_PHASE1_V1, odds=odds, blend_weight=1.0
+    )
+    mh, md, ma = implied_result_probs(*odds)
+    assert market_only.matrix.p_home_win == pytest.approx(mh, abs=1e-9)
+    assert market_only.matrix.p_draw == pytest.approx(md, abs=1e-9)
+    assert market_only.matrix.p_away_win == pytest.approx(ma, abs=1e-9)
+    # ...while the scoreline shape still comes from the model.
+    assert market_only.raw_matrix.lambda_home == plain.raw_matrix.lambda_home
 
 
 # ---- attribution --------------------------------------------------------
@@ -280,3 +333,52 @@ def test_completeness_stays_categorical():
     """No 83.7 confidence units."""
     report = completeness.assess("Chelsea", "Newcastle", [], has_market=True)
     assert completeness.completeness_factor(report) in {"HIGH", "MEDIUM", "LOW"}
+
+
+def test_read_model_carries_the_lineup_surprise_as_standing_fact(conn):
+    """LINEUP_SURPRISE is raised as an event, but a fixture opened later
+    would show nothing — the read model has to hold the fact too."""
+    from super6.api import service
+
+    expected = lineup(
+        LineupKind.EXPECTED,
+        ["Palmer", "Jackson", "Caicedo", "James", "Colwill"],
+        confidence="MEDIUM",
+    )
+    confirmed = lineup(
+        LineupKind.CONFIRMED,
+        ["Palmer", "Mudryk", "Chalobah", "Disasi", "Badiashile"],
+        minutes=60,
+    )
+    ingest.ingest_lineup(conn, expected, now=NOW)
+    ingest.ingest_lineup(conn, confirmed, now=NOW + timedelta(minutes=60))
+
+    state = service.build_availability_state(conn, "Chelsea", "Newcastle", has_market=True)
+    assert state.lineup_surprise is not None
+    assert "Chelsea" in state.lineup_surprise
+    # Evidence never moves a frozen model, however surprising it is.
+    assert state.quantitative_impact == "NONE DIRECTLY"
+
+
+def test_no_lineup_surprise_when_the_confirmed_xi_matches(conn):
+    from super6.api import service
+
+    players = ["Palmer", "Jackson", "Caicedo", "James", "Colwill"]
+    ingest.ingest_lineup(conn, lineup(LineupKind.EXPECTED, players, confidence="HIGH"), now=NOW)
+    ingest.ingest_lineup(
+        conn, lineup(LineupKind.CONFIRMED, players, minutes=60),
+        now=NOW + timedelta(minutes=60),
+    )
+    state = service.build_availability_state(conn, "Chelsea", "Newcastle", has_market=True)
+    assert state.lineup_surprise is None
+
+
+def test_no_lineup_surprise_without_an_expected_lineup_to_compare(conn):
+    """A confirmed XI alone is not a surprise — there is nothing to differ from."""
+    from super6.api import service
+
+    ingest.ingest_lineup(
+        conn, lineup(LineupKind.CONFIRMED, ["Palmer", "Jackson"], minutes=60), now=NOW
+    )
+    state = service.build_availability_state(conn, "Chelsea", "Newcastle", has_market=True)
+    assert state.lineup_surprise is None

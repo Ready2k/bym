@@ -72,3 +72,38 @@ def test_market_baselines(matches, test_mask):
     oracle = run_favourite_baseline(m, test_mask, closing=True)
     assert (available.predictions["pred_home"] > available.predictions["pred_away"]).all()
     assert (oracle.predictions["pred_home"] < oracle.predictions["pred_away"]).all()
+
+
+def test_predictions_carry_the_columns_conf_calibration_needs(matches, test_mask):
+    """§20's CONF must be calibration-testable offline (§16).
+
+    The rule reads p_result AND p_score. Storing only the H/D/A marginals
+    forces any offline analysis to reimplement it from p_result alone,
+    which silently assigns a different, stricter-looking set of fixtures to
+    each band and makes the bands look broken when they are not.
+    """
+    from super6.config import DEFAULT_MODEL
+    from super6.recommend import confidence_v1
+
+    preds = run_model(matches, test_mask, xi=0.0, per_division=True).predictions
+    for column in ("p_result", "p_score", "confidence"):
+        assert column in preds.columns, f"{column} missing from backtest output"
+
+    assert set(preds["confidence"]) <= {"HIGH", "MEDIUM", "LOW"}
+    # The stored label must be the real rule's, not a p_result-only proxy.
+    recomputed = [
+        confidence_v1(r.p_result, r.p_score, DEFAULT_MODEL)
+        for r in preds.itertuples()
+    ]
+    assert list(preds["confidence"]) == recomputed
+
+    # p_result is the probability of the *picked* outcome, so it has to
+    # agree with whichever H/D/A marginal the pick actually selected.
+    for r in preds.itertuples():
+        expected = (
+            r.p_h if r.pred_home > r.pred_away
+            else r.p_a if r.pred_home < r.pred_away
+            else r.p_d
+        )
+        assert r.p_result == pytest.approx(expected, abs=1e-9)
+        assert 0.0 <= r.p_score <= r.p_result + 1e-9

@@ -18,11 +18,12 @@ from ..availability.model import LineupKind
 from ..availability.reconcile import resolve_state
 from ..db import to_iso
 from ..model import golden_goal
-from ..recommend import RoundRecommendation
+from ..recommend import MARKET_ONLY_BASIS, RoundRecommendation
 from ..round import Round
 from ..sources.consensus import Consensus
 from .contracts import (
     ArmPerformance,
+    Modellability,
     AvailabilityItem,
     AvailabilityState,
     FixtureForecast,
@@ -100,7 +101,75 @@ def build_availability_state(
         data_quality=report.state,
         feature_completeness=completeness_mod.completeness_factor(report),
         items=items,
+        lineup_surprise=_lineup_surprise(lineups),
     )
+
+
+def _lineup_surprise(lineups) -> str | None:
+    """Describe a confirmed XI that departs materially from the expected one.
+
+    `availability/ingest` already raises LINEUP_SURPRISE as an *event* when
+    this happens, but events are a feed — a fixture opened after the fact
+    would show nothing. The read model needs the standing fact too, so it
+    is recomputed here from the same stored lineups with the same rule
+    rather than mirrored from the feed.
+
+    Still `NONE DIRECTLY` on the forecast: this describes evidence, and no
+    amount of it moves a frozen model.
+    """
+    from ..availability.lineups import compare_lineups
+
+    latest: dict[tuple[str, str], object] = {}
+    for lineup in lineups:  # store returns them ordered by observed_at
+        latest[(lineup.team, lineup.kind)] = lineup
+
+    descriptions = []
+    for team, kind in list(latest):
+        if kind != LineupKind.CONFIRMED.value:
+            continue
+        expected = latest.get((team, LineupKind.EXPECTED.value))
+        if expected is None:
+            continue
+        try:
+            diff = compare_lineups(expected, latest[(team, kind)])
+        except ValueError:
+            continue
+        if diff.material:
+            descriptions.append(f"{team}: {diff.describe()}")
+    return "; ".join(descriptions) or None
+
+
+def build_modellability(
+    home: str, away: str, known_teams: set[str], corpus: str = "E0+E1"
+) -> Modellability:
+    """Flag fixtures the model cannot meaningfully forecast."""
+    unknown = [t for t in (home, away) if t not in known_teams]
+    if not unknown:
+        return Modellability(modellable=True, corpus=corpus)
+    return Modellability(
+        modellable=False,
+        unknown_teams=unknown,
+        corpus=corpus,
+        reason=(
+            f"{', '.join(unknown)} not in the {corpus} training corpus; "
+            "an unknown team receives the league-average prior, which can "
+            "make it favourite over a genuinely below-average known team"
+        ),
+    )
+
+
+def _basis_of(recommendation, modellability: Modellability | None) -> str:
+    """Resolve what actually produced this forecast.
+
+    A fixture the model cannot judge and which has no market to fall back
+    on yields NONE: numbers still exist in the recommendation, but nothing
+    in them is worth calling a forecast, and the UI needs to be told that
+    rather than inferring it.
+    """
+    basis = getattr(recommendation, "basis", "PHASE1_MODEL_V1")
+    if modellability is not None and not modellability.modellable:
+        return basis if basis == MARKET_ONLY_BASIS else "NONE"
+    return basis
 
 
 def build_fixture_forecast(
@@ -108,6 +177,7 @@ def build_fixture_forecast(
     market: MarketState | None = None,
     availability: AvailabilityState | None = None,
     alternatives_count: int = 5,
+    modellability: Modellability | None = None,
 ) -> FixtureForecast:
     alternatives = [
         ScoreAlternative(
@@ -129,6 +199,8 @@ def build_fixture_forecast(
         expected_points=round(recommendation.ev, 3),
         confidence=recommendation.confidence,
         model_pick=recommendation.pick,
+        modellability=modellability or Modellability(),
+        forecast_basis=_basis_of(recommendation, modellability),
         alternatives=alternatives,
         market=market,
         availability=availability,
@@ -141,14 +213,24 @@ def build_round_summary(
     markets: dict[tuple[str, str], MarketState] | None = None,
     availabilities: dict[tuple[str, str], AvailabilityState] | None = None,
     submission_state: str = "NOT_READY",
+    modellabilities: dict[tuple[str, str], Modellability] | None = None,
 ) -> RoundSummary:
+    """`modellabilities` are decided by the caller, not re-derived here.
+
+    The verdict changes how a fixture is *forecast*, so it must already
+    have been made before the recommendation existed. Recomputing it at
+    read-model time would create a second copy of the same decision, free
+    to drift from the one the forecast actually used.
+    """
     markets = markets or {}
     availabilities = availabilities or {}
+    modellabilities = modellabilities or {}
     fixtures = [
         build_fixture_forecast(
             fixture,
             markets.get((fixture.home, fixture.away)),
             availabilities.get((fixture.home, fixture.away)),
+            modellability=modellabilities.get((fixture.home, fixture.away)),
         )
         for fixture in recommendation.fixtures
     ]
@@ -211,6 +293,7 @@ def build_system_health(
     ollama_health=None,
     extractor_config=None,
     schema_version: int = 0,
+    last_forecast_at: str | None = None,
 ) -> SystemHealth:
     from ..sources import api_football, quota as quota_mod, tavily
     from ..sources.odds_api import QUOTA as ODDS_QUOTA
@@ -234,14 +317,19 @@ def build_system_health(
         )
 
     pending = 0
+    next_check = None
     if conn is not None:
         try:
             row = conn.execute(
-                "SELECT COUNT(*) c FROM jobs WHERE status = 'PENDING'"
+                "SELECT COUNT(*) c, MIN(next_run_at) next_at "
+                "FROM jobs WHERE status = 'PENDING'"
             ).fetchone()
             pending = int(row["c"])
+            # Absent when nothing is scheduled, so the UI can say "not
+            # monitoring" instead of implying a watch that does not exist.
+            next_check = row["next_at"] if pending else None
         except sqlite3.Error:
-            pending = 0
+            pending, next_check = 0, None
 
     warnings = []
     for source in sources:
@@ -253,6 +341,8 @@ def build_system_health(
     return SystemHealth(
         sources=sources,
         scheduler_jobs_pending=pending,
+        last_forecast_at=last_forecast_at,
+        next_scheduled_check=next_check,
         extractor=(
             "OllamaClaimExtractor"
             if extractor_config and extractor_config.kind == "ollama"

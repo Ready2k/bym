@@ -59,6 +59,59 @@ def test_engine_runs_without_any_external_credentials(conn, router):
     assert result.knowledge_layer["enabled"] is False
 
 
+def test_engine_reports_every_fixture_modellable_when_no_corpus_is_supplied(conn, router):
+    """Silence about the corpus must not be read as a warning."""
+    result = engine.run_engine(conn, ROUND, router, now=NOW)
+    assert all(f.modellability.modellable for f in result.round_summary.fixtures)
+
+
+def test_engine_flags_fixtures_whose_teams_are_outside_the_corpus(conn, router):
+    result = engine.run_engine(
+        conn, ROUND, router, now=NOW,
+        known_teams={"Strong", "Weak"}, corpus="E0",
+    )
+    verdicts = {
+        (f.home_team, f.away_team): f.modellability
+        for f in result.round_summary.fixtures
+    }
+    assert verdicts[("Strong", "Weak")].modellable is True
+    unknown = verdicts[("Middling A", "Middling B")]
+    assert unknown.modellable is False
+    assert unknown.unknown_teams == ["Middling A", "Middling B"]
+    assert unknown.corpus == "E0"
+
+    report = engine.format_engine_report(result)
+    assert "NOT A TRUSTWORTHY FORECAST" in report
+    assert "Middling A v Middling B" in report
+
+
+def test_engine_does_not_leak_known_teams_into_the_knowledge_worker(
+    conn, router, monkeypatch
+):
+    """`known_teams` is a forecast concern. `run_engine` forwards its spare
+    kwargs to the research pass as HTTP request options, so a corpus set
+    arriving there would end up on an outbound request."""
+    from super6.knowledge import worker as knowledge_worker
+
+    seen = []
+
+    def fake_research(*args, **kwargs):
+        seen.append(kwargs)
+        return knowledge_worker.ResearchResult()
+
+    monkeypatch.setattr(knowledge_worker, "research", fake_research)
+    engine.run_engine(
+        conn, ROUND, router, now=NOW,
+        tavily_api_key="key", extractor=object(), run_knowledge=True,
+        known_teams={"Strong"}, corpus="E0", timeout=5,
+    )
+    assert seen, "the research pass did not run"
+    for kwargs in seen:
+        assert "known_teams" not in kwargs
+        assert "corpus" not in kwargs
+        assert kwargs["timeout"] == 5
+
+
 def test_engine_report_separates_four_layers(conn, router):
     report = engine.format_engine_report(
         engine.run_engine(conn, ROUND, router, now=NOW)
@@ -161,3 +214,170 @@ def test_verification_reports_are_readable(registry):
     report = verify.verify_odds_api("k", registry_path=registry).report()
     assert "the_odds_api" in report
     assert "BLOCK" in report
+
+
+def test_engine_populates_market_divergence_from_the_unblended_model(conn, router):
+    """§33's divergence must compare the model's own view with the market.
+
+    The recommendation's matrix has already had the market folded into it
+    at w=0.5, so measuring against that would partly compare the market
+    with itself and understate the disagreement.
+    """
+    from super6.round import Fixture, Round
+
+    priced = Round(
+        round_number=14,
+        deadline_at=ROUND.deadline_at,
+        fixtures=tuple(
+            Fixture(f.home, f.away, odds=(2.0, 3.4, 3.6)) for f in ROUND.fixtures
+        ),
+    )
+    result = engine.run_engine(conn, priced, router, now=NOW)
+    states = [f.market for f in result.round_summary.fixtures]
+    assert all(s is not None and s.available for s in states)
+    assert all(s.model_vs_market is not None for s in states)
+    assert all(s.market_divergence in {"LOW", "MEDIUM", "HIGH"} for s in states)
+
+    # Same comparison against the blended matrix would be a smaller number.
+    from super6 import divergence as divergence_mod
+
+    fixture = result.recommendation.fixtures[0]
+    blended = divergence_mod.assess(fixture.matrix, *_implied(), 0.0, 1)
+    raw = divergence_mod.assess(fixture.model_only_matrix, *_implied(), 0.0, 1)
+    assert raw.model_vs_market > blended.model_vs_market
+
+
+def _implied():
+    from super6.model.market import implied_result_probs
+
+    return implied_result_probs(2.0, 3.4, 3.6)
+
+
+def test_engine_market_state_degrades_when_no_snapshot_history_exists(conn, router, tmp_path):
+    """A missing movement reference is a missing reference, not a failure."""
+    result = engine.run_engine(
+        conn, ROUND, router, now=NOW,
+        consensus_snapshot_path=tmp_path / "does_not_exist.csv",
+    )
+    assert len(result.round_summary.fixtures) == 6
+    for fixture in result.round_summary.fixtures:
+        # No odds on ROUND, so no consensus and therefore no movement.
+        assert fixture.market is not None
+        assert fixture.market.last_movement is None
+
+
+def test_engine_reports_market_movement_against_the_previous_poll(conn, router, tmp_path):
+    """movement.py and divergence.py were fully built and tested but never
+    reached the engine, so six MarketState fields were permanently empty in
+    the read model. This pins the wiring, not the movement maths."""
+    import pandas as pd
+
+    from super6.round import Fixture, Round
+
+    home, away = "Strong", "Weak"
+    snapshot = tmp_path / "consensus.csv"
+    # An earlier poll that had the home side much shorter than they are now.
+    pd.DataFrame([{
+        "calculated_at": "2026-08-15T09:00:00+00:00",
+        "event_id": "e1", "home_team": home, "away_team": away,
+        "bookmaker_count": 6, "consensus_h": 0.70, "consensus_d": 0.18,
+        "consensus_a": 0.12, "dispersion": 0.01,
+        "stale_excluded": 0, "oldest_quote": None,
+    }]).to_csv(snapshot, index=False)
+
+    priced = Round(
+        round_number=14,
+        deadline_at=ROUND.deadline_at,
+        fixtures=(Fixture(home, away, odds=(2.5, 3.3, 2.9)),),
+    )
+    result = engine.run_engine(
+        conn, priced, router, now=NOW, consensus_snapshot_path=snapshot,
+    )
+    market = result.round_summary.fixtures[0].market
+    assert market.available
+    assert market.last_movement is not None, "movement never reached the read model"
+    assert market.materiality in {"NOISE", "MATERIAL", "MAJOR"}
+    assert market.market_agreement in {"HIGH", "MEDIUM", "LOW"}
+    assert market.movement_strength_pp is not None and market.movement_strength_pp > 0
+
+    report = engine.format_engine_report(result)
+    assert "moved:" in report
+    assert "model vs market" in report
+
+
+def _corpus_round(*, odds_on_unknown):
+    """Round where 'Nowhere FC' is outside any corpus we hand the engine."""
+    from super6.round import Fixture, Round
+
+    return Round(
+        round_number=14,
+        deadline_at=ROUND.deadline_at,
+        fixtures=(
+            Fixture("Strong", "Nowhere FC",
+                    odds=(1.30, 5.0, 9.0) if odds_on_unknown else None),
+            Fixture("Strong", "Weak", odds=(2.0, 3.4, 3.6)),
+        ),
+    )
+
+
+def test_priced_fixture_outside_the_corpus_falls_back_to_the_market(conn, router):
+    """A cup tie against an unknown team is forecast from the market rather
+    than from the league-average prior, and is never called PHASE1_MODEL_V1."""
+    from super6.model.market import implied_result_probs
+
+    result = engine.run_engine(
+        conn, _corpus_round(odds_on_unknown=True), router, now=NOW,
+        known_teams={"Strong", "Weak"}, corpus="E0+E1",
+    )
+    fallback, normal = result.round_summary.fixtures
+    assert fallback.forecast_basis == "MARKET_ONLY_FALLBACK"
+    assert fallback.modellability.modellable is False
+    assert normal.forecast_basis == "PHASE1_MODEL_V1"
+
+    # w=1.0 means the result probabilities ARE the market's.
+    market_h, _, _ = implied_result_probs(1.30, 5.0, 9.0)
+    recommended = result.recommendation.fixtures[0]
+    assert recommended.matrix.p_home_win == pytest.approx(market_h, abs=1e-9)
+    assert any("market-only" in n for n in result.notes)
+
+
+def test_unpriced_fixture_outside_the_corpus_has_no_forecast_at_all(conn, router):
+    result = engine.run_engine(
+        conn, _corpus_round(odds_on_unknown=False), router, now=NOW,
+        known_teams={"Strong", "Weak"}, corpus="E0+E1",
+    )
+    assert result.round_summary.fixtures[0].forecast_basis == "NONE"
+    assert any("no odds either" in n for n in result.notes)
+
+
+def test_market_fallback_leaves_modellable_fixtures_bit_identical(conn, router):
+    """The fallback must not perturb the fixtures the frozen model owns."""
+    priced = _corpus_round(odds_on_unknown=True)
+    with_fallback = engine.run_engine(
+        conn, priced, router, now=NOW,
+        known_teams={"Strong", "Weak"}, corpus="E0+E1",
+    )
+    without = engine.run_engine(conn, priced, router, now=NOW)  # no corpus => all modellable
+    a = with_fallback.round_summary.fixtures[1]
+    b = without.round_summary.fixtures[1]
+    assert (a.pick, a.expected_points, a.result_probability, a.confidence) == (
+        b.pick, b.expected_points, b.result_probability, b.confidence
+    )
+
+
+def test_golden_goal_still_counts_market_only_fixtures(conn, router):
+    """The GG hazard uses lambda_home + lambda_away — the goal *total*.
+
+    A neutral prior is a defensible total even when it is a useless guess
+    at who wins, whereas dropping the fixture would assert it produces no
+    goals and push the recommended minute later across the whole round.
+    """
+    priced = _corpus_round(odds_on_unknown=True)
+    fallback = engine.run_engine(
+        conn, priced, router, now=NOW,
+        known_teams={"Strong", "Weak"}, corpus="E0+E1",
+    )
+    plain = engine.run_engine(conn, priced, router, now=NOW)
+    assert fallback.round_summary.golden_goal.minute == (
+        plain.round_summary.golden_goal.minute
+    )

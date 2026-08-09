@@ -158,3 +158,76 @@ def test_partial_coverage_leaves_other_fixtures_intact(monkeypatch, snapshots):
     updated = pipeline.apply_to_round(ROUND, result)
     assert updated.fixtures[0].odds is None
     assert updated.fixtures[1].odds is not None
+
+
+# ---- cup competitions ----------------------------------------------------
+
+
+def _by_competition(monkeypatch, snapshots, feeds, **kwargs):
+    """Serve a different event list per competition, and record the calls."""
+    odds_path, cons_path = snapshots
+    called: list[str] = []
+
+    def fetch(division, key, **kw):
+        called.append(division)
+        if division not in feeds:
+            raise RuntimeError(f"{division} is out of season")
+        return feeds[division]
+
+    monkeypatch.setattr(pipeline.odds_api, "fetch_odds", fetch)
+    result = pipeline.acquire_round_odds(
+        ROUND, "fake-key", now=NOW,
+        odds_snapshot_path=odds_path, consensus_snapshot_path=cons_path,
+        **kwargs,
+    )
+    return result, called
+
+
+def test_cup_feeds_are_not_requested_when_the_leagues_cover_the_round(
+    monkeypatch, snapshots
+):
+    """Every competition is a billed request; an ordinary weekend pays for
+    the leagues only."""
+    result, called = _by_competition(
+        monkeypatch, snapshots, {"E0": make_events()}, divisions=("E0",)
+    )
+    assert result.covered == 6
+    assert called == ["E0"], "cup feeds were requested needlessly"
+    assert result.credits_spent == 1
+
+
+def test_a_cup_tie_is_found_in_the_cup_feed(monkeypatch, snapshots):
+    """A cup tie is absent from both clubs' league feeds, so without the
+    second pass it would have no market at all."""
+    league = make_events()[:5]
+    cup = make_events()[5:]
+    result, called = _by_competition(
+        monkeypatch, snapshots,
+        {"E0": league, "FA_CUP": cup}, divisions=("E0",),
+    )
+    assert called[0] == "E0"
+    assert "FA_CUP" in called, "the cup pass never ran"
+    assert result.covered == 6, "the cup fixture should now be priced"
+    assert result.credits_spent >= 2, "the extra competition must be billed"
+
+
+def test_an_out_of_season_cup_does_not_fail_the_acquisition(monkeypatch, snapshots):
+    """League odds already fetched must still reach the forecast."""
+    result, called = _by_competition(
+        monkeypatch, snapshots, {"E0": make_events()[:5]}, divisions=("E0",),
+    )
+    assert result.covered == 5, "the five league fixtures survived"
+    assert any("out of season" in note for note in result.notes)
+    assert any("no market found" in note for note in result.notes)
+
+
+def test_an_unmatched_fixture_is_named_rather_than_silently_dropped(
+    monkeypatch, snapshots
+):
+    result, _ = _by_competition(
+        monkeypatch, snapshots, {"E0": make_events()[:5], "FA_CUP": [], "EFL_CUP": []},
+        divisions=("E0",),
+    )
+    unpriced = [f for f in result.fixtures if f.consensus is None]
+    assert len(unpriced) == 1
+    assert any(unpriced[0].home in note for note in result.notes)

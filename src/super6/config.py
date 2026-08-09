@@ -108,8 +108,18 @@ class MovementConfig:
 class DataConfig:
     # Football-Data.co.uk (§18): free historical results + odds corpus.
     base_url: str = "https://www.football-data.co.uk/mmz4281"
-    # E0 = Premier League, E1 = Championship — the leagues Super 6 draws from.
+    # E0 = Premier League, E1 = Championship — the leagues Super 6 draws
+    # from, and the ONLY corpus PHASE1_MODEL_V1 was fitted and validated
+    # against. Do not widen this: the per-division fits are unaffected by
+    # extra divisions, but the pooled cross-division fallback is not, and
+    # silently changing it would drift a frozen, holdout-tested model.
     divisions: tuple[str, ...] = ("E0", "E1")
+
+    # Lower divisions, available from the same free source. Used ONLY for
+    # ad-hoc `super6 forecast --extended` sanity checks involving teams
+    # outside the Super 6 corpus (cup ties, friendlies). Any forecast
+    # using these is explicitly NOT PHASE1_MODEL_V1 and is labelled so.
+    extended_divisions: tuple[str, ...] = ("E0", "E1", "E2", "E3", "EC")
     # Bookmaker odds column preference order (first available wins).
     odds_prefixes: tuple[str, ...] = ("B365", "PS", "Avg", "BbAv", "WH")
 

@@ -9,6 +9,7 @@ from super6.round import load_round, round_from_dict, round_to_dict
 from super6.web import (
     WebConfig,
     create_round,
+    cup_prediction,
     import_opponent,
     load_ui_state,
     mark_round_entered,
@@ -160,3 +161,65 @@ def test_manual_entry_freezes_prospective_arms_and_results_score_them(tmp_path):
     ledger = load_ledger(config.ledger_path)
     assert set(ledger["arm"]) == {"PHASE1_MODEL_V1", "SUBMITTED"}
     assert set(ledger["status"].dropna()) == {"OK", "VOID"}
+
+
+def test_dashboard_marks_a_round_fixture_outside_the_corpus_as_unmodellable(tmp_path):
+    """The live payload — not just the contract — has to carry the verdict."""
+    from super6.web import dashboard_payload
+
+    round_payload = payload()
+    round_payload["fixtures"][0] = {"home": "Arsenal", "away": "Oldham"}
+    round_path = tmp_path / "round.json"
+    round_path.write_text(json.dumps(round_payload))
+    config = WebConfig(
+        round_path=round_path,
+        database_path=tmp_path / "s.db",
+        submissions_path=tmp_path / "submissions.json",
+        event_log_path=tmp_path / "activity.jsonl",
+        ui_state_path=tmp_path / "ui.json",
+        prediction_history_path=tmp_path / "history.json",
+    )
+    fixtures = dashboard_payload(config)["round"]["fixtures"]
+    assert fixtures[0]["modellability"]["modellable"] is False
+    assert fixtures[0]["modellability"]["unknown_teams"] == ["Oldham"]
+    assert all(f["modellability"]["modellable"] for f in fixtures[1:])
+
+
+CUP_CONFIG = WebConfig(data_path=Path("data"), seasons=(2019, 2025), divisions=("E0", "E1"))
+
+
+def test_cup_prediction_refuses_to_recommend_a_team_outside_the_corpus():
+    forecast = cup_prediction({"home": "Stoke", "away": "Oldham"}, CUP_CONFIG)
+    modellability = forecast["fixture"]["modellability"]
+    assert forecast["fixture"]["home_team"] == "Stoke"
+    assert modellability["modellable"] is False
+    assert modellability["unknown_teams"] == ["Oldham"]
+    assert modellability["corpus"] == "E0+E1"
+    assert forecast["model_version"] == "PHASE1_MODEL_V1"
+    # The raw output stays available for audit; the verdict is what gates the UI.
+    assert forecast["fixture"]["explanation"]["selected_pick"]["expected_points"] > 0
+
+
+def test_cup_prediction_marks_a_two_known_team_tie_modellable():
+    forecast = cup_prediction({"home": "Stoke", "away": "Millwall"}, CUP_CONFIG)
+    assert forecast["fixture"]["modellability"]["modellable"] is True
+    assert forecast["fixture"]["modellability"]["unknown_teams"] == []
+    assert forecast["extended"] is False
+
+
+def test_cup_prediction_extended_corpus_models_lower_division_teams_but_drops_the_frozen_label():
+    forecast = cup_prediction(
+        {"home": "Stoke", "away": "Oldham", "extended": True}, CUP_CONFIG
+    )
+    assert forecast["fixture"]["modellability"]["modellable"] is True
+    assert forecast["extended"] is True
+    assert forecast["corpus"] == "E0+E1+E2+E3+EC"
+    assert forecast["model_version"] != "PHASE1_MODEL_V1"
+    # Only the seasons whose lower-division files exist may be used, and the
+    # response has to say which ones those were.
+    assert forecast["seasons"][0] >= 2019
+
+
+def test_cup_prediction_rejects_a_fixture_against_itself():
+    with pytest.raises(ValueError, match="two different teams"):
+        cup_prediction({"home": "Stoke", "away": "stoke"}, CUP_CONFIG)
