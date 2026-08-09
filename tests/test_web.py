@@ -223,3 +223,69 @@ def test_cup_prediction_extended_corpus_models_lower_division_teams_but_drops_th
 def test_cup_prediction_rejects_a_fixture_against_itself():
     with pytest.raises(ValueError, match="two different teams"):
         cup_prediction({"home": "Stoke", "away": "stoke"}, CUP_CONFIG)
+
+
+def test_opponent_bias_and_predicted_picks_are_wired_into_the_league_view(tmp_path):
+    """§11/§49.3: favourite bias, chase/defend and a predicted-pick preview
+    for the current round should be computable end to end from recorded
+    opponent picks plus our own stored forecast snapshots — not just at the
+    library level, but through the same web.py helpers `_league_payload`
+    actually calls."""
+    from types import SimpleNamespace
+
+    from super6.web import _fixture_favoured_result, _opponent_bias_payload, _predicted_picks_payload
+    from super6.league import OpponentRound
+
+    prediction_path = tmp_path / "prediction_history.json"
+    prediction_history.record_snapshot(
+        2026, 1,
+        [
+            {"home_team": "Arsenal", "away_team": "Everton", "result": "HOME", "score": "2-0"},
+            {"home_team": "Chelsea", "away_team": "Newcastle", "result": "HOME", "score": "1-0"},
+            {"home_team": "Fulham", "away_team": "Brentford", "result": "DRAW", "score": "1-1"},
+            {"home_team": "Leeds", "away_team": "Tottenham", "result": "AWAY", "score": "1-2"},
+            {"home_team": "Man City", "away_team": "Bournemouth", "result": "HOME", "score": "3-0"},
+            {"home_team": "West Ham", "away_team": "Aston Villa", "result": "AWAY", "score": "1-2"},
+        ],
+        path=prediction_path,
+    )
+    config = WebConfig(prediction_history_path=prediction_path)
+    history = [
+        OpponentRound(
+            "Dave", 2026, 1,
+            # Fixture 3 is forecast AWAY; Dave picks a home win there instead
+            # — one deliberate mismatch against five matches.
+            ((2, 0), (2, 1), (1, 1), (1, 0), (3, 0), (0, 2)),
+            "2026-08-08T10:00:00+00:00",
+        ),
+    ]
+
+    favourite, chase_defend = _opponent_bias_payload(history, {}, config)
+    assert len(favourite) == 1
+    dave = favourite[0]
+    assert dave.participant == "Dave"
+    assert dave.sample_size == 6
+    assert dave.favourite_rate == pytest.approx(5 / 6, abs=1e-4)
+    assert chase_defend == ()  # a single round has no earlier round to compare against
+
+    recommendation = SimpleNamespace(
+        fixtures=[
+            SimpleNamespace(home="Arsenal", away="Everton", pick_home=2, pick_away=0),
+            SimpleNamespace(home="Chelsea", away="Newcastle", pick_home=1, pick_away=0),
+        ]
+    )
+    predicted = _predicted_picks_payload(recommendation, history, favourite, config)
+    assert list(predicted) == ["Dave"]
+    assert len(predicted["Dave"]) == 2
+    for fixture in predicted["Dave"]:
+        assert fixture["predicted"]  # at least one candidate scoreline surfaced
+        assert sum(item["probability"] for item in fixture["predicted"]) <= 1.0001
+
+    assert _fixture_favoured_result(recommendation.fixtures[0]) == "HOME"
+
+
+def test_predicted_picks_is_empty_without_a_recommendation_or_history(tmp_path):
+    from super6.web import _predicted_picks_payload
+
+    config = WebConfig(prediction_history_path=tmp_path / "prediction_history.json")
+    assert _predicted_picks_payload(None, [], (), config) == {}

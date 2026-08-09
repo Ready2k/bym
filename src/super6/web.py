@@ -815,9 +815,13 @@ def _league_payload(
             rank=1 + sum(1 for row in table if row.points > 0),
             points=0, exact_scores=0, fixtures_scored=0, rounds_scored=0,
         ))
+    favourite, chase_defend = _opponent_bias_payload(history, results, config)
     payload = {
         "standings": [asdict(row) for row in table],
         "profiles": [asdict(profile) for profile in opponent_profiles(history)],
+        "favourite_bias": [asdict(item) for item in favourite],
+        "chase_defend": [asdict(item) for item in chase_defend],
+        "predicted_picks": _predicted_picks_payload(recommendation, history, favourite, config),
         "finish_first": None,
         "finish_first_reason": (
             "A finish-first estimate activates after complete, recorded "
@@ -835,6 +839,69 @@ def _league_payload(
     }
     payload.update(_strategy_payload(rnd, table, history, state, recommendation))
     return payload
+
+
+def _opponent_bias_payload(history, results, config: WebConfig):
+    """§11 favourite-bias and chase/defend tendencies, joined against our own
+    stored forecasts (`opponent_intelligence.py`). Returns empty tuples
+    rather than raising when there is nothing to join yet."""
+    from . import opponent_intelligence as oi
+
+    joined = oi.join_picks_with_forecasts(history, prediction_path=config.prediction_history_path)
+    favourite = oi.favourite_bias_profiles(joined)
+    chase_defend = oi.chase_defend_tendencies(history, joined, results)
+    return favourite, chase_defend
+
+
+def _fixture_favoured_result(fixture) -> str:
+    """Our own recommended pick's implied result — the "favourite" a rival's
+    pick is compared against. See opponent_intelligence.favourite_bias_profiles
+    for the same approximation stated explicitly."""
+    if fixture.pick_home > fixture.pick_away:
+        return "HOME"
+    if fixture.pick_home < fixture.pick_away:
+        return "AWAY"
+    return "DRAW"
+
+
+def _predicted_picks_payload(recommendation, history, favourite, config: WebConfig) -> dict:
+    """§49.3 'Current-Round Opponent Forecast' — likely picks per rival for
+    the fixtures in play *before* they have actually submitted this round,
+    unlike the strategy panel's `_opponent_shares` which needs the field's
+    actual picks already imported. Only produced for rivals with at least
+    one joinable prior pick; everyone else has no evidence to predict from."""
+    if recommendation is None or not history:
+        return {}
+    from . import opponent_intelligence as oi
+    from .league import opponent_profiles
+
+    profiles = {profile.participant: profile for profile in opponent_profiles(history)}
+    average = oi.league_average_profile(history)
+    if average is None:
+        return {}
+    joined = oi.join_picks_with_forecasts(history, prediction_path=config.prediction_history_path)
+    average_rate = oi.league_average_favourite_rate(joined)
+    bias_by_participant = {item.participant: item for item in favourite}
+
+    out: dict[str, list[dict]] = {}
+    for participant, profile in profiles.items():
+        bias = bias_by_participant.get(participant)
+        if bias is None or bias.sample_size == 0:
+            continue
+        per_fixture = []
+        for fixture in recommendation.fixtures:
+            distribution = oi.predict_pick_distribution(
+                profile, bias, average, average_rate,
+                fixture_favoured_result=_fixture_favoured_result(fixture),
+            )
+            top = sorted(distribution.items(), key=lambda item: -item[1])[:3]
+            per_fixture.append({
+                "home_team": fixture.home,
+                "away_team": fixture.away,
+                "predicted": [{"score": score, "probability": p} for score, p in top],
+            })
+        out[participant] = per_fixture
+    return out
 
 
 def _strategy_payload(rnd, standings, history, state, recommendation) -> dict:

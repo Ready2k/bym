@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "super6-ui",
+      "runtimeExecutable": ".venv/bin/super6",
+      "runtimeArgs": ["serve", "--round", "rounds/example_round.json", "--seasons", "2019", "2025", "--data", "data", "--port", "8010"],
+      "port": 8010
+    }
+  ]
+}

@@ -326,10 +326,27 @@ function roundKey() {
   return `${new Date(appData.round.deadline_at).getFullYear()}:${appData.round.round_number}`;
 }
 
+function opponentBiasLine(participant) {
+  const bias = (appData.league.favourite_bias || []).find((item) => item.participant === participant);
+  if (!bias || bias.sample_size === 0) return `<small>Favourite bias: not enough joined history yet.</small>`;
+  const chase = (appData.league.chase_defend || []).find((item) => item.participant === participant);
+  const chaseText = chase && chase.chase_when_behind !== null && chase.chase_when_behind !== undefined
+    ? ` · Diverges ${percent(chase.divergence_rate_when_trailing)} while trailing vs ${percent(chase.divergence_rate_when_leading)} while leading`
+    : "";
+  return `<small>Backs our model's favoured result ${percent(bias.favourite_rate)} of the time (${bias.sample_size} joined picks, influence weight ${percent(bias.influence_weight)})${chaseText}</small>`;
+}
+
+function predictedPicksPanel(participant) {
+  const fixtures = (appData.league.predicted_picks || {})[participant];
+  if (!fixtures || !fixtures.length) return "";
+  const rows = fixtures.map((fixture) => `<div class="predicted-fixture"><span>${escapeHtml(fixture.home_team)} v ${escapeHtml(fixture.away_team)}</span><span>${fixture.predicted.map((item) => `${escapeHtml(item.score)} (${percent(item.probability)})`).join(", ") || "No evidence"}</span></div>`).join("");
+  return `<details class="disclosure"><summary>Likely picks this round (§49.3)</summary><p class="subtitle">A heuristic prediction, shrunk toward the league-wide average by how much history exists for this rival — not a validated model.</p>${rows}</details>`;
+}
+
 function opponentsView() {
   const profiles = appData.league.profiles || [];
   return `${pageHeader("Opponent modelling", "Your private league", "Import selections supplied through permitted channels. We never collect them from Sky.")}
-  <section class="split-layout"><div>${profiles.length ? `<div class="opponent-list">${profiles.map((profile) => `<article class="opponent-card"><h2>${escapeHtml(profile.participant)}</h2><p>${profile.picks} recorded picks · ${profile.rounds} round${profile.rounds === 1 ? "" : "s"}</p><small>Home ${percent(profile.home_result_rate)} · Draw ${percent(profile.draw_result_rate)} · Away ${percent(profile.away_result_rate)} · Avg goals ${profile.average_total_goals}</small><small>Common scores: ${profile.common_scores.map(([score, count]) => `${score} (${count})`).join(" · ") || "Not enough history"}</small></article>`).join("")}</div>` : emptyState("No opponent history yet", "Add selections after each deadline. The system will learn only from recorded evidence.")}</div><section class="form-card"><p class="eyebrow">Manual import</p><h2>Import six selections</h2><p class="subtitle">Paste six scores in fixture order, one per line — for example 2-0. You will see the saved picks immediately; no Sky integration is used.</p><form id="opponent-form"><label>Name<input required name="name" maxlength="80" placeholder="e.g. Dave"></label><label>Predictions<textarea required name="picks" rows="7" placeholder="2-0&#10;1-1&#10;2-1&#10;1-2&#10;3-0&#10;1-2"></textarea></label><div class="form-actions"><button class="button" type="submit">Import selections</button></div></form></section></section>`;
+  <section class="split-layout"><div>${profiles.length ? `<div class="opponent-list">${profiles.map((profile) => `<article class="opponent-card"><h2>${escapeHtml(profile.participant)}</h2><p>${profile.picks} recorded picks · ${profile.rounds} round${profile.rounds === 1 ? "" : "s"}</p><small>Home ${percent(profile.home_result_rate)} · Draw ${percent(profile.draw_result_rate)} · Away ${percent(profile.away_result_rate)} · Avg goals ${profile.average_total_goals} · Conservatism ${percent(profile.conservatism)}</small><small>Common scores: ${profile.common_scores.map(([score, count]) => `${score} (${count})`).join(" · ") || "Not enough history"}</small>${opponentBiasLine(profile.participant)}${predictedPicksPanel(profile.participant)}</article>`).join("")}</div>` : emptyState("No opponent history yet", "Add selections after each deadline. The system will learn only from recorded evidence.")}</div><section class="form-card"><p class="eyebrow">Manual import</p><h2>Import six selections</h2><p class="subtitle">Paste six scores in fixture order, one per line — for example 2-0. You will see the saved picks immediately; no Sky integration is used.</p><form id="opponent-form"><label>Name<input required name="name" maxlength="80" placeholder="e.g. Dave"></label><label>Predictions<textarea required name="picks" rows="7" placeholder="2-0&#10;1-1&#10;2-1&#10;1-2&#10;3-0&#10;1-2"></textarea></label><div class="form-actions"><button class="button" type="submit">Import selections</button></div></form></section></section>`;
 }
 
 function performanceView() {

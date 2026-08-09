@@ -187,6 +187,16 @@ class OpponentProfile:
     average_away_goals: float
     average_total_goals: float
     common_scores: tuple[tuple[str, int], ...]
+    # §11 "1-0/1-1/2-1/2-0/3+ goal frequency": the full scoreline distribution,
+    # not just the top-3 in `common_scores` above. Every scoreline the
+    # participant has ever picked gets an entry; `opponent_intelligence.py`
+    # uses this directly rather than re-deriving it from raw picks, so the
+    # two representations cannot drift apart.
+    score_frequency: Mapping[str, float]
+    # Share of picks with total goals <= 2 (0-0/1-0/0-1/1-1) — a simple,
+    # documented proxy for "sticks to safe, low-scoring guesses" (§11
+    # conservatism). Not fitted or validated; see opponent_intelligence.py.
+    conservatism: float
 
 
 def opponent_profiles(history: Iterable[OpponentRound]) -> tuple[OpponentProfile, ...]:
@@ -203,6 +213,7 @@ def opponent_profiles(history: Iterable[OpponentRound]) -> tuple[OpponentProfile
         for home, away in picks:
             label = f"{home}-{away}"
             common[label] = common.get(label, 0) + 1
+        conservative = sum(1 for score in picks if sum(score) <= 2)
         profiles.append(
             OpponentProfile(
                 participant=participant,
@@ -217,6 +228,10 @@ def opponent_profiles(history: Iterable[OpponentRound]) -> tuple[OpponentProfile
                 common_scores=tuple(
                     sorted(common.items(), key=lambda pair: (-pair[1], pair[0]))[:3]
                 ),
+                score_frequency={
+                    label: round(count / total, 4) for label, count in common.items()
+                },
+                conservatism=round(conservative / total, 4),
             )
         )
     return tuple(sorted(profiles, key=lambda profile: profile.participant.casefold()))

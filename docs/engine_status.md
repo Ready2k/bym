@@ -31,8 +31,91 @@ An adapter existing is **not** "live".
 | Knowledge agent | BUILT, TESTED OFFLINE | **SHADOW** by default |
 | Ollama extractor | BUILT, TESTED OFFLINE, **LIVE VERIFIED** | `llama3.1:8b` on Desktop-HomePC.local; extraction confirmed |
 | API read-model contracts | BUILT, TESTED OFFLINE | frozen for the future UI |
-| **UI (§37+)** | **DEFERRED — not started** | deliberate |
-| **Increment 5 player-impact model** | **DEFERRED — not started** | deliberate |
+| **UI (§37+)** | BUILT, TESTED OFFLINE, **ACTIVE** | see "Local decision UI" below — no longer deferred |
+| Opponent history + profiles (§11) | BUILT, TESTED OFFLINE, ACTIVE | descriptive + model-relative — see caveat below |
+| Opponent-aware strategy (§12-14) | BUILT, TESTED OFFLINE, ACTIVE | **current round only** — see caveat below |
+| **Season Monte Carlo simulator (§13.1-13.3), Round Opportunity Model (§13.2), ATTACK/DEFEND labels (§12), 100 Club annotation (§12.1)** | **DEFERRED — not started** | see caveat below |
+| **Increment 5 player-impact model (evidence → λ)** | **DEFERRED — not started** | deliberate, gated on `QUANTITATIVE_IMPACT_MODEL_ENABLED` |
+
+## Local decision UI
+
+```bash
+super6 serve --round rounds/example_round.json --seasons 2019 2025 --data data
+```
+
+A stdlib-`http.server` single-page app (`web.py`, `web_assets/`), not
+FastAPI/Next.js (§26's optional stack item was never taken up) — the
+contracts in `api/contracts.py` are the frozen boundary either could sit
+behind. Pages: Home, Round, Cup Match, League, Opponents, Performance,
+Activity, and an Expert group (Model Lab, Sources, System Health,
+Settings) — matching most of §39's navigation. Covers UI Phase 1
+(prediction cards, alternatives, Golden Goal, submission state, results)
+and most of UI Phase 2 (intelligence feed, changes, alerts, source
+provenance, system health) from §70. Exercised end-to-end against sample
+data entered through the UI itself; covered by tests run from pytest
+(`tests/js/`, `tests/test_web.py`).
+
+Not built: a conversational "Ask the agent" entry point (§67, itself
+Priority-low in the spec), and WCAG conformance has not been audited
+(basic aria-live/aria-label/skip-link markup is present, nothing more).
+
+## Opponent modelling & strategy — scope
+
+What's live is narrower than §11-14 describe in full, though the gap
+narrowed with `opponent_intelligence.py`:
+
+* **Opponent profiles** (`league.opponent_profiles`) are descriptive —
+  home/draw/away rate, average goals, common-score distribution
+  (`score_frequency`, every scoreline seen, not just the top-3), and a
+  `conservatism` share (picks with total goals ≤ 2).
+* **Model-relative behaviour** (`opponent_intelligence.py`, new) joins
+  those picks against our own stored forecasts
+  (`prediction_history.round_snapshots`) to add what a pure pick tally
+  cannot see:
+  * `favourite_bias_profiles` — how often a rival's pick shares our
+    model's favoured result (§11 "favourite bias" / "upset frequency").
+  * `opponent_influence_weight` — a continuous 0→1 shrinkage weight from
+    sample size alone (`n / (n + 20)`), the same empirical-Bayes shape as
+    §29.4's promoted-team priors. §11 also names posterior_uncertainty and
+    predictive_validation as inputs; both need an opponent-prediction
+    track record to compute honestly and are a documented follow-on, not
+    implemented yet.
+  * `predict_pick_distribution` — §11/§49.3's "P(Dave predicts Arsenal
+    2-0)" style forecast: shrinks a rival's own scoreline frequencies
+    toward the league-wide pooled average by influence weight, then
+    reweights toward/away from the fixture's favoured result using the
+    rival's (also shrunk) favourite rate — the same
+    `q(h,a) = p(h,a) × [q_R / p_R]` shape as §32.3's market reweighting
+    (`model/market.py`), applied to two pick buckets instead of three
+    results. Surfaced in the Opponents page as "Likely picks this round".
+  * `chase_defend_tendencies` — §11 "chase when behind / defend when
+    ahead": divergence rate from our model's favoured result while
+    trailing vs while leading, using only standings from rounds strictly
+    before the one measured (no leakage of the round's own outcome).
+  All of this is a documented heuristic baseline, not fitted or
+  backtested — there is no opponent-prediction corpus yet to validate
+  against, so §28's ablation discipline applies here exactly as it does
+  to the forecasting core.
+  Still not implemented: team-specific bias (favours large clubs,
+  underrates promoted clubs) — this needs a club-reputation reference
+  that doesn't exist independent of a specific fixture's forecast, and
+  deliberately hasn't been faked with a hard-coded "big club" list.
+* **Strategy** (`strategy.py`, `league.recommend_strategy`) evaluates
+  candidate pick sets for the **current round only** against the current
+  standings — not the season-long Monte Carlo in §13 (no known/unknown
+  future-round split, no Round Opportunity Model, no cached "future world"
+  common-random-numbers architecture, no `rounds_remaining`/
+  `exact_score_gap` season state). Candidate generation stacks single-fixture
+  deviations greedily rather than §13.3's top-N-per-fixture portfolio
+  search. Output uses `NORMAL`/`DIFFERENTIATE` labels, not §12's
+  `ATTACK`/`DEFEND`.
+* **100 Club** (§12.1) has no code path at all.
+
+None of this is incorrect where it exists — the significance test
+(`strategy.noise_floor`/`preferred`) correctly refuses a differential
+inside Monte Carlo sampling error — it is simply a single-round
+approximation of the season-level system the spec describes. Treat §13's
+full simulator as still to be built.
 
 ## Ollama
 
@@ -194,23 +277,35 @@ the run, so a forecast is produced with no credentials at all.
 ## Tests
 
 ```text
-367 passing, 6 skipped (live)
+496 passing, 6 skipped (live)
 ```
 
 Network access is blocked at the socket layer for the entire ordinary
 suite, so "no test makes a network call" is enforced rather than trusted.
 Live tests opt back in with `SUPER6_LIVE_TESTS=1`.
 
-## Blockers before UI work
+## Pre-UI blockers — resolved
 
-1. Three source accounts + manual approval (The Odds API, API-Football,
-   Tavily). Combined recurring cost: £0.
-2. ~~Ollama~~ **DONE** — live verified 2026-08-08 on `llama3.1:8b`.
-   The Windows restart cleared the blocked port.
-3. A real live verification pass, which will be the first time any payload
-   shape is confirmed against a live service rather than a recorded fixture.
-4. At least one full engine run against live sources, ideally on a real
-   Super 6 round.
+The four items formerly gating §37+ UI work are now cleared, which is why
+the UI row above reads ACTIVE rather than deferred:
 
-Only then should §37+ UI work begin, against the frozen contracts in
-`super6/api/contracts.py`.
+1. **DONE** — all four sources (`the_odds_api`, `api_football`,
+   `football_data_org`, `tavily`) are registered `APPROVED` in
+   `config/source_registry.json`, with keys present under `secrets/`.
+2. **DONE** — Ollama live-verified 2026-08-08 on `llama3.1:8b`.
+3. **DONE** — see "Live verification status" above; 4 of 5 checks passed,
+   `api_football` failed on data coverage (not on approval), as documented.
+   Quota files (`config/*_quota.json`) additionally show real calls
+   landing against `api_football` and `the_odds_api` as recently as
+   2026-08-09, so the gate stays exercised, not just checked once.
+4. **Partial** — the engine has run repeatedly against live sources
+   (`data/prediction_history.json`, `data/submissions.json` both updated
+   2026-08-09), but `rounds/example_round.json` — despite its name —
+   currently holds real-looking 2026/27 Round 1 fixtures/odds rather than
+   a config file that's been renamed off the word "example". Worth a
+   dedicated real round file once Sky publishes one, so this isn't
+   ambiguous to the next reader.
+
+§37+ UI work is under way against the frozen contracts in
+`super6/api/contracts.py` — see "Local decision UI" above for what's
+built and what's still missing.
