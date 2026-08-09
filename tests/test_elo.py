@@ -72,3 +72,54 @@ def test_missing_elo_term_dropped_not_defaulted():
     assert lam_no_diff != lam_with_diff  # diff actually matters when given
     # and no elo_diff → pure α/β/γ/μ prediction, finite and sane
     assert all(np.isfinite(lam_no_diff))
+
+
+# ---------------------------------------------------------------------------
+# §32.1 margin-of-victory Elo (ablation_007 candidate — implemented, not promoted)
+
+
+def test_mov_multiplier_grows_with_margin_but_with_diminishing_returns():
+    from super6.model import elo
+
+    one, two, three, four = (elo.mov_multiplier(m, 0.0) for m in (1, 2, 3, 4))
+    assert one < two < three < four
+    # Each extra goal adds less than the one before, so a single thrashing
+    # cannot dominate a season of ratings.
+    assert four - three < three - two < two - one
+
+
+def test_mov_multiplier_damps_the_expected_win_and_rewards_the_upset():
+    """Without the autocorrelation term, strong teams gain twice over: they
+    win more often and by more."""
+    from super6.model import elo
+
+    assert elo.mov_multiplier(1, 400.0) < elo.mov_multiplier(1, 0.0)
+    assert elo.mov_multiplier(1, -400.0) > elo.mov_multiplier(1, 0.0)
+
+
+def test_a_draw_still_moves_ratings():
+    """A literal zero margin would multiply the update by ln(1)=0 and freeze
+    every rating on every draw — roughly a quarter of all matches."""
+    from super6.model import elo
+
+    assert elo.mov_multiplier(0, 0.0) > 0
+    assert elo.mov_multiplier(0, 0.0) == elo.mov_multiplier(1, 0.0)
+
+
+def test_mov_is_off_by_default_and_changes_ratings_when_on():
+    import pandas as pd
+
+    from super6.model import elo
+
+    matches = pd.DataFrame({
+        "date": pd.to_datetime(["2024-08-01", "2024-08-08", "2024-08-15"]),
+        "home_team": ["A", "B", "A"],
+        "away_team": ["B", "A", "B"],
+        "home_goals": [5, 1, 1],
+        "away_goals": [0, 1, 0],
+    })
+    plain = elo.compute(matches).ratings
+    mov = elo.compute(matches, margin_of_victory=True).ratings
+    assert plain != mov
+    # The 5-0 should carry A further under MOV than under plain Elo.
+    assert mov["A"] > plain["A"]

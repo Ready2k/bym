@@ -264,9 +264,14 @@ actually unblock each of these — not just that they're missing — see
 [docs/next_steps.md](docs/next_steps.md).
 
 - **xG** (Phase 1B) — no confirmed free source; fields are nullable by design.
-- **Shin's method** for margin removal, MOV-Elo — future ablation
-  candidates, each must beat the current rung. (Promoted-team priors,
-  §29.4, were adopted — see VALIDATION.md — and are no longer on this list.)
+- **Shin's method** for margin removal, **MOV-Elo** — both implemented and
+  run through the ablation ladder on 2026-08-09, both **rejected**: Shin's
+  is indistinguishable from proportional devigging on this corpus, and
+  MOV-Elo is marginally worse than plain Elo, which ablation_003 had
+  already found redundant. Available behind `devig="shin"` and
+  `use_elo=True, elo_mov=True`; neither is in the frozen model path. See
+  [results/ablation_007_shin_and_mov_elo.md](results/ablation_007_shin_and_mov_elo.md).
+  (Promoted-team priors, §29.4, were adopted — see VALIDATION.md.)
 - **Evidence → λ adjustments** (Increment 5 player-impact model) — the
   knowledge agent extracts and explains news/availability events (§8) but
   nothing yet converts one into a model parameter change; gated behind

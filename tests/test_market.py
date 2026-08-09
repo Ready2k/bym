@@ -49,3 +49,52 @@ def test_invalid_weight_rejected():
     m = score_matrix(1.5, 1.2)
     with pytest.raises(ValueError):
         blend_matrix(m, 0.5, 0.3, 0.2, weight=1.5)
+
+
+# ---------------------------------------------------------------------------
+# §32.1 Shin's method (ablation_007 candidate — implemented, not promoted)
+
+
+def test_shin_probabilities_sum_to_one():
+    from super6.model import market
+
+    for odds in [(1.45, 4.5, 7.5), (2.1, 3.5, 3.4), (3.1, 3.4, 2.3), (1.2, 7.0, 15.0)]:
+        assert sum(market.implied_result_probs_shin(*odds)) == pytest.approx(1.0, abs=1e-9)
+
+
+def test_shin_moves_weight_toward_the_favourite():
+    """The favourite-longshot correction is the whole point: proportional
+    devigging removes margin evenly, which overstates the longshot."""
+    from super6.model import market
+
+    odds = (1.35, 5.25, 8.5)
+    proportional = market.implied_result_probs(*odds)
+    shin = market.implied_result_probs_shin(*odds)
+    assert shin[0] > proportional[0]  # favourite up
+    assert shin[2] < proportional[2]  # longshot down
+
+
+def test_shin_z_is_zero_for_a_book_with_no_margin():
+    """z=0 must recover the proportional method exactly, so the candidate is
+    never worse-defined than the incumbent it would replace."""
+    from super6.model import market
+
+    fair = (3.0, 3.0, 3.0)
+    assert market.shin_z(*fair) == 0.0
+    assert market.implied_result_probs_shin(*fair) == market.implied_result_probs(*fair)
+
+
+def test_shin_z_lands_in_the_plausible_insider_range():
+    from super6.model import market
+
+    z = market.shin_z(1.45, 4.5, 7.5)
+    assert 0.0 < z < 0.10
+
+
+def test_devig_lookup_rejects_an_unknown_method():
+    from super6.model import market
+
+    assert market.devig("proportional") is market.implied_result_probs
+    assert market.devig("shin") is market.implied_result_probs_shin
+    with pytest.raises(ValueError, match="unknown devig method"):
+        market.devig("vigfree")

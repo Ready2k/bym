@@ -55,7 +55,9 @@ def run_model(
     fix_rho_zero: bool = False,
     per_division: bool = False,
     use_elo: bool = False,
+    elo_mov: bool = False,
     market_blend: float | None = None,
+    devig: str = "proportional",
     promoted_priors: priors.PromotedPriors | None = None,
     season_decay: float = 1.0,
     cfg: ModelConfig = DEFAULT_MODEL,
@@ -75,11 +77,19 @@ def run_model(
     covariate. Elo columns ride along into per-division train slices, so
     cross-division information survives division splitting.
 
+    elo_mov=True scales each Elo update by margin of victory (§32.1
+    candidate). Only meaningful alongside use_elo=True, since nothing
+    consumes the ratings otherwise.
+
     market_blend, if set, applies §32.3 Option B result-constrained
     reweighting per fixture using MARKET-AVAILABLE odds (the earlier price
     set — never closing odds, which contain post-deadline information).
     Fixtures without odds fall back to the raw model matrix — graceful
     degradation, not imputation.
+
+    devig selects §32.1's margin-removal method for those odds:
+    "proportional" (the incumbent) or "shin". Only meaningful alongside
+    market_blend.
 
     promoted_priors (§29.4): per-division fits give each team newly
     arrived in its division *this test season* a Gaussian prior on (α, β)
@@ -91,8 +101,11 @@ def run_model(
     disables.
     """
     if use_elo:
-        matches = elo.compute(matches).matches
+        matches = elo.compute(matches, margin_of_victory=elo_mov).matches
         test_mask = test_mask.reset_index(drop=True)
+    elif elo_mov:
+        raise ValueError("elo_mov requires use_elo=True — nothing reads the ratings otherwise")
+    implied = market.devig(devig)
     test = matches[test_mask].sort_values("date")
     rows = []
     params_by_div: dict[str, dixon_coles.DixonColesParams] = {}
@@ -158,9 +171,7 @@ def run_model(
             )
             m = score_matrix(lam_h, lam_a, params.rho, cfg)
             if market_blend is not None and pd.notna(r["odds_h"]):
-                mh, md, ma = market.implied_result_probs(
-                    r["odds_h"], r["odds_d"], r["odds_a"]
-                )
+                mh, md, ma = implied(r["odds_h"], r["odds_d"], r["odds_a"])
                 m = market.blend_matrix(m, mh, md, ma, market_blend)
             ph, pa = m.best_pick()
             p_result, p_score = m.p_result(ph, pa), m.p_score(ph, pa)

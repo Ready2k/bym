@@ -21,9 +21,10 @@ prospective-only now (2025/26 holdout is spent and grid-searched,
 VALIDATION.md):
 
 1. Everything below — items 1 and 2 are now waiting on elapsed rounds
-   rather than on anyone's time, so pick up items 3-7 opportunistically
-   in the meantime. §5's Shin's method and MOV-Elo ablations are the
-   cheapest genuinely-ready work: the training data already exists.
+   rather than on anyone's time, so pick up the rest opportunistically in
+   the meantime. §3's §19 strategy-snapshot linkage is the cheapest
+   genuinely-ready work now that §5's two ablations are retired: it is
+   well-scoped and reuses `prediction_history.py`'s pattern directly.
 
 Two items left this file on 2026-08-09. The round-file rename is done —
 `rounds/` now holds one real round per file, named
@@ -170,25 +171,36 @@ fetch itself.
 
 ---
 
-## 5. xG / Shin's method / MOV-Elo
+## 5. xG (Shin's method and MOV-Elo: retired 2026-08-09)
 
 **What.** Standing ablation candidates from §7, §29.4, §32.1.
 
-**Why deferred.**
-- **xG** — no confirmed free source exists; paid options (e.g.
-  Sportmonks) breach the £10/month target (§25).
-- **Shin's method / MOV-Elo** — simply haven't been run through the
-  ablation ladder yet.
+**Shin's method and MOV-Elo are done** — both implemented and run through
+the ladder on the 2024/25 validation season, both **rejected**. See
+[results/ablation_007_shin_and_mov_elo.md](../results/ablation_007_shin_and_mov_elo.md)
+and the VALIDATION.md decisions table. Shin's is indistinguishable from
+proportional devigging here (only 1 of 932 picks changed; paired log loss
+−0.00015, CI straddling zero), largely because w=0.5 dilutes half of any
+devig difference before it reaches a probability. MOV-Elo is marginally
+worse than *plain* Elo, which means ablation_003's redundancy verdict is
+about what per-division α/β already capture rather than about rating
+quality. Both stay available behind flags (`devig="shin"`,
+`use_elo=True, elo_mov=True`) and neither is in the frozen model path.
 
-**Unblock.**
-- xG needs a budget decision — this requires your manual approval per
-  §25, not an engineering call.
-- Shin's method and MOV-Elo need someone to actually run the ablation
-  (`ablation_00X`-style script, see `results/`) — the training data for
-  both already exists, unlike xG.
+**Why xG is still deferred.** No confirmed free source exists; paid
+options (e.g. Sportmonks) breach the £10/month target (§25).
 
-**Effort.** Shin's/MOV-Elo — small, could be picked up anytime.
-xG — blocked on a budget decision, not effort.
+**Unblock.** xG needs a budget decision — your manual approval per §25,
+not an engineering call.
+
+**Effort.** Blocked on a budget decision, not effort.
+
+**Worth knowing before adding another rung here.** With the 2025/26
+holdout spent, no ablation on the validation season can promote anything
+on its own any more — a win there could not be confirmed on unseen data,
+and VALIDATION.md is explicit that those scores are biased upward. Running
+a rung is still worth it to *retire* a candidate, as ablation_007 did.
+Promoting one now needs prospective evidence (`results/prospective_*`).
 
 ---
 
