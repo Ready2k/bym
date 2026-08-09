@@ -3,6 +3,7 @@ __pycache__/
 *.pyc
 *.egg-info/
 data/
+secrets/
 .pytest_cache/
 .run/
 config/odds_api_quota.json
