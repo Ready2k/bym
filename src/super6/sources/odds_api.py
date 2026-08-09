@@ -10,6 +10,20 @@ traditionally discovered by exhausting them at 13:57 on a Saturday.
 Every request is gated on the source registry (§18.1, §22): querying
 before `the_odds_api` is promoted to APPROVED raises rather than
 proceeding.
+
+**Market breadth (§6).** Only `h2h` (1X2) is fetched by default —
+`DEFAULT_MARKETS`, and therefore the live budget and blend weight in
+`config.DEFAULT_MODEL`, is unchanged by this. §6 also lists Asian
+handicap, over/under goals, BTTS and correct-score markets; fetching more
+of them multiplies the per-request credit cost (`markets x regions`), a
+real budget decision under §25, not something to expand by default.
+`over/under totals` parsing exists (`TotalsOdds`) and is exercised by
+passing `markets="h2h,totals"` explicitly — but nothing in the forecast
+consumes it: Football-Data.co.uk, the backtesting corpus, ships H/D/A
+odds only, so there is no historical totals data to validate a use
+against per §28's ablation rule. Captured for §6's "capture where
+available" and to backtest against once real totals history accumulates
+prospectively, not because it changes any current forecast.
 """
 
 from __future__ import annotations
@@ -68,6 +82,24 @@ class BookmakerOdds:
 
 
 @dataclass
+class TotalsOdds:
+    """§6 over/under goals — opt-in only, see `fetch_odds`'s `markets` arg.
+
+    Not consumed anywhere in the forecast (§28: no backtesting corpus has
+    historical totals odds to validate a use against — Football-Data.co.uk
+    ships H/D/A only). Captured so it exists to inspect and to backtest
+    against once it does, per §6's "capture where available", not because
+    anything currently reads it.
+    """
+
+    bookmaker: str
+    last_update: str
+    line: float  # e.g. 2.5
+    over: float
+    under: float
+
+
+@dataclass
 class EventOdds:
     event_id: str
     sport_key: str
@@ -75,6 +107,7 @@ class EventOdds:
     home_team: str
     away_team: str
     bookmakers: list[BookmakerOdds] = field(default_factory=list)
+    totals: list[TotalsOdds] = field(default_factory=list)
 
 
 def request_cost(markets: str = DEFAULT_MARKETS, regions: str = DEFAULT_REGIONS) -> int:
@@ -116,14 +149,56 @@ def record_usage(
     return quota_mod.record(QUOTA, cost, remaining_header, path, now)
 
 
-def _parse_h2h(payload: list[dict]) -> list[EventOdds]:
-    """Map the API payload to EventOdds.
-
-    Outcome order is not guaranteed and outcomes are named by team (plus
+def _h2h_odds(bm: dict, event: EventOdds) -> BookmakerOdds | None:
+    """Outcome order is not guaranteed and outcomes are named by team (plus
     'Draw'), so they are matched by name rather than by position. An event
     whose h2h market is missing an outcome is skipped for that bookmaker
-    rather than guessed at.
-    """
+    rather than guessed at."""
+    market = next((m for m in bm.get("markets", []) if m.get("key") == "h2h"), None)
+    if market is None:
+        return None
+    prices = {o.get("name"): o.get("price") for o in market.get("outcomes", [])}
+    home = prices.get(event.home_team)
+    away = prices.get(event.away_team)
+    draw = prices.get("Draw")
+    if not all(isinstance(p, (int, float)) and p > 1.0 for p in (home, draw, away)):
+        return None
+    return BookmakerOdds(
+        bookmaker=bm.get("key", bm.get("title", "unknown")),
+        last_update=market.get("last_update") or bm.get("last_update", ""),
+        home=float(home),
+        draw=float(draw),
+        away=float(away),
+    )
+
+
+def _totals_odds(bm: dict) -> list[TotalsOdds]:
+    """§6 over/under goals — only present when `markets` includes "totals"
+    (opt-in, see `fetch_odds`). One entry per line the bookmaker quotes;
+    a line missing either side is skipped rather than guessed at, same
+    discipline as `_h2h_odds`."""
+    market = next((m for m in bm.get("markets", []) if m.get("key") == "totals"), None)
+    if market is None:
+        return []
+    by_line: dict[float, dict[str, float]] = {}
+    for outcome in market.get("outcomes", []):
+        point, price, name = outcome.get("point"), outcome.get("price"), outcome.get("name")
+        if not isinstance(point, (int, float)) or not isinstance(price, (int, float)):
+            continue
+        by_line.setdefault(float(point), {})[name] = float(price)
+    last_update = market.get("last_update") or bm.get("last_update", "")
+    bookmaker = bm.get("key", bm.get("title", "unknown"))
+    return [
+        TotalsOdds(bookmaker=bookmaker, last_update=last_update, line=line,
+                   over=sides["Over"], under=sides["Under"])
+        for line, sides in sorted(by_line.items())
+        if "Over" in sides and "Under" in sides
+    ]
+
+
+def _parse_events(payload: list[dict]) -> list[EventOdds]:
+    """Map the API payload to EventOdds. h2h is always parsed if present;
+    totals only appear when actually requested (opt-in, see `fetch_odds`)."""
     events: list[EventOdds] = []
     for raw in payload:
         event = EventOdds(
@@ -134,26 +209,10 @@ def _parse_h2h(payload: list[dict]) -> list[EventOdds]:
             away_team=raw.get("away_team", ""),
         )
         for bm in raw.get("bookmakers", []):
-            market = next(
-                (m for m in bm.get("markets", []) if m.get("key") == "h2h"), None
-            )
-            if market is None:
-                continue
-            prices = {o.get("name"): o.get("price") for o in market.get("outcomes", [])}
-            home = prices.get(event.home_team)
-            away = prices.get(event.away_team)
-            draw = prices.get("Draw")
-            if not all(isinstance(p, (int, float)) and p > 1.0 for p in (home, draw, away)):
-                continue
-            event.bookmakers.append(
-                BookmakerOdds(
-                    bookmaker=bm.get("key", bm.get("title", "unknown")),
-                    last_update=market.get("last_update") or bm.get("last_update", ""),
-                    home=float(home),
-                    draw=float(draw),
-                    away=float(away),
-                )
-            )
+            odds = _h2h_odds(bm, event)
+            if odds is not None:
+                event.bookmakers.append(odds)
+            event.totals.extend(_totals_odds(bm))
         events.append(event)
     return events
 
@@ -201,4 +260,4 @@ def fetch_odds(
     )
     record_usage(cost, response.headers.get("x-requests-remaining"), quota_path)
     response.raise_for_status()
-    return _parse_h2h(response.json())
+    return _parse_events(response.json())

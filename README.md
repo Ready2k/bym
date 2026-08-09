@@ -216,6 +216,17 @@ strategy recommendation is persisted anywhere yet to point one at — and
 model (a genuine per-request corpus hash would only matter once the
 model refits on a rolling basis, which it does not yet).
 
+**§6 market breadth: totals odds can now be captured, opt-in.**
+`sources/odds_api.py` fetches `h2h` only by default — `DEFAULT_MARKETS`
+and the live budget are unchanged. Over/under goals parsing
+(`TotalsOdds`) exists and activates by passing `markets="h2h,totals"`
+explicitly, at the extra credit cost that implies (§25). Not consumed by
+the forecast: Football-Data.co.uk, the backtesting corpus, has no
+historical totals odds to validate a use against per §28's ablation
+rule — captured for §6's "capture where available" and a future
+prospective ablation, not wired into `P(score)`. Asian handicap, BTTS and
+correct-score markets remain unfetched.
+
 **Measurement is prospective** through 2026/27 —
 [results/prospective_2026_27.md](results/prospective_2026_27.md). No Phase
 2 or Phase 3 component may claim improvement until its arm demonstrates it

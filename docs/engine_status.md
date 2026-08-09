@@ -224,6 +224,27 @@ already hash-pinned once, permanently, in MANIFEST.md — a new hash per
 forecast run would only add value once the model refits on a rolling
 basis).
 
+## §6 market breadth
+
+`sources/odds_api.py` fetches `h2h` (1X2) only by default —
+`DEFAULT_MARKETS = "h2h"`, unchanged, so the live budget (§25) and blend
+weight are unaffected. Added: `TotalsOdds` (over/under goals), parsed
+whenever the response contains a `totals` market — which only happens if
+a caller explicitly passes `markets="h2h,totals"` to `fetch_odds`, at the
+extra credit cost `request_cost` already accounts for (`markets x
+regions`). Nothing calls it that way yet; the capability exists to
+collect without being switched on.
+
+**Not wired into the forecast, deliberately.** Football-Data.co.uk (the
+walk-forward backtesting corpus, §16) carries H/D/A odds only — there is
+no historical totals data to test a "does this improve calibration"
+claim against, so nothing here feeds `TotalsOdds` into `P(score)` or
+§32.3's rescaling. Consistent with §28: captured for §6's "capture where
+available" and a future prospective ablation once real totals history
+accumulates through 2026/27, not assumed to help.
+
+Still unfetched: Asian handicap, BTTS, correct-score markets.
+
 ## Ollama
 
 ```text
@@ -384,7 +405,7 @@ the run, so a forecast is produced with no credentials at all.
 ## Tests
 
 ```text
-532 passing, 6 skipped (live)
+536 passing, 6 skipped (live)
 ```
 
 Network access is blocked at the socket layer for the entire ordinary
