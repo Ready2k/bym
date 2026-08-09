@@ -1500,12 +1500,46 @@ class Super6RequestHandler(BaseHTTPRequestHandler):
             self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
 
 
+def missing_state_warnings(config: WebConfig) -> list[str]:
+    """Paths the UI reads that aren't CLI flags and don't exist here.
+
+    These resolve against the working directory, so starting the server
+    from the wrong place silently produces a *different* deployment:
+    separate UI state and forecast history, and — worst of the set — a
+    source registry that falls back to built-in defaults where every
+    source is REVIEW_REQUIRED, gating off odds and research without ever
+    saying so. Cheap to warn about, expensive to diagnose from the
+    symptoms (see `scripts/super6-service`, which pins the directory).
+    """
+    checked = (
+        ("source registry", config.registry_path),
+        ("UI state", config.ui_state_path),
+        ("prediction history", config.prediction_history_path),
+    )
+    return [
+        f"{label} not found at {path.resolve()}"
+        for label, path in checked
+        if not path.exists()
+    ]
+
+
 def serve(config: WebConfig, host: str = "127.0.0.1", port: int = 8000) -> None:
     """Run the local UI. Press Ctrl-C to stop it."""
     handler = type("ConfiguredSuper6Handler", (Super6RequestHandler,), {"config": config})
     server = ThreadingHTTPServer((host, port), handler)
     print(f"Super 6 UI running at http://{host}:{port}")
     print(f"Round: {config.round_path}")
+    warnings = missing_state_warnings(config)
+    if warnings:
+        print(f"\n  ! Started from {Path.cwd()}")
+        for warning in warnings:
+            print(f"  ! {warning}")
+        print(
+            "  ! These are read relative to the working directory. A missing "
+            "registry\n  !   means every source falls back to REVIEW_REQUIRED "
+            "— odds and research\n  !   will be gated off. Run from the project "
+            "root, or use scripts/super6-service.\n"
+        )
     try:
         server.serve_forever()
     except KeyboardInterrupt:

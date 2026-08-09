@@ -207,3 +207,26 @@ def test_readiness_command_reports_both_counters(tmp_path, capsys):
     assert "No corpus found" in out
     assert "1 of ~20 rounds observed" in out
     assert "0 of ~200 confirmed absences" in out
+
+
+def test_readiness_flags_missing_state_rather_than_reporting_a_bare_zero(tmp_path, capsys):
+    """A zero because a file is missing must not look like a zero because
+    nothing has happened yet — `db.connect` would even create the database
+    it could not find, making the wrong answer look authoritative."""
+    from super6.cli import main
+
+    prediction_path = tmp_path / "history.json"
+    prediction_history.record_snapshot(2026, 1, round_fixtures(), path=prediction_path)
+    main([
+        "readiness",
+        "--data", str(tmp_path),
+        "--db", str(tmp_path / "absent.db"),
+        "--ui-state", str(tmp_path / "absent.json"),
+        "--prediction-history", str(prediction_path),
+    ])
+    err = capsys.readouterr().err
+    assert "UI state not found" in err
+    assert "database not found" in err
+    assert "incomplete, not merely empty" in err
+    # The path that *does* exist must not be reported as missing.
+    assert "prediction history not found" not in err

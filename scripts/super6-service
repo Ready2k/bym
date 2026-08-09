@@ -6,14 +6,29 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+# Run from the project root, always. The flags below are absolute, but the
+# server also reads paths that are NOT flags — the source registry, UI
+# state, prediction history, opponent history, the event log, the ledger,
+# the arm registry — and those resolve against the working directory. Start
+# this script from anywhere else and the UI silently uses a different set of
+# state files, and `load_registry` falls back to built-in defaults where
+# every source is REVIEW_REQUIRED rather than APPROVED, which quietly gates
+# off odds and research.
+cd "$ROOT_DIR"
 RUNTIME_DIR="$ROOT_DIR/.run"
 PID_FILE="$RUNTIME_DIR/super6-ui.pid"
 LOG_FILE="$RUNTIME_DIR/super6-ui.log"
 PORT="${SUPER6_PORT:-8000}"
-ROUND_FILE="${SUPER6_ROUND:-$ROOT_DIR/rounds/example_round.json}"
+ROUND_FILE="${SUPER6_ROUND:-$ROOT_DIR/rounds/2026_27_round_01.json}"
 DATA_DIR="${SUPER6_DATA:-$ROOT_DIR/data}"
-DATABASE="${SUPER6_DB:-$ROOT_DIR/data/super6-ui.db}"
-SUBMISSIONS="${SUPER6_SUBMISSIONS:-$ROOT_DIR/data/super6-ui-submissions.json}"
+# Same files the CLI defaults to. A separate super6-ui.db / -submissions
+# pair used to live here, which meant `super6 readiness` and every other
+# command read one deployment's state while the UI wrote another's — and
+# because both files existed, nothing warned. One deployment, one set of
+# files; override per-instance with SUPER6_DB/SUPER6_SUBMISSIONS.
+DATABASE="${SUPER6_DB:-$ROOT_DIR/data/super6.db}"
+SUBMISSIONS="${SUPER6_SUBMISSIONS:-$ROOT_DIR/data/submissions.json}"
 SEASONS="${SUPER6_SEASONS:-2019 2025}"
 
 if [[ -x "$ROOT_DIR/.venv/bin/python" ]]; then

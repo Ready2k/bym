@@ -563,8 +563,35 @@ def cmd_readiness(args) -> int:
     print(f"Mean expected goals      {profile.mean_expected_goals}")
     print(f"\n{round_characteristics.matching_readiness(profile)}\n")
 
-    state = load_ui_state(Path(args.ui_state))
-    with db_mod.connect(Path(args.db)) as conn:
+    # A counter that reports zero because a file is missing looks exactly
+    # like a counter that reports zero because nothing has happened yet —
+    # and `db.connect` would helpfully *create* the database it can't find,
+    # making the wrong answer look authoritative. Say so instead. This is
+    # not hypothetical: the paths below are not `serve` flags, so a UI
+    # started from the wrong directory keeps its state somewhere else
+    # entirely (see web.missing_state_warnings).
+    ui_state_path, db_path = Path(args.ui_state), Path(args.db)
+    unresolved = [
+        f"{label} not found at {path.resolve()}"
+        for label, path in (
+            ("UI state", ui_state_path),
+            ("database", db_path),
+            ("prediction history", prediction_path),
+        )
+        if not path.exists()
+    ]
+    if unresolved:
+        for item in unresolved:
+            print(f"  ! {item}", file=sys.stderr)
+        print(
+            "  ! The counters below are therefore incomplete, not merely "
+            "empty.\n  !   Point --ui-state/--db/--prediction-history at the "
+            "deployment you mean.\n",
+            file=sys.stderr,
+        )
+
+    state = load_ui_state(ui_state_path)
+    with db_mod.connect(db_path) as conn:
         outcomes = claim_outcomes.claim_outcomes(
             conn, recorded_results(state), prediction_path=prediction_path
         )

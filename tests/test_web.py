@@ -561,3 +561,48 @@ def test_team_identity_bias_reaches_the_league_payload(tmp_path):
     # than assumed — the category stays empty instead of reading as "no bias".
     assert team_bias[0].promoted.picks == 0
     assert team_bias[0].promoted.bias is None
+
+
+def test_serve_warns_when_cwd_relative_state_is_missing(tmp_path):
+    """A UI started from the wrong directory silently becomes a different
+    deployment — worst of all a source registry falling back to defaults
+    where every source is REVIEW_REQUIRED, gating off odds and research."""
+    from super6.web import WebConfig, missing_state_warnings
+
+    absent = WebConfig(
+        registry_path=tmp_path / "config" / "source_registry.json",
+        ui_state_path=tmp_path / "ui_state.json",
+        prediction_history_path=tmp_path / "prediction_history.json",
+    )
+    warnings = missing_state_warnings(absent)
+    assert len(warnings) == 3
+    assert any("source registry" in warning for warning in warnings)
+
+    (tmp_path / "config").mkdir()
+    (tmp_path / "config" / "source_registry.json").write_text("{}")
+    (tmp_path / "ui_state.json").write_text("{}")
+    (tmp_path / "prediction_history.json").write_text("{}")
+    assert missing_state_warnings(absent) == []
+
+
+def test_the_service_script_pins_the_working_directory():
+    """`scripts/super6-service` passes absolute paths for its four flags but
+    the server reads six more that are cwd-relative, so the directory must
+    be pinned rather than inherited from wherever it was invoked."""
+    script = Path("scripts/super6-service").read_text()
+    body = script.split("start()", 1)[0]
+    assert 'cd "$ROOT_DIR"' in body, "service script must cd to the project root before launching"
+
+
+def test_the_service_script_uses_the_same_state_files_as_the_cli():
+    """A separate super6-ui.db/-submissions pair meant the UI wrote one
+    deployment's state while every CLI command read another's — and since
+    both files existed, nothing warned."""
+    lines = Path("scripts/super6-service").read_text().splitlines()
+    # Comments still name the old files to explain why they went; only the
+    # assignments matter here.
+    code = "\n".join(line for line in lines if not line.lstrip().startswith("#"))
+    assert "super6-ui.db" not in code
+    assert "super6-ui-submissions.json" not in code
+    assert "$ROOT_DIR/data/super6.db" in code
+    assert "$ROOT_DIR/data/submissions.json" in code
