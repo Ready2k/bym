@@ -222,6 +222,15 @@ def _append_forecast_change_events(snapshot: dict, rnd: Round, config: WebConfig
                 rnd.round_number, home, away,
                 detail={"changes": change["fields"], "snapshot_at": snapshot["recorded_at"]},
             ))
+        elif "basis" in fields:
+            basis = fields["basis"]
+            created.append(events.make_event(
+                events.EventType.PREDICTION_CHANGED,
+                events.Severity.IMPORTANT,
+                f"Forecast basis changed {basis['was']} → {basis['now']}.",
+                rnd.round_number, home, away,
+                detail={"changes": change["fields"], "snapshot_at": snapshot["recorded_at"]},
+            ))
     events.append(created, config.event_log_path)
     state = load_ui_state(config.ui_state_path)
     if created and state["notification_delivery"]["email"] and state["notification_email"]:
@@ -311,6 +320,13 @@ def _fixture_history_payload(season: int, summary: dict, config: WebConfig) -> N
                 "confidence": version["fixture"]["confidence"],
                 "expected_points": version["fixture"]["expected_points"],
                 "model_version": version["model_version"],
+                # §19/§43: what this specific forecast actually consumed —
+                # basis (model vs market-only fallback), and the market/
+                # availability state at the moment it was recorded, not
+                # the current live value.
+                "basis": version["fixture"].get("basis"),
+                "market_snapshot": version["fixture"].get("market_snapshot"),
+                "availability_snapshot": version["fixture"].get("availability_snapshot"),
                 "changes": version["changes"],
                 "reason": (
                     "Initial model forecast"

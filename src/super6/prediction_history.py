@@ -26,7 +26,7 @@ from typing import Any
 
 DEFAULT_HISTORY_PATH = Path("data/prediction_history.json")
 SCHEMA_VERSION = 1
-_TRACKED_FIELDS = ("result", "score", "confidence", "expected_points", "alternatives")
+_TRACKED_FIELDS = ("result", "score", "confidence", "expected_points", "alternatives", "basis")
 
 
 def _utc_iso(now: datetime | None = None) -> str:
@@ -111,8 +111,58 @@ def _alternatives(value: Any) -> list[dict[str, Any]]:
     return normalised
 
 
+def _market_snapshot(value: Any) -> dict[str, Any] | None:
+    """§19 odds-snapshot linkage: the market state actually consumed by
+    this fixture's forecast, not the live value (which keeps moving after
+    the snapshot is taken). Compact by design — a handful of stable
+    numbers, not the full bookmaker-by-bookmaker breakdown."""
+    plain = _plain(value)
+    if not isinstance(plain, Mapping) or not plain.get("available"):
+        return None
+    return {
+        "home_probability": _number(plain.get("home_probability"), 4),
+        "draw_probability": _number(plain.get("draw_probability"), 4),
+        "away_probability": _number(plain.get("away_probability"), 4),
+        "bookmaker_count": plain.get("bookmaker_count"),
+        "market_agreement": plain.get("market_agreement"),
+        "stale": bool(plain.get("stale", False)),
+    }
+
+
+def _availability_snapshot(value: Any) -> dict[str, Any] | None:
+    """§19 news/team-intelligence snapshot linkage. Counts and quality
+    labels only, not the individual claims — those already have their own
+    provenance trail (knowledge/store.py); this just records how much of
+    it existed when the forecast was made. `quantitative_impact` is always
+    "NONE DIRECTLY" today (docs/phase2_increment3.md) — recorded as-is
+    rather than omitted, so a future reader can see evidence existed
+    without it having changed anything, instead of wondering if it was
+    silently dropped."""
+    plain = _plain(value)
+    if not isinstance(plain, Mapping):
+        return None
+    items = plain.get("items")
+    return {
+        "confirmed_lineups": plain.get("confirmed_lineups"),
+        "expected_lineups": plain.get("expected_lineups"),
+        "data_quality": plain.get("data_quality"),
+        "feature_completeness": plain.get("feature_completeness"),
+        "item_count": len(items) if isinstance(items, list) else 0,
+        "quantitative_impact": plain.get("quantitative_impact", "NONE DIRECTLY"),
+    }
+
+
 def normalise_fixture(fixture: Mapping[str, Any] | Any, index: int) -> dict[str, Any]:
-    """Return the small, stable part of a fixture needed for comparison.
+    """Return the small, stable part of a fixture needed for comparison —
+    plus, per §19, enough of its *inputs* to answer "why did we predict
+    this" later: the model basis, and the market/availability state the
+    forecast actually consumed. Reproducibility for the two things that
+    can currently move a forecast (§30's model, §32's market blend);
+    availability is recorded for provenance even though nothing yet routes
+    from it to a probability (docs/phase2_increment3.md). Opponent/strategy
+    snapshot linkage (§19's `opponent_snapshot`, `strategy_prediction`) is
+    not included — no strategy recommendation is persisted anywhere yet to
+    link to, so there would be nothing honest to point at.
 
     The function accepts either a read-model contract or the dictionary it
     serialises to.  It keeps the raw team labels for display but deliberately
@@ -137,6 +187,9 @@ def normalise_fixture(fixture: Mapping[str, Any] | Any, index: int) -> dict[str,
             plain.get("expected_points", plain.get("ev")), 3
         ),
         "alternatives": _alternatives(plain.get("alternatives")),
+        "basis": plain.get("forecast_basis", plain.get("basis")),
+        "market_snapshot": _market_snapshot(plain.get("market")),
+        "availability_snapshot": _availability_snapshot(plain.get("availability")),
     }
 
 
@@ -185,10 +238,17 @@ def _changes(before: list[dict[str, Any]], after: list[dict[str, Any]]) -> list[
                 }
             )
             continue
+        # A field absent from the *previous* snapshot (not merely `None`)
+        # means it postdates that snapshot — a newly tracked field (like
+        # `basis` here) appearing for the first time on an already-running
+        # round, not a real forecast change. `field in previous` — not
+        # `.get()` — is what tells those two cases apart; without it every
+        # existing round would report a spurious one-off "changed" the
+        # moment a new field is added to _TRACKED_FIELDS.
         fields = [
             {"field": field, "was": previous.get(field), "now": fixture.get(field)}
             for field in _TRACKED_FIELDS
-            if previous.get(field) != fixture.get(field)
+            if field in previous and previous.get(field) != fixture.get(field)
         ]
         if fields:
             changes.append(

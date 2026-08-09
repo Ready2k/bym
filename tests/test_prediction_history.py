@@ -1,5 +1,6 @@
 """Append-only forecast snapshots support UI prediction history."""
 
+import json
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -123,3 +124,85 @@ def test_duplicate_fixture_key_is_rejected(path):
         prediction_history.record_snapshot(
             2026, 1, fixtures() + fixtures(), now=START, path=path
         )
+
+
+# ---------------------------------------------------------------------------
+# §19 reproducibility: basis + market/availability inputs preserved per fixture
+
+
+def _fixture_with_inputs(basis="PHASE1_MODEL_V1", market=None, availability=None):
+    fixture = fixtures()[0]
+    fixture["forecast_basis"] = basis
+    if market is not None:
+        fixture["market"] = market
+    if availability is not None:
+        fixture["availability"] = availability
+    return [fixture]
+
+
+def test_normalise_fixture_preserves_basis_and_market_and_availability_inputs(path):
+    market = {
+        "available": True, "home_probability": 0.62, "draw_probability": 0.24,
+        "away_probability": 0.14, "bookmaker_count": 12, "market_agreement": "HIGH",
+        "stale": False,
+    }
+    availability = {
+        "confirmed_lineups": 1, "expected_lineups": 0, "data_quality": "GOOD",
+        "feature_completeness": "HIGH", "items": [{"team": "Everton"}],
+        "quantitative_impact": "NONE DIRECTLY",
+    }
+    snapshot = prediction_history.record_snapshot(
+        2026, 1, _fixture_with_inputs(market=market, availability=availability),
+        now=START, path=path,
+    )
+    fixture = snapshot["fixtures"][0]
+    assert fixture["basis"] == "PHASE1_MODEL_V1"
+    assert fixture["market_snapshot"] == {
+        "home_probability": 0.62, "draw_probability": 0.24, "away_probability": 0.14,
+        "bookmaker_count": 12, "market_agreement": "HIGH", "stale": False,
+    }
+    assert fixture["availability_snapshot"] == {
+        "confirmed_lineups": 1, "expected_lineups": 0, "data_quality": "GOOD",
+        "feature_completeness": "HIGH", "item_count": 1,
+        "quantitative_impact": "NONE DIRECTLY",
+    }
+
+
+def test_normalise_fixture_records_unavailable_market_as_none_not_zeroes(path):
+    snapshot = prediction_history.record_snapshot(
+        2026, 1, _fixture_with_inputs(market={"available": False}), now=START, path=path,
+    )
+    assert snapshot["fixtures"][0]["market_snapshot"] is None
+
+
+def test_a_newly_tracked_field_does_not_spuriously_diff_an_existing_round(path):
+    """Regression: adding a field to _TRACKED_FIELDS must not make every
+    already-running round report a one-off fake "changed" the next time it
+    is recomputed, just because the field is new rather than the value
+    having actually moved."""
+    # Simulate a round recorded before "basis" existed in normalise_fixture
+    # by writing a snapshot with no basis key at all, the way an old file
+    # on disk would have it.
+    plain_fixture = fixtures()[0]
+    first = prediction_history.record_snapshot(2026, 1, [plain_fixture], now=START, path=path)
+    stored = json.loads(path.read_text())
+    del stored["rounds"]["2026:1"]["snapshots"][0]["fixtures"][0]["basis"]
+    path.write_text(json.dumps(stored))
+
+    second = prediction_history.record_snapshot(
+        2026, 1, _fixture_with_inputs(basis="PHASE1_MODEL_V1"),
+        now=START + timedelta(hours=1), path=path,
+    )
+    assert second["changes"] == []
+
+
+def test_basis_change_alone_is_tracked_as_a_diff(path):
+    prediction_history.record_snapshot(
+        2026, 1, _fixture_with_inputs(basis="PHASE1_MODEL_V1"), now=START, path=path,
+    )
+    second = prediction_history.record_snapshot(
+        2026, 1, _fixture_with_inputs(basis="MARKET_ONLY_FALLBACK"),
+        now=START + timedelta(hours=1), path=path,
+    )
+    fields = {f["field"] for f in second["changes"][0]["fields"]}
+    assert "basis" in fields

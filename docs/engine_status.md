@@ -191,6 +191,39 @@ Surfaced in the UI: a Golden Goal field on the opponent-import form
 (`#opponents`), an actual-minute field on the results form (`#round` →
 Results), and a "Golden Goal avg." column on the League standings table.
 
+## §19 reproducibility
+
+`prediction_history.normalise_fixture` now retains, per stored forecast
+version, the inputs that actually drive a pick — not only the output:
+
+```text
+basis                model vs MARKET_ONLY_FALLBACK (per fixture, not
+                     just round-level model_version)
+market_snapshot      home/draw/away probability, bookmaker count,
+                     agreement, staleness — as consumed, not live
+availability_snapshot  confirmed/expected lineup counts, data quality,
+                       item count, quantitative_impact ("NONE DIRECTLY")
+```
+
+A `basis` change is now a tracked diff (`_TRACKED_FIELDS`), surfaced the
+same way a score or confidence change is (§21). Fixing this correctly
+required a second fix: adding a field to `_TRACKED_FIELDS` on an
+already-running round previously produced one spurious "changed" event
+per fixture the next time it was recomputed, since the old snapshot
+simply never had that key. `_changes()` now requires the field to have
+**existed** in the previous snapshot (`field in previous`, not `.get()`)
+before treating its value as having moved — a schema addition is not a
+forecast change. Caught live against real stored data
+(`data/prediction_history.json`, `data/events/activity.jsonl`), both
+cleaned up; see `test_a_newly_tracked_field_does_not_spuriously_diff_an_existing_round`.
+
+Not covered: `opponent_snapshot`/`strategy_prediction` linkage (no
+strategy recommendation is persisted anywhere to link to yet), and a
+per-request `feature_snapshot` hash (the frozen model's training data is
+already hash-pinned once, permanently, in MANIFEST.md — a new hash per
+forecast run would only add value once the model refits on a rolling
+basis).
+
 ## Ollama
 
 ```text
@@ -351,7 +384,7 @@ the run, so a forecast is produced with no credentials at all.
 ## Tests
 
 ```text
-528 passing, 6 skipped (live)
+532 passing, 6 skipped (live)
 ```
 
 Network access is blocked at the socket layer for the entire ordinary

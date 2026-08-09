@@ -530,7 +530,17 @@ function openFixture(index) {
   const reason = reasonFor(fixture);
   const alternatives = fixture.alternatives.map((alternative) => `<tr class="${alternative.is_recommendation ? "recommended" : ""}"><td>${alternative.score}${alternative.is_recommendation ? " · PICK" : ""}</td><td>${percent(alternative.score_probability)}</td><td>${alternative.expected_points.toFixed(2)}</td></tr>`).join("");
   const evidence = fixture.availability?.items?.length ? fixture.availability.items.map((item) => `<li>${escapeHtml(item.player_name)} — ${escapeHtml(titleCase(item.status))}; ${escapeHtml(item.certainty)} via ${escapeHtml(item.source)}.</li>`).join("") : `<li>No individual team-news item is recorded for this fixture.</li>`;
-  const history = fixture.history?.length ? fixture.history.map((version) => `<li>${escapeHtml(displayDate(version.recorded_at))}: ${escapeHtml(version.pick)} — ${escapeHtml(version.reason || "Forecast recorded")}</li>`).join("") : `<li>No earlier forecast version is persisted yet.</li>`;
+  // §19/§43: each entry is a reconstructable forecast_run — what the pick
+  // was, and what it was based on (model vs market-only fallback, plus the
+  // market/availability state consumed at that moment, not the current one).
+  const history = fixture.history?.length ? fixture.history.map((version) => {
+    const inputs = [];
+    if (version.basis && version.basis !== "PHASE1_MODEL_V1") inputs.push(`basis ${version.basis}`);
+    if (version.market_snapshot) inputs.push(`market ${percent(version.market_snapshot.home_probability)}/${percent(version.market_snapshot.draw_probability)}/${percent(version.market_snapshot.away_probability)} (${version.market_snapshot.bookmaker_count} books)`);
+    if (version.availability_snapshot) inputs.push(`availability ${version.availability_snapshot.data_quality}, ${version.availability_snapshot.item_count} item${version.availability_snapshot.item_count === 1 ? "" : "s"}`);
+    const detail = inputs.length ? ` <small>(${inputs.map(escapeHtml).join(" · ")})</small>` : "";
+    return `<li>${escapeHtml(displayDate(version.recorded_at))}: ${escapeHtml(version.pick)} — ${escapeHtml(version.reason || "Forecast recorded")}${detail}</li>`;
+  }).join("") : `<li>No earlier forecast version is persisted yet.</li>`;
   const [home, away] = effectivePick(fixture).split("-");
   const unmodellable = hasNoForecast(fixture);
   const unmodellableBanner = unmodellable

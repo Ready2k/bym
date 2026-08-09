@@ -100,7 +100,7 @@ src/super6/
 ├── worker.py            always-on orchestration: odds/availability/knowledge polling
 ├── movement.py          material market-move detection (§6)
 ├── divergence.py        model-vs-market disagreement
-├── prediction_history.py  append-only forecast/change log (§10, §43)
+├── prediction_history.py  append-only forecast/change log + input snapshots (§10, §19, §43)
 ├── prospective.py       2026/27 round-by-round arm comparison
 ├── submission.py        submission-state machine (§46)
 ├── reminders.py         deadline alerts
@@ -202,6 +202,19 @@ season simulator (no per-synthetic-round Golden Goal outcome exists to
 draw from) — documented there as a deliberate simplification, since a tie
 surviving both points and exact scores across thousands of simulated
 worlds is already rare enough not to matter much.
+
+**§19 reproducibility is stronger.** Each stored forecast version
+(`prediction_history.normalise_fixture`) now keeps `forecast_basis`
+(model vs `MARKET_ONLY_FALLBACK`) and a compact snapshot of the market
+and availability state actually consumed — not just the output pick — so
+"why did we predict Wolves 3-0 on 17 January" is answerable from what was
+recorded, not only from the current live state. A `basis` change is
+tracked as a material diff (§21) like a score or confidence change. Still
+open: §19's `opponent_snapshot`/`strategy_prediction` linkage — no
+strategy recommendation is persisted anywhere yet to point one at — and
+`feature_snapshot` beyond MANIFEST.md's static hash pin for the frozen
+model (a genuine per-request corpus hash would only matter once the
+model refits on a rolling basis, which it does not yet).
 
 **Measurement is prospective** through 2026/27 —
 [results/prospective_2026_27.md](results/prospective_2026_27.md). No Phase
