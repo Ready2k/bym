@@ -41,7 +41,7 @@ An adapter existing is **not** "live".
 | Season Monte Carlo simulator (§13, `season_simulation.py`) | BUILT, TESTED OFFLINE, ACTIVE | Round Opportunity Model, paired significance test, ATTACK/DEFEND/NORMAL labels — see caveat below |
 | Private-league tiebreak (§27 decision #7) | BUILT, TESTED OFFLINE, ACTIVE | points → exact scores → Golden Goal closeness, `league.league_standings` |
 | **100 Club annotation (§12.1)** | **DEFERRED — not started** | no national-entrant data exists to estimate rarity from |
-| **Increment 5 player-impact model (evidence → λ)** | **DEFERRED — not started** | deliberate, gated on `QUANTITATIVE_IMPACT_MODEL_ENABLED` |
+| **Increment 5 player-impact model (evidence → λ)** | **DEFERRED — training data now accruing** | model itself not started and gated on `QUANTITATIVE_IMPACT_MODEL_ENABLED`; `claim_outcomes.py` pairs recorded claims with realised results so there is something to fit on later (`super6 readiness`) |
 
 ## Local decision UI
 
@@ -138,6 +138,18 @@ narrowed with `opponent_intelligence.py`:
     observed Super 6 characteristics (favourite strength, home/away
     balance, competitiveness, goal totals). That richer matching is a
     documented follow-on, gated by §28 like everything else here.
+    What the matching was missing is now being measured:
+    `round_characteristics.py` (new) derives division mix, favourite
+    strength, home/away balance, competitiveness and expected goals from
+    each round's stored forecast, and `observed_profile` pools them into
+    the target a stratified sampler would reproduce. Derived from
+    `prediction_history` rather than stored separately, so rounds already
+    recorded are characterised retroactively. It changes nothing about
+    how synthetic rounds are drawn — a test asserts
+    `sample_synthetic_round` does not reference it — because adopting a
+    matched sampler needs an ablation against the uniform draw, and at
+    1 observed round that ablation would have no power. `super6
+    readiness` prints the counter.
   * `simulate_remaining_season` — combines the current round (real
     fixtures, candidate-specific) with a representative subset of future
     rounds (shared across every candidate — §13.3's common random

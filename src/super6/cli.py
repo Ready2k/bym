@@ -510,6 +510,77 @@ def cmd_submission(args) -> int:
     return 0
 
 
+def cmd_readiness(args) -> int:
+    """How close the two data-blocked backlog items are to attemptable.
+
+    Both §13.2's characteristic-matched sampler and §8's Evidence → λ model
+    are blocked on data that only accrues by playing rounds, not on
+    engineering time. This prints the two counters so "not yet" has a
+    number attached rather than being re-argued from memory
+    (docs/next_steps.md).
+    """
+    from . import claim_outcomes, db as db_mod, round_characteristics
+    from .config import FROZEN_PHASE1_V1
+    from .data.football_data import load_matches, team_divisions
+    from .web import load_ui_state, recorded_results
+
+    prediction_path = Path(args.prediction_history)
+
+    divisions: dict[str, str] = {}
+    expected_goals = None
+    try:
+        matches = load_matches(
+            Path(args.data), list(range(args.seasons[0], args.seasons[1] + 1)),
+            tuple(args.divisions), fetch=False,
+        )
+    except FileNotFoundError:
+        print("No corpus found — division mix and expected goals unavailable.\n")
+    else:
+        divisions = team_divisions(matches)
+        router = _fit_router(matches, FROZEN_PHASE1_V1.xi, FROZEN_PHASE1_V1)
+
+        def expected_goals(home: str, away: str) -> float | None:
+            try:
+                lam_home, lam_away = router(home, away).lambdas(home, away, FROZEN_PHASE1_V1)
+            except Exception:
+                return None  # a team outside the corpus has no fitted λ
+            return lam_home + lam_away
+
+    rounds = round_characteristics.observed_rounds(
+        prediction_path=prediction_path,
+        divisions=divisions,
+        expected_goals=expected_goals,
+    )
+    profile = round_characteristics.observed_profile(rounds)
+    print("§13.2 ROUND OPPORTUNITY MODEL — characteristic matching\n")
+    print(f"Rounds observed          {profile.rounds}")
+    print(f"Fixtures observed        {profile.fixtures}")
+    print(f"Division mix             {dict(profile.division_mix) or '—'}")
+    print(f"Home-favourite share     {profile.home_favourite_share}")
+    print(f"Mean favourite strength  {profile.mean_favourite_strength}")
+    print(f"Favourite strength range {profile.favourite_strength_range}")
+    print(f"Mean competitiveness     {profile.mean_competitiveness}")
+    print(f"Mean expected goals      {profile.mean_expected_goals}")
+    print(f"\n{round_characteristics.matching_readiness(profile)}\n")
+
+    state = load_ui_state(Path(args.ui_state))
+    with db_mod.connect(Path(args.db)) as conn:
+        outcomes = claim_outcomes.claim_outcomes(
+            conn, recorded_results(state), prediction_path=prediction_path
+        )
+    evidence = claim_outcomes.impact_evidence(outcomes)
+    print("§8 EVIDENCE → λ — player-impact model (Increment 5)\n")
+    print(f"Claim/outcome pairs      {evidence.pairs}")
+    print(f"Attributed to a team     {evidence.attributed}")
+    print(f"Confirmed absences       {evidence.confirmed_absences}")
+    print(f"Rounds covered           {evidence.rounds}")
+    print(f"Teams covered            {evidence.teams}")
+    print(f"Mean goals, absent       {evidence.mean_goals_with_absence}")
+    print(f"Mean goals, otherwise    {evidence.mean_goals_without_absence}")
+    print(f"\n{claim_outcomes.fitting_readiness(evidence)}")
+    return 0
+
+
 def cmd_shadow_report(args) -> int:
     """Shadow-mode extraction metrics (§12) — counts only, no AI score."""
     from . import db as db_mod
@@ -1224,6 +1295,21 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--picks", nargs="+", metavar="H-A")
     p.add_argument("--golden-goal", type=int)
     p.set_defaults(func=cmd_submission)
+
+    p = sub.add_parser(
+        "readiness",
+        help="how close the data-blocked backlog items are (docs/next_steps.md)",
+    )
+    p.add_argument("--data", default="data", help="cache directory for CSVs")
+    p.add_argument(
+        "--seasons", nargs=2, type=int, metavar=("START", "END"), default=[2019, 2025],
+        help="season start-years, inclusive (e.g. 2019 2025)",
+    )
+    p.add_argument("--divisions", nargs="+", default=list(DEFAULT_DATA.divisions))
+    p.add_argument("--db", default="data/super6.db")
+    p.add_argument("--ui-state", default="data/ui_state.json")
+    p.add_argument("--prediction-history", default="data/prediction_history.json")
+    p.set_defaults(func=cmd_readiness)
 
     p = sub.add_parser("shadow-report", help="shadow extraction metrics")
     p.add_argument("--db", default="data/super6.db")

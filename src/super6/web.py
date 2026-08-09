@@ -124,6 +124,28 @@ def _round_key(rnd: Round) -> str:
     return f"{_season_for(rnd)}:{rnd.round_number}"
 
 
+def recorded_results(state: dict) -> dict[tuple[int, int, int], tuple[int, int] | None]:
+    """UI state's per-round score lists as (season, round, fixture) → scoreline.
+
+    The shape `league_standings`, `chase_defend_tendencies` and
+    `claim_outcomes` all take. A malformed round key is skipped rather than
+    failing the whole read — one bad entry should not hide every other
+    recorded result.
+    """
+    results: dict[tuple[int, int, int], tuple[int, int] | None] = {}
+    for round_key, scores in state["results"].items():
+        try:
+            season_text, round_text = round_key.split(":", 1)
+            for index, score in enumerate(scores):
+                if score is not None and score != "":
+                    results[(int(season_text), int(round_text), index)] = _scoreline(score)
+                elif score is None:
+                    results[(int(season_text), int(round_text), index)] = None
+        except (TypeError, ValueError):
+            continue
+    return results
+
+
 def _scoreline(value: str) -> tuple[int, int]:
     if not isinstance(value, str) or not re.fullmatch(r"\d+-\d+", value):
         raise ValueError("Scores must use H-A format, for example 2-0.")
@@ -965,17 +987,7 @@ def _league_payload(
             ))
             known.add(key)
 
-    results = {}
-    for round_key, scores in state["results"].items():
-        try:
-            season_text, round_text = round_key.split(":", 1)
-            for index, score in enumerate(scores):
-                if score is not None and score != "":
-                    results[(int(season_text), int(round_text), index)] = _scoreline(score)
-                elif score is None:
-                    results[(int(season_text), int(round_text), index)] = None
-        except (TypeError, ValueError):
-            continue
+    results = recorded_results(state)
     golden_goal_actual = {}
     for round_key, minute in state["golden_goal_actual"].items():
         try:

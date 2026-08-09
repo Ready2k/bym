@@ -113,6 +113,8 @@ src/super6/
 ├── opponent_intelligence.py  favourite bias, team bias, influence weight, predicted picks, chase/defend (§11)
 ├── strategy.py           single-round candidate generation + CORRELATE (DEFEND) candidate
 ├── season_simulation.py  season Monte Carlo: season state, Round Opportunity Model, paired test, mode labels (§12-13)
+├── round_characteristics.py  what real Super 6 rounds look like — the §13.2 matching target
+├── claim_outcomes.py     recorded team-news claims paired with realised results (§8 step 1)
 ├── db.py                 SQLite schema (jobs, availability, evidence, claims, …)
 ├── secrets.py            credential loading, hostname-only in logs/provenance
 ├── web.py + web_assets/  local decision UI (`super6 serve`, stdlib http.server)
@@ -269,13 +271,19 @@ actually unblock each of these — not just that they're missing — see
   knowledge agent extracts and explains news/availability events (§8) but
   nothing yet converts one into a model parameter change; gated behind
   `QUANTITATIVE_IMPACT_MODEL_ENABLED = False` until a fitted, versioned
-  impact model earns its place under §28.
+  impact model earns its place under §28. The training data for one is
+  now accruing — `claim_outcomes.py` pairs each recorded claim with the
+  result of the fixture it was about — but no model is fitted, and none
+  should be until there is a defensible sample (`super6 readiness`).
 - **Full §13.2 Round Opportunity Model characteristic-matching**
   (favourite strength, home/away balance, competitiveness, goal totals) —
   `season_simulation.sample_synthetic_round` draws fixtures from the
   historical corpus but doesn't yet match them to observed Super 6
   characteristics beyond "a competition the model knows"; a documented
-  follow-on gated by §28, not assumed to matter until shown to.
+  follow-on gated by §28, not assumed to matter until shown to. What the
+  matching would aim at is now measured and accumulating
+  (`round_characteristics.py`, `super6 readiness`); the sampler itself
+  waits on enough rounds for an ablation to have any power.
 - **100 Club annotation** (§12.1) — no source of national-entrant pick
   data exists to estimate scoreline rarity from.
 - **FastAPI/Postgres** (§26) — the local UI runs on stdlib `http.server`

@@ -20,13 +20,10 @@ scores > Golden Goal/national prizes > 100 Club) and that measurement is
 prospective-only now (2025/26 holdout is spent and grid-searched,
 VALIDATION.md):
 
-1. §13.2 Round Opportunity Model characteristic-matching — the season
-   simulator's actual remaining weakness.
-2. Evidence → λ (Increment 5) — the largest unbuilt piece of the spec
-   and the riskiest to get wrong; needs real data accumulation first
-   regardless of when it's picked up.
-3. Everything else below — lower leverage, worth doing opportunistically
-   rather than in a fixed order.
+1. Everything below — items 1 and 2 are now waiting on elapsed rounds
+   rather than on anyone's time, so pick up items 3-7 opportunistically
+   in the meantime. §5's Shin's method and MOV-Elo ablations are the
+   cheapest genuinely-ready work: the training data already exists.
 
 Two items left this file on 2026-08-09. The round-file rename is done —
 `rounds/` now holds one real round per file, named
@@ -36,6 +33,19 @@ on was answered in favour of a market-sourced club-reputation signal
 (bookmaker odds already persisted with each forecast) rather than the
 fitted model's own team strength, so `opponent_intelligence.py` keeps its
 independence from the forecasting core. See `team_bias_profiles`.
+
+**On items 1 and 2 below.** Neither can be finished without data that
+only accrues by playing rounds. What *was* buildable — and was built the
+same day — is step 1 of each: the measurement that makes the missing data
+start accumulating, rather than having to be reconstructed later from
+whatever survived. Both were pure prerequisites, adopting no model and
+adjusting no forecast, so §28 is untouched. `super6 readiness` prints
+both counters, so "not yet" now has a number attached instead of being
+re-argued from memory:
+
+```bash
+super6 readiness
+```
 
 ---
 
@@ -53,19 +63,27 @@ does — §12-13). §28 says don't add matching complexity until there's a
 baseline to test it against; there is one now.
 
 **Unblock.**
-1. Accumulate real Super 6 rounds through 2026/27 to know what
+1. ~~Accumulate real Super 6 rounds through 2026/27 to know what
    "observed characteristics" actually look like for *this* private
    league's rounds specifically (not just Premier League fixtures in
-   general).
+   general).~~ **Built 2026-08-09** — `round_characteristics.py` measures
+   division mix, favourite strength, home/away balance, competitiveness
+   and expected goals from each round's stored forecast, and
+   `observed_profile` pools them into the target a matched sampler would
+   reproduce. Derived from `prediction_history`, not stored separately,
+   so every round already recorded is characterised retroactively and
+   every future round is characterised for free. `super6 readiness`
+   prints the counter. What remains is elapsed rounds, nothing else.
 2. Build a stratified sampler (e.g. bucket historical fixtures by
    home-win-probability band or division mix, then sample within
    buckets matching the real rounds seen so far).
 3. Ablation-test the stratified sampler against the current naive
    uniform draw (§28) before adopting it.
 
-**Effort.** Medium, but genuinely time-blocked, not effort-blocked —
-step 1 needs a season's worth of real rounds before step 2 has anything
-to match against.
+**Effort.** Medium, and now purely time-blocked. Step 1 is done and
+accruing; steps 2-3 are a couple of days' work whenever there are enough
+rounds to match against — `matching_readiness` names ~20 as the point
+where an ablation would have any power, against 1 today.
 
 ---
 
@@ -83,19 +101,30 @@ parameter at all (`QUANTITATIVE_IMPACT_MODEL_ENABLED = False`,
 `docs/phase2_increment3.md`).
 
 **Unblock.**
-1. Accumulate enough (claim, outcome) history to fit something real —
+1. ~~Accumulate enough (claim, outcome) history to fit something real —
    e.g. regressing goal output against confirmed absences, once enough
-   rounds have both a recorded claim and a recorded result.
+   rounds have both a recorded claim and a recorded result.~~ **Built
+   2026-08-09** — `claim_outcomes.py` joins each recorded claim to the
+   result of the fixture it was about, via the forecast that names that
+   fixture. Both halves were already being recorded and neither was
+   joined to the other, so no pairs existed to fit on; they now accrue
+   automatically. `super6 readiness` prints the counter. What remains is
+   claims and results actually landing.
 2. Build versioning/backtesting infrastructure for the impact model
    itself, matching the rigor already applied to the goal-rate model
    (§29-32).
 3. Validate it beats "no adjustment" (§28) before promoting it out of
    shadow.
 
-**Effort.** Large, and the riskiest item on this list — a wrong impact
-model here could actively degrade forecasts rather than just fail to
-help. Needs real data accumulation before it's responsibly attemptable
-regardless of engineering time invested.
+**Effort.** Large, and still the riskiest item on this list — a wrong
+impact model here could actively degrade forecasts rather than just fail
+to help. Step 1 is done and accruing, so this is now time-blocked like
+§13.2 above, but steps 2-3 remain most of the work and none of it should
+start before there is a defensible sample: `fitting_readiness` names ~200
+confirmed absences, against 0 today. Note the claim side needs the
+knowledge extractor actually running (Ollama configured, Tavily key
+present) — no claims are recorded while it is off, so this counter can
+sit at zero indefinitely without that.
 
 ---
 
