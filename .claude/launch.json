@@ -4,7 +4,7 @@
     {
       "name": "super6-ui",
       "runtimeExecutable": ".venv/bin/super6",
-      "runtimeArgs": ["serve", "--round", "rounds/example_round.json", "--seasons", "2019", "2025", "--data", "data", "--port", "8010"],
+      "runtimeArgs": ["serve", "--round", "rounds/2026_27_round_01.json", "--seasons", "2019", "2025", "--data", "data", "--port", "8010"],
       "port": 8010
     }
   ]

@@ -220,7 +220,7 @@ def test_system_health_surfaces_the_next_scheduled_check(conn):
 
     deadline = datetime(2026, 8, 15, 14, 0, tzinfo=timezone.utc)
     scheduler.schedule_all_layers(
-        conn, 14, "rounds/example_round.json", deadline,
+        conn, 14, "rounds/2026_27_round_01.json", deadline,
         first_run_at=deadline - timedelta(days=2),
     )
     health = service.build_system_health(conn)

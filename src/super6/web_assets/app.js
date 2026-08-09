@@ -355,7 +355,28 @@ function opponentBiasLine(participant) {
   const chaseText = chase && chase.chase_when_behind !== null && chase.chase_when_behind !== undefined
     ? ` · Diverges ${percent(chase.divergence_rate_when_trailing)} while trailing vs ${percent(chase.divergence_rate_when_leading)} while leading`
     : "";
-  return `<small>Backs our model's favoured result ${percent(bias.favourite_rate)} of the time (${bias.sample_size} joined picks, influence weight ${percent(bias.influence_weight)})${chaseText}</small>`;
+  return `<small>Backs our model's favoured result ${percent(bias.favourite_rate)} of the time (${bias.sample_size} joined picks, influence weight ${percent(bias.influence_weight)})${chaseText}</small>${teamBiasLine(participant)}`;
+}
+
+// §11 team-identity bias, stated against what the market priced rather
+// than as a raw rate — "backs Man City 80% of the time" would mostly be
+// a fact about Man City, not about this rival.
+function categoryBiasText(label, category) {
+  if (!category || !category.picks || category.bias === null || category.bias === undefined) return "";
+  const points = (category.bias * 100).toFixed(0);
+  const lean = category.bias >= 0 ? `+${points}pp more` : `${Math.abs(points)}pp less`;
+  return `${label} ${lean} than priced (${category.picks} pick${category.picks === 1 ? "" : "s"}, weight ${percent(category.influence_weight)})`;
+}
+
+function teamBiasLine(participant) {
+  const bias = (appData.league.team_bias || []).find((item) => item.participant === participant);
+  if (!bias) return "";
+  const parts = [
+    categoryBiasText("Big clubs", bias.big_clubs),
+    categoryBiasText("Promoted teams", bias.promoted),
+  ].filter(Boolean);
+  if (!parts.length) return "";
+  return `<small title="Compared against the bookmaker odds stored with each forecast, not against our model. Small samples: read as a direction, not a finding.">${escapeHtml(parts.join(" · "))}</small>`;
 }
 
 function predictedPicksPanel(participant) {

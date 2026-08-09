@@ -25,11 +25,12 @@ super6 fetch --seasons 2019 2025 --data data
 ```
 
 Enter a round manually (§9.1 — Sky's fixture selection and deadline are
-config, not derived data). Copy `rounds/example_round.json`, edit the six
+config, not derived data). Each file in `rounds/` is one real round, named
+`<season>_round_<NN>.json`. Copy the most recent one, edit the six
 fixtures + deadline, then:
 
 ```bash
-super6 predict --round rounds/example_round.json --seasons 2021 2025 --data data
+super6 predict --round rounds/2026_27_round_01.json --seasons 2021 2025 --data data
 ```
 
 Output is the §20 pre-round report: six picks with RESULT / SCORE / EV /
@@ -50,7 +51,7 @@ entered picks in Super 6. It is a stdlib `http.server` app, not
 FastAPI/Next.js — §26's optional web-framework choice was never taken up.
 
 ```bash
-super6 serve --round rounds/example_round.json --seasons 2019 2025 --data data
+super6 serve --round rounds/2026_27_round_01.json --seasons 2019 2025 --data data
 ```
 
 Then open [http://127.0.0.1:8000](http://127.0.0.1:8000). The server is
@@ -109,7 +110,7 @@ src/super6/
 ├── transparency.py      read-only explainability payloads for the UI (§56)
 ├── verify.py            `super6 verify-live` — per-source live checks
 ├── league.py             opponent history, league table, single-round strategy sim (§11-13)
-├── opponent_intelligence.py  favourite bias, influence weight, predicted picks, chase/defend (§11)
+├── opponent_intelligence.py  favourite bias, team bias, influence weight, predicted picks, chase/defend (§11)
 ├── strategy.py           single-round candidate generation + CORRELATE (DEFEND) candidate
 ├── season_simulation.py  season Monte Carlo: season state, Round Opportunity Model, paired test, mode labels (§12-13)
 ├── db.py                 SQLite schema (jobs, availability, evidence, claims, …)
@@ -172,9 +173,12 @@ model).
 **Phase 3 (beat the mates) is substantially built.** Opponent-pick
 import, league standings and opponent profiles (§11) are built, including
 model-relative behaviour (`opponent_intelligence.py`): favourite
-bias/upset rate, a continuous Bayesian opponent-influence weight, a
-predicted-pick distribution for the current round's fixtures (§49.3), and
-chase/defend tendencies relative to private-league standing.
+bias/upset rate, team-specific bias (does a rival over-back big clubs or
+under-back promoted ones, measured against the price the market put on
+them rather than as a raw rate), a continuous Bayesian
+opponent-influence weight, a predicted-pick distribution for the current
+round's fixtures (§49.3), and chase/defend tendencies relative to
+private-league standing.
 `season_simulation.py` adds §13's actual season-length Monte Carlo on top:
 §13.1 season state, a §13.2 Round Opportunity Model for the rounds Sky
 hasn't published yet (six fixtures sampled from the historical corpus,
@@ -274,11 +278,6 @@ actually unblock each of these — not just that they're missing — see
   follow-on gated by §28, not assumed to matter until shown to.
 - **100 Club annotation** (§12.1) — no source of national-entrant pick
   data exists to estimate scoreline rarity from.
-- **Team-specific opponent bias** (favours large clubs, underrates
-  promoted clubs, §11) — needs a club-reputation reference independent of
-  any one fixture's forecast; not faked with a hard-coded club list.
-  Favourite bias, influence weighting, predicted picks and chase/defend
-  tendencies (the rest of §11) are built — see `opponent_intelligence.py`.
 - **FastAPI/Postgres** (§26) — the local UI runs on stdlib `http.server`
   and SQLite; the modelling core is plain Python modules precisely so a
   framework/database swap doesn't require a rewrite.

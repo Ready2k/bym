@@ -1204,7 +1204,7 @@ def main(argv: list[str] | None = None) -> int:
         "serve", help="run the local decision-first web UI (UIUX.md Phase 1)"
     )
     common(p)
-    p.add_argument("--round", default="rounds/example_round.json")
+    p.add_argument("--round", default="rounds/2026_27_round_01.json")
     p.add_argument("--db", default="data/super6.db")
     p.add_argument("--submissions", default="data/submissions.json")
     p.add_argument("--registry", default="config/source_registry.json")

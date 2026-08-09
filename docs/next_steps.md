@@ -20,39 +20,26 @@ scores > Golden Goal/national prizes > 100 Club) and that measurement is
 prospective-only now (2025/26 holdout is spent and grid-searched,
 VALIDATION.md):
 
-1. Rename `rounds/example_round.json` — five minutes, removes a real
-   ambiguity.
-2. §13.2 Round Opportunity Model characteristic-matching — the season
+1. §13.2 Round Opportunity Model characteristic-matching — the season
    simulator's actual remaining weakness.
-3. Team-specific opponent bias — blocked on a design decision, not
-   effort; resolve the decision, the code is small.
-4. Evidence → λ (Increment 5) — the largest unbuilt piece of the spec
+2. Evidence → λ (Increment 5) — the largest unbuilt piece of the spec
    and the riskiest to get wrong; needs real data accumulation first
    regardless of when it's picked up.
-5. Everything else below — lower leverage, worth doing opportunistically
+3. Everything else below — lower leverage, worth doing opportunistically
    rather than in a fixed order.
 
----
-
-## 1. Rename `rounds/example_round.json`
-
-**What.** The file currently holds real-looking 2026/27 Round 1 fixtures
-and odds, under a filename that says "example."
-
-**Why it matters.** Ambiguous to a future reader — or you, in six
-months — whether it's a template to copy or live data currently in use.
-`.claude/launch.json` and the README's usage examples both point at it
-by name.
-
-**Unblock.** Once Sky publishes a round for real, copy the live file to
-something unambiguous (e.g. `rounds/round_01.json` or a date-stamped
-name) and update the two references above. No code change.
-
-**Effort.** Trivial.
+Two items left this file on 2026-08-09. The round-file rename is done —
+`rounds/` now holds one real round per file, named
+`<season>_round_<NN>.json`, and nothing there reads as a template.
+Team-specific opponent bias is built: the design question it was blocked
+on was answered in favour of a market-sourced club-reputation signal
+(bookmaker odds already persisted with each forecast) rather than the
+fitted model's own team strength, so `opponent_intelligence.py` keeps its
+independence from the forecasting core. See `team_bias_profiles`.
 
 ---
 
-## 2. Full §13.2 Round Opportunity Model characteristic-matching
+## 1. Full §13.2 Round Opportunity Model characteristic-matching
 
 **What.** `season_simulation.sample_synthetic_round` currently draws six
 fixtures uniformly from the historical corpus (any pairing, any era) and
@@ -82,35 +69,7 @@ to match against.
 
 ---
 
-## 3. Team-specific opponent bias (favours big clubs, underrates promoted teams)
-
-**What.** §11 wants detection of whether a rival systematically favours
-"big" clubs or underrates promoted teams — independent of any single
-fixture's forecast.
-
-**Why deferred.** No club-reputation signal exists to build this from.
-Two candidate sources, both with a real cost:
-- The model's own fitted attack/defence strength (`α`) as a "big club"
-  proxy — but `league.py`/`opponent_intelligence.py` are deliberately
-  model-independent by design (see their module docstrings); wiring in
-  a model dependency breaks that separation.
-- A hand-maintained list of "big six"-style clubs — rejected as
-  unprincipled and something that goes stale every transfer window.
-
-**Unblock.** This needs a decision from you, not more code: is it
-acceptable for `opponent_intelligence.py` to start depending on the
-fitted model's team-strength output (breaking the current
-football-model / opponent-model separation), or should this wait for an
-explicit, separately-sourced club-reputation signal? Once that's
-decided, the implementation itself is small — it's the same shape as
-`favourite_bias_profiles`, just keyed on team identity instead of
-fixture-relative favourite status.
-
-**Effort.** Small once the design question is answered.
-
----
-
-## 4. Evidence → λ (Increment 5 player-impact model)
+## 2. Evidence → λ (Increment 5 player-impact model)
 
 **What.** Converting a knowledge-agent or availability claim (e.g.
 "striker ruled out") into an actual adjustment to `λ_home`/`λ_away`,
@@ -140,7 +99,7 @@ regardless of engineering time invested.
 
 ---
 
-## 5. §19 `opponent_snapshot` / `strategy_prediction` linkage
+## 3. §19 `opponent_snapshot` / `strategy_prediction` linkage
 
 **What.** A `forecast_run` record currently can't say which strategy
 recommendation was chosen (raw model pick vs. strategy-adjusted pick),
@@ -162,7 +121,7 @@ existing pattern directly.
 
 ---
 
-## 6. Asian handicap / BTTS / correct-score markets (§6)
+## 4. Asian handicap / BTTS / correct-score markets (§6)
 
 **What.** Only `h2h` and opt-in `totals` are fetched today
 (`sources/odds_api.py`).
@@ -182,7 +141,7 @@ fetch itself.
 
 ---
 
-## 7. xG / Shin's method / MOV-Elo
+## 5. xG / Shin's method / MOV-Elo
 
 **What.** Standing ablation candidates from §7, §29.4, §32.1.
 
@@ -204,7 +163,7 @@ xG — blocked on a budget decision, not effort.
 
 ---
 
-## 8. "Ask the agent" conversational entry (§67)
+## 6. "Ask the agent" conversational entry (§67)
 
 **What.** A chat-style Q&A layer over the existing forecast/strategy
 data ("Why have we gone 1-0 rather than 2-0?").
@@ -224,7 +183,7 @@ recomputing something new and possibly inconsistent) is the real work.
 
 ---
 
-## 9. WCAG accessibility audit
+## 7. WCAG accessibility audit
 
 **What.** A formal accessibility conformance pass.
 

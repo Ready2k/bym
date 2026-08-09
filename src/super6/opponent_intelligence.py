@@ -6,17 +6,22 @@ pick" cleanly separate from "what we predict". This module is the other
 half of §11, and it only ever *reads* both records after the fact; nothing
 here feeds back into `λ`, `P(score)` or any live forecast (§22).
 
-Three things a pure pick tally cannot answer on its own:
+Four things a pure pick tally cannot answer on its own:
 
 1. Whether a rival's picks lean toward or away from our model's favoured
    outcome ("favourite bias" / "upset frequency") — needs the forecast
    snapshot stored for the same fixture (`prediction_history`).
-2. How much weight a thin history deserves before it dominates a
+2. Whether that lean attaches to *team identity* rather than to fixture
+   position — §11's "favours big clubs / underrates promoted teams".
+   Reputation is taken from the bookmaker odds already persisted with
+   each forecast, never from the model's own fitted team strength, so
+   the separation above survives it (`team_bias_profiles`).
+3. How much weight a thin history deserves before it dominates a
    prediction about that rival — §11's continuous "opponent influence
    weight", the same empirical-Bayes shrinkage shape as §29.4's
    promoted-team priors (`model/priors.py`), applied to competitor
    behaviour instead of team strength. No round-14 cliff.
-3. A predictive distribution over what a specific rival is likely to pick
+4. A predictive distribution over what a specific rival is likely to pick
    next — built the same way §32.3 blends market and model probabilities
    (`model/market.py`'s result-constrained reweighting), applied to two
    pick "buckets" (matches our favourite / does not) instead of three
@@ -104,6 +109,11 @@ class JoinedPick:
     away_team: str | None
     pick: Scoreline
     model_result: str | None  # HOME/DRAW/AWAY — our own recommended pick's result
+    # The market state the forecast actually consumed (§19's odds-snapshot
+    # linkage). Both None for a fixture forecast without odds, and for any
+    # snapshot written before `market_snapshot` was persisted at all.
+    market_home_probability: float | None = None
+    market_away_probability: float | None = None
 
 
 def join_picks_with_forecasts(
@@ -135,6 +145,7 @@ def join_picks_with_forecasts(
             fixture = by_index.get(index)
             if fixture is None:
                 continue
+            market = fixture.get("market_snapshot") or {}
             joined.append(
                 JoinedPick(
                     participant=record.participant,
@@ -145,6 +156,8 @@ def join_picks_with_forecasts(
                     away_team=fixture.get("away_team"),
                     pick=pick,
                     model_result=fixture.get("result"),
+                    market_home_probability=market.get("home_probability"),
+                    market_away_probability=market.get("away_probability"),
                 )
             )
     return tuple(joined)
@@ -204,6 +217,191 @@ def league_average_favourite_rate(joined: Sequence[JoinedPick]) -> float | None:
         return None
     matches = sum(1 for pick in with_result if _result_of(pick.pick) == pick.model_result)
     return round(matches / len(with_result), 4)
+
+
+# ---------------------------------------------------------------------------
+# §11 team-specific bias: favours "big" clubs, underrates promoted teams.
+#
+# `favourite_bias_profiles` above is fixture-relative — it only knows
+# whether a pick matched *this fixture's* favourite. §11 also wants the
+# team-identity version: does a rival back Man City because it is Man
+# City, over and above what the fixture warranted?
+#
+# That needs a club-reputation signal, and the choice of signal is a
+# design decision, not a detail. The fitted model's own α would be the
+# most direct one and is deliberately *not* used: this module and
+# `league.py` are model-independent by design (see their docstrings), and
+# reaching into the forecasting core for a "big club" proxy would end
+# that separation for a convenience. Instead reputation comes from the
+# bookmaker odds already persisted alongside each forecast — externally
+# sourced, so the separation holds, and available with no new data source.
+
+BIG_CLUB_STRENGTH = 0.10  # venue-adjusted implied win probability above average
+
+
+@dataclass(frozen=True)
+class TeamReputation:
+    """How strongly the *market* rates a team, pooled over its appearances."""
+
+    team: str
+    appearances: int
+    # Mean implied win probability minus the mean for that venue, so a
+    # team is not rated "big" merely for having been drawn at home a lot:
+    # 0.0 is an average team, +0.10 is ten percentage points above one.
+    market_strength: float
+
+
+def team_market_reputations(
+    joined: Sequence[JoinedPick], *, min_appearances: int = 1
+) -> tuple[TeamReputation, ...]:
+    """Rank teams by market-implied strength, from stored odds snapshots.
+
+    Home advantage is removed by centring each appearance on the mean
+    implied win probability *for that venue* across the same corpus,
+    rather than pooling home and away probabilities as if they were
+    comparable. This is a market proxy for reputation, not a measurement
+    of it: it says what bookmakers priced, which is what a rival plausibly
+    reacts to, and it can only see teams that have appeared in a round we
+    forecast and stored odds for.
+    """
+    if min_appearances < 1:
+        raise ValueError("min_appearances must be positive")
+    # One entry per *fixture*, not per pick: `joined` repeats every fixture
+    # once per participant who picked it, which would otherwise weight a
+    # team by how many rivals happened to be imported that round.
+    fixtures: dict[tuple[int, int, int], JoinedPick] = {}
+    for item in joined:
+        if _market_pair(item) is None:
+            continue
+        fixtures[(item.season, item.round_number, item.fixture_index)] = item
+    if not fixtures:
+        return ()
+
+    appearances = list(fixtures.values())
+    average_home = sum(item.market_home_probability for item in appearances) / len(appearances)
+    average_away = sum(item.market_away_probability for item in appearances) / len(appearances)
+
+    deltas: dict[str, list[float]] = {}
+    for item in appearances:
+        deltas.setdefault(item.home_team, []).append(item.market_home_probability - average_home)
+        deltas.setdefault(item.away_team, []).append(item.market_away_probability - average_away)
+    return tuple(
+        sorted(
+            (
+                TeamReputation(team, len(values), round(sum(values) / len(values), 4))
+                for team, values in deltas.items()
+                if len(values) >= min_appearances
+            ),
+            key=lambda reputation: (-reputation.market_strength, reputation.team.casefold()),
+        )
+    )
+
+
+def _market_pair(item: JoinedPick) -> tuple[float, float] | None:
+    """This fixture's (home, away) implied win probabilities, when it has
+    both teams named and odds actually stored against it."""
+    if item.home_team is None or item.away_team is None:
+        return None
+    home, away = item.market_home_probability, item.market_away_probability
+    if home is None or away is None:
+        return None
+    return home, away
+
+
+@dataclass(frozen=True)
+class CategoryBias:
+    """A rival's picks for one class of team, against what the market priced."""
+
+    picks: int
+    backed_rate: float | None  # how often they picked that team to win
+    market_rate: float | None  # how often the market said it would
+    bias: float | None  # backed - market; positive => they back it more than priced
+    influence_weight: float
+
+
+NO_CATEGORY_EVIDENCE = CategoryBias(0, None, None, None, opponent_influence_weight(0))
+
+
+@dataclass(frozen=True)
+class TeamBiasProfile:
+    participant: str
+    big_clubs: CategoryBias
+    promoted: CategoryBias
+
+
+def team_bias_profiles(
+    joined: Sequence[JoinedPick],
+    *,
+    reputations: Sequence[TeamReputation] | None = None,
+    promoted_teams: Sequence[str] = (),
+    big_club_strength: float = BIG_CLUB_STRENGTH,
+) -> tuple[TeamBiasProfile, ...]:
+    """§11: does a rival over-back big clubs, or under-back promoted teams?
+
+    Each category is self-baselined per fixture — a rival's rate of
+    backing the team is compared against the mean probability the market
+    gave that same team winning those same fixtures. So `bias` is not "how
+    often they back Man City" (which would mostly measure how good Man
+    City is) but "how much more often than the odds warranted". Positive
+    big-club bias is §11's "favours big clubs"; *negative* promoted bias
+    is its "underrates promoted teams".
+
+    A fixture only counts toward a category when exactly one of its two
+    teams is in it — a big-club-versus-big-club fixture has no unambiguous
+    subject, and silently picking one would invent a direction the pick
+    never expressed.
+
+    Like everything else in this module, a documented heuristic baseline:
+    the counts here will be tiny for a long time, which is what
+    `influence_weight` is for. Read a bias of +0.30 over four picks as
+    "nothing yet", not as a finding.
+    """
+    if reputations is None:
+        reputations = team_market_reputations(joined)
+    big_clubs = {
+        reputation.team
+        for reputation in reputations
+        if reputation.market_strength >= big_club_strength
+    }
+    promoted = set(promoted_teams)
+
+    grouped: dict[str, list[JoinedPick]] = {}
+    for item in joined:
+        grouped.setdefault(item.participant, []).append(item)
+
+    profiles = [
+        TeamBiasProfile(
+            participant=participant,
+            big_clubs=_category_bias(picks, big_clubs),
+            promoted=_category_bias(picks, promoted),
+        )
+        for participant, picks in grouped.items()
+    ]
+    return tuple(sorted(profiles, key=lambda profile: profile.participant.casefold()))
+
+
+def _category_bias(picks: Sequence[JoinedPick], group: set[str]) -> CategoryBias:
+    samples: list[tuple[float, bool]] = []
+    for item in picks:
+        market = _market_pair(item)
+        if market is None:
+            continue
+        home_in, away_in = item.home_team in group, item.away_team in group
+        if home_in == away_in:  # neither side, or both — no single subject
+            continue
+        side = "HOME" if home_in else "AWAY"
+        samples.append((market[0] if home_in else market[1], _result_of(item.pick) == side))
+    if not samples:
+        return NO_CATEGORY_EVIDENCE
+    backed = sum(1 for _, was_backed in samples if was_backed) / len(samples)
+    priced = sum(probability for probability, _ in samples) / len(samples)
+    return CategoryBias(
+        picks=len(samples),
+        backed_rate=round(backed, 4),
+        market_rate=round(priced, 4),
+        bias=round(backed - priced, 4),
+        influence_weight=opponent_influence_weight(len(samples)),
+    )
 
 
 def league_average_profile(history: Sequence[OpponentRound]) -> OpponentProfile | None:

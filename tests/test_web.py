@@ -380,7 +380,7 @@ def test_opponent_bias_and_predicted_picks_are_wired_into_the_league_view(tmp_pa
         ),
     ]
 
-    favourite, chase_defend = _opponent_bias_payload(history, {}, config)
+    favourite, _team_bias, chase_defend = _opponent_bias_payload(history, {}, config)
     assert len(favourite) == 1
     dave = favourite[0]
     assert dave.participant == "Dave"
@@ -447,7 +447,7 @@ def test_season_strategy_payload_wires_season_state_and_mode(tmp_path):
         LeagueStanding("Dave", 1, 25, 3, 6, 1),
     )
     config = WebConfig(prediction_history_path=tmp_path / "prediction_history.json")
-    favourite, _ = _opponent_bias_payload(history, {}, config)
+    favourite, _, _ = _opponent_bias_payload(history, {}, config)
     state = {"player_name": "You", "season_rounds_total": 5}
 
     payload = _season_strategy_payload(rnd, table, history, favourite, recommendation, state, config)
@@ -468,3 +468,73 @@ def test_season_strategy_payload_is_empty_without_a_recommendation(tmp_path):
 
     rnd = Round(round_number=1, deadline_at=datetime(2026, 10, 18, 14, 0), fixtures=(Fixture("A", "B"),) * 1)
     assert _season_strategy_payload(rnd, (), [], (), None, {"player_name": "You"}, config) == {}
+
+
+def test_promoted_teams_come_from_division_membership_in_the_real_corpus():
+    """§11's promoted half must be derivable without any model output —
+    `priors.arrivals` reads which division a team played in last season
+    versus this one, nothing else."""
+    from super6.web import WebConfig, _promoted_teams
+
+    promoted = _promoted_teams(WebConfig())
+    # 2025/26's promotions into the Premier League, from the corpus alone.
+    assert {"Burnley", "Leeds", "Sunderland"} <= set(promoted)
+    assert "Arsenal" not in promoted
+
+
+def test_promoted_teams_are_empty_rather_than_fatal_without_a_corpus(tmp_path):
+    from super6.web import WebConfig, _promoted_teams
+
+    assert _promoted_teams(WebConfig(data_path=tmp_path)) == ()
+
+
+def market_fixture(home, away, home_probability, away_probability):
+    return {
+        "home_team": home, "away_team": away, "result": "HOME", "score": "2-0",
+        "market": {
+            "available": True,
+            "home_probability": home_probability,
+            "draw_probability": round(1 - home_probability - away_probability, 4),
+            "away_probability": away_probability,
+        },
+    }
+
+
+def test_team_identity_bias_reaches_the_league_payload(tmp_path):
+    """§11 big-club bias, end to end through the same helper
+    `_league_payload` calls — reputation from the stored odds snapshot,
+    never from the model's own team strength."""
+    from super6.web import WebConfig, _opponent_bias_payload
+    from super6.league import OpponentRound
+
+    prediction_path = tmp_path / "prediction_history.json"
+    # Three fixtures price Man City well above the mean home team, three
+    # price Fulham below it; the average home probability across the round
+    # is 0.60, so only Man City clears the big-club threshold.
+    prediction_history.record_snapshot(
+        2026, 1,
+        [
+            market_fixture("Man City", "Everton", 0.75, 0.10),
+            market_fixture("Man City", "Wolves", 0.75, 0.10),
+            market_fixture("Man City", "Burnley", 0.75, 0.10),
+            market_fixture("Fulham", "Brentford", 0.45, 0.25),
+            market_fixture("Fulham", "Palace", 0.45, 0.25),
+            market_fixture("Fulham", "Wolves", 0.45, 0.25),
+        ],
+        path=prediction_path,
+    )
+    config = WebConfig(prediction_history_path=prediction_path, data_path=tmp_path)
+    history = [
+        OpponentRound("Dave", 2026, 1, ((2, 0),) * 6, "2026-08-08T10:00:00+00:00"),
+    ]
+    _favourite, team_bias, _chase = _opponent_bias_payload(history, {}, config)
+    assert len(team_bias) == 1
+    assert team_bias[0].participant == "Dave"
+    # Only the three Man City fixtures have a big club in them, and Dave
+    # backed them in all three — 25pp above the priced 0.75.
+    assert team_bias[0].big_clubs.picks == 3
+    assert team_bias[0].big_clubs.bias == pytest.approx(0.25)
+    # tmp_path holds no corpus, so promoted-team status is unknown rather
+    # than assumed — the category stays empty instead of reading as "no bias".
+    assert team_bias[0].promoted.picks == 0
+    assert team_bias[0].promoted.bias is None

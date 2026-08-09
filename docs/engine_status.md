@@ -46,7 +46,7 @@ An adapter existing is **not** "live".
 ## Local decision UI
 
 ```bash
-super6 serve --round rounds/example_round.json --seasons 2019 2025 --data data
+super6 serve --round rounds/2026_27_round_01.json --seasons 2019 2025 --data data
 ```
 
 A stdlib-`http.server` single-page app (`web.py`, `web_assets/`), not
@@ -98,14 +98,26 @@ narrowed with `opponent_intelligence.py`:
     ahead": divergence rate from our model's favoured result while
     trailing vs while leading, using only standings from rounds strictly
     before the one measured (no leakage of the round's own outcome).
+  * `team_market_reputations` / `team_bias_profiles` — §11's
+    team-specific bias: does a rival back a club because of *which club
+    it is*, rather than because of the fixture? Reputation comes from the
+    bookmaker odds persisted with each forecast (`market_snapshot`),
+    centred per venue so a team isn't rated "big" for having been drawn
+    at home often, and each rival's rate of backing that team is compared
+    against the price the market put on it — so a bias figure means "more
+    often than the odds warranted", not "often". Promoted-team status
+    comes from division membership via `priors.arrivals` (which division
+    a team played in last season versus this one — no results, no model
+    output). Surfaced per rival on the Opponents page.
   All of this is a documented heuristic baseline, not fitted or
   backtested — there is no opponent-prediction corpus yet to validate
   against, so §28's ablation discipline applies here exactly as it does
   to the forecasting core.
-  Still not implemented: team-specific bias (favours large clubs,
-  underrates promoted clubs) — this needs a club-reputation reference
-  that doesn't exist independent of a specific fixture's forecast, and
-  deliberately hasn't been faked with a hard-coded "big club" list.
+  Deliberate design constraint throughout: the fitted model's own
+  attack/defence strength is *not* used as the "big club" proxy, and no
+  hard-coded club list exists. `league.py` and `opponent_intelligence.py`
+  stay independent of the forecasting core, which is why reputation is
+  taken from market odds — externally sourced — instead.
 * **Single-round strategy** (`strategy.py`, `league.recommend_strategy`)
   evaluates candidate pick sets for the current round only, using
   `strategy.noise_floor`/`preferred`'s ad hoc symmetric-margin check.
@@ -430,13 +442,12 @@ the UI row above reads ACTIVE rather than deferred:
    Quota files (`config/*_quota.json`) additionally show real calls
    landing against `api_football` and `the_odds_api` as recently as
    2026-08-09, so the gate stays exercised, not just checked once.
-4. **Partial** — the engine has run repeatedly against live sources
+4. **DONE** — the engine has run repeatedly against live sources
    (`data/prediction_history.json`, `data/submissions.json` both updated
-   2026-08-09), but `rounds/example_round.json` — despite its name —
-   currently holds real-looking 2026/27 Round 1 fixtures/odds rather than
-   a config file that's been renamed off the word "example". Worth a
-   dedicated real round file once Sky publishes one, so this isn't
-   ambiguous to the next reader.
+   2026-08-09) against `rounds/2026_27_round_01.json`, which holds the
+   real 2026/27 Round 1 fixtures/odds. Renamed 2026-08-09 from
+   `example_round.json`: every file in `rounds/` is now a real round named
+   `<season>_round_<NN>.json`, so nothing there reads as a template.
 
 §37+ UI work is under way against the frozen contracts in
 `super6/api/contracts.py` — see "Local decision UI" above for what's

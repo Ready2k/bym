@@ -28,7 +28,7 @@ from .sources.registry import load_registry
 
 
 ASSET_DIR = Path(__file__).with_name("web_assets")
-DEFAULT_ROUND = Path("rounds/example_round.json")
+DEFAULT_ROUND = Path("rounds/2026_27_round_01.json")
 
 
 @dataclass(frozen=True)
@@ -958,11 +958,12 @@ def _league_payload(
             rank=1 + sum(1 for row in table if row.points > 0),
             points=0, exact_scores=0, fixtures_scored=0, rounds_scored=0,
         ))
-    favourite, chase_defend = _opponent_bias_payload(history, results, config)
+    favourite, team_bias, chase_defend = _opponent_bias_payload(history, results, config)
     payload = {
         "standings": [asdict(row) for row in table],
         "profiles": [asdict(profile) for profile in opponent_profiles(history)],
         "favourite_bias": [asdict(item) for item in favourite],
+        "team_bias": [asdict(item) for item in team_bias],
         "chase_defend": [asdict(item) for item in chase_defend],
         "predicted_picks": _predicted_picks_payload(recommendation, history, favourite, config),
         "finish_first": None,
@@ -1099,15 +1100,49 @@ def _season_strategy_payload(
 
 
 def _opponent_bias_payload(history, results, config: WebConfig):
-    """§11 favourite-bias and chase/defend tendencies, joined against our own
-    stored forecasts (`opponent_intelligence.py`). Returns empty tuples
-    rather than raising when there is nothing to join yet."""
+    """§11 favourite-bias, team-identity bias and chase/defend tendencies,
+    joined against our own stored forecasts (`opponent_intelligence.py`).
+    Returns empty tuples rather than raising when there is nothing to join
+    yet."""
     from . import opponent_intelligence as oi
 
     joined = oi.join_picks_with_forecasts(history, prediction_path=config.prediction_history_path)
     favourite = oi.favourite_bias_profiles(joined)
+    team_bias = oi.team_bias_profiles(joined, promoted_teams=_promoted_teams(config))
     chase_defend = oi.chase_defend_tendencies(history, joined, results)
-    return favourite, chase_defend
+    return favourite, team_bias, chase_defend
+
+
+def _promoted_teams(config: WebConfig) -> tuple[str, ...]:
+    """Teams newly arrived in their division from below, for §11's
+    "underrates promoted teams".
+
+    Division membership only — `priors.arrivals` derives this from which
+    division a team played in last season versus this one, never from
+    results — so it stays public pre-season information and keeps
+    `opponent_intelligence` free of any model dependency.
+
+    "This season" means the most recent season present in the corpus, so
+    between a season's promotions and its first fetched fixtures this
+    answers for the season just gone. That resolves itself with no code
+    change once `super6 fetch` pulls the new season down; until then the
+    lag is the honest answer rather than a guess at who went up.
+    """
+    from .model.priors import arrivals
+
+    seasons = list(range(config.seasons[0], config.seasons[1] + 1))
+    try:
+        matches = load_matches(config.data_path, seasons, config.divisions, fetch=False)
+    except FileNotFoundError:
+        return ()
+    latest = int(matches["season"].max())
+    promoted = {
+        team
+        for division in config.divisions
+        for team, direction in arrivals(matches, division, latest).items()
+        if direction == "below"
+    }
+    return tuple(sorted(promoted))
 
 
 def _fixture_favoured_result(fixture) -> str:

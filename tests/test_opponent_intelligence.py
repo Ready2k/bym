@@ -245,3 +245,152 @@ def test_chase_defend_is_empty_without_at_least_one_earlier_round(tmp_path):
     # Round 1 has no earlier round to compute standings from, so nothing
     # can be classified as trailing/leading yet.
     assert oi.chase_defend_tendencies(history, joined, {}) == ()
+
+
+# ---------------------------------------------------------------------------
+# §11 team-identity bias: big clubs / promoted teams
+
+
+def joined_pick(participant, index, home, away, pick, *, home_p, away_p, round_number=1):
+    return oi.JoinedPick(
+        participant=participant, season=2026, round_number=round_number,
+        fixture_index=index, home_team=home, away_team=away, pick=pick,
+        model_result="HOME", market_home_probability=home_p,
+        market_away_probability=away_p,
+    )
+
+
+def test_market_reputation_centres_out_home_advantage():
+    # X only ever plays at home, Y only ever away, and both are priced
+    # exactly at the average for their venue — so both are average teams.
+    # Pooling home and away probabilities together would instead rank X
+    # far above Y purely on venue.
+    joined = (
+        joined_pick("Dave", 0, "X", "P", (1, 0), home_p=0.5, away_p=0.25),
+        joined_pick("Dave", 1, "X", "Q", (1, 0), home_p=0.5, away_p=0.25),
+        joined_pick("Dave", 2, "R", "Y", (1, 0), home_p=0.5, away_p=0.25),
+        joined_pick("Dave", 3, "S", "Y", (1, 0), home_p=0.5, away_p=0.25),
+    )
+    strength = {r.team: r.market_strength for r in oi.team_market_reputations(joined)}
+    assert strength["X"] == pytest.approx(0.0)
+    assert strength["Y"] == pytest.approx(0.0)
+
+
+def test_market_reputation_ranks_a_stronger_team_above_a_weaker_one():
+    joined = (
+        joined_pick("Dave", 0, "Arsenal", "Everton", (1, 0), home_p=0.70, away_p=0.15),
+        joined_pick("Dave", 1, "Everton", "Arsenal", (1, 0), home_p=0.35, away_p=0.45),
+    )
+    reputations = oi.team_market_reputations(joined)
+    assert [r.team for r in reputations] == ["Arsenal", "Everton"]
+    assert reputations[0].market_strength > 0 > reputations[1].market_strength
+    assert reputations[0].appearances == 2
+
+
+def test_market_reputation_counts_each_fixture_once_however_many_rivals_picked_it():
+    one_rival = (joined_pick("Dave", 0, "Arsenal", "Everton", (1, 0), home_p=0.7, away_p=0.15),)
+    three_rivals = one_rival + (
+        joined_pick("Sam", 0, "Arsenal", "Everton", (2, 0), home_p=0.7, away_p=0.15),
+        joined_pick("Ann", 0, "Arsenal", "Everton", (0, 0), home_p=0.7, away_p=0.15),
+    )
+    assert oi.team_market_reputations(one_rival) == oi.team_market_reputations(three_rivals)
+
+
+def test_market_reputation_ignores_fixtures_with_no_stored_odds():
+    joined = (
+        oi.JoinedPick("Dave", 2026, 1, 0, "Arsenal", "Everton", (1, 0), "HOME"),
+    )
+    assert oi.team_market_reputations(joined) == ()
+
+
+def test_team_bias_measures_backing_against_the_price_not_the_raw_rate():
+    # Every fixture prices Arsenal at 0.60 to win. Dave backs them in 3 of
+    # 4, Sam in 1 of 4 — so Dave over-backs and Sam under-backs the same
+    # club, which a raw "backs Arsenal 75% of the time" could not say.
+    joined = tuple(
+        joined_pick("Dave", index, "Arsenal", f"Opp{index}", pick, home_p=0.60, away_p=0.20)
+        for index, pick in enumerate([(2, 0), (1, 0), (3, 1), (0, 1)])
+    ) + tuple(
+        joined_pick("Sam", index, "Arsenal", f"Opp{index}", pick, home_p=0.60, away_p=0.20)
+        for index, pick in enumerate([(2, 0), (1, 1), (0, 1), (1, 2)])
+    )
+    profiles = {
+        profile.participant: profile
+        for profile in oi.team_bias_profiles(
+            joined, reputations=(oi.TeamReputation("Arsenal", 4, 0.25),)
+        )
+    }
+    dave = profiles["Dave"].big_clubs
+    assert (dave.picks, dave.backed_rate, dave.market_rate) == (4, 0.75, 0.6)
+    assert dave.bias == pytest.approx(0.15)  # favours big clubs
+    assert profiles["Sam"].big_clubs.bias == pytest.approx(-0.35)  # avoids them
+    # Nobody was flagged promoted, so that half stays honestly empty.
+    assert profiles["Dave"].promoted == oi.NO_CATEGORY_EVIDENCE
+
+
+def test_underrating_promoted_teams_shows_as_a_negative_bias():
+    joined = tuple(
+        joined_pick("Dave", index, f"Opp{index}", "Sunderland", (2, 0), home_p=0.5, away_p=0.20)
+        for index in range(4)
+    )
+    profile = oi.team_bias_profiles(joined, promoted_teams=("Sunderland",))[0]
+    assert profile.promoted.picks == 4
+    assert profile.promoted.backed_rate == 0.0
+    assert profile.promoted.bias == pytest.approx(-0.20)
+
+
+def test_team_bias_skips_fixtures_without_exactly_one_team_in_the_category():
+    # Big club v big club has no unambiguous subject; neither does a
+    # fixture with no big club at all.
+    joined = (
+        joined_pick("Dave", 0, "Arsenal", "Man City", (2, 0), home_p=0.45, away_p=0.30),
+        joined_pick("Dave", 1, "Burnley", "Everton", (1, 0), home_p=0.40, away_p=0.35),
+    )
+    reputations = (oi.TeamReputation("Arsenal", 1, 0.30), oi.TeamReputation("Man City", 1, 0.30))
+    profile = oi.team_bias_profiles(joined, reputations=reputations)[0]
+    assert profile.big_clubs == oi.NO_CATEGORY_EVIDENCE
+
+
+def test_team_bias_reads_market_probabilities_off_the_stored_snapshot(tmp_path):
+    forecast_path = tmp_path / "history.json"
+    fixtures = [
+        {
+            "home_team": "Arsenal", "away_team": f"Opp{index}", "result": "HOME",
+            "score": "1-0",
+            "market": {
+                "available": True, "home_probability": 0.6,
+                "draw_probability": 0.2, "away_probability": 0.2,
+            },
+        }
+        for index in range(6)
+    ]
+    prediction_history.record_snapshot(2026, 1, fixtures, path=forecast_path)
+    history = (opponent("Dave", 2026, 1, ((1, 0),) * 6),)
+    joined = oi.join_picks_with_forecasts(history, prediction_path=forecast_path)
+    assert joined[0].market_home_probability == 0.6
+    assert joined[0].market_away_probability == 0.2
+    profile = oi.team_bias_profiles(
+        joined, reputations=(oi.TeamReputation("Arsenal", 6, 0.3),)
+    )[0]
+    assert profile.big_clubs.picks == 6
+    assert profile.big_clubs.bias == pytest.approx(0.4)
+
+
+def test_team_bias_never_reads_the_fitted_model():
+    """§11's club-reputation signal is market-sourced by design — this
+    module must not acquire a dependency on the forecasting core."""
+    import ast
+    from pathlib import Path
+
+    source = Path(oi.__file__).read_text()
+    imported = {
+        node.module or ""
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.ImportFrom)
+    } | {
+        alias.name
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.Import)
+        for alias in node.names
+    }
+    assert not any("model" in name.split(".") for name in imported), imported
