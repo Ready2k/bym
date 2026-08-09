@@ -14,9 +14,11 @@ from super6.web import (
     load_ui_state,
     mark_round_entered,
     ollama_status,
+    extractor_settings_for_ui,
     save_pick_overrides,
     save_results,
     save_settings,
+    web_extractor_config,
 )
 from super6 import prediction_history
 from super6.prospective import load_ledger
@@ -136,6 +138,57 @@ def test_ollama_is_not_probed_when_the_optional_extractor_is_disabled(monkeypatc
     health, config = ollama_status()
     assert health is None
     assert config.kind == "null"
+
+
+def test_ollama_can_be_configured_and_disabled_from_web_settings(tmp_path):
+    config = configured_round(tmp_path)
+    saved = save_settings(
+        {
+            "knowledge_extractor": {
+                "enabled": True,
+                "base_url": "http://ollama.local:11434/",
+                "model": "llama3.1:8b",
+                "mode": "shadow",
+            }
+        },
+        config,
+    )
+    extractor = web_extractor_config(config)
+    assert extractor.kind == "ollama"
+    assert extractor.base_url == "http://ollama.local:11434"
+    assert extractor.model == "llama3.1:8b"
+    assert saved["settings"]["knowledge_extractor"]["enabled"] is True
+
+    save_settings(
+        {"knowledge_extractor": {
+            "enabled": False,
+            "base_url": "http://ollama.local:11434",
+            "model": "llama3.1:8b",
+            "mode": "shadow",
+        }},
+        config,
+    )
+    assert web_extractor_config(config).kind == "null"
+
+
+def test_ollama_web_settings_reject_credentials_in_the_url(tmp_path):
+    with pytest.raises(ValueError, match="without credentials"):
+        save_settings(
+            {"knowledge_extractor": {
+                "enabled": True,
+                "base_url": "http://user:secret@ollama.local:11434",
+                "model": "llama3.1",
+                "mode": "shadow",
+            }},
+            configured_round(tmp_path),
+        )
+
+
+def test_ollama_web_settings_never_expose_environment_url_credentials(tmp_path, monkeypatch):
+    monkeypatch.setenv("CLAIM_EXTRACTOR", "ollama")
+    monkeypatch.setenv("OLLAMA_BASE_URL", "http://user:secret@ollama.local:11434")
+    settings = extractor_settings_for_ui(configured_round(tmp_path))
+    assert settings["base_url"] == "http://ollama.local:11434"
 
 
 def test_manual_entry_freezes_prospective_arms_and_results_score_them(tmp_path):
@@ -289,3 +342,62 @@ def test_predicted_picks_is_empty_without_a_recommendation_or_history(tmp_path):
 
     config = WebConfig(prediction_history_path=tmp_path / "prediction_history.json")
     assert _predicted_picks_payload(None, [], (), config) == {}
+
+
+def test_season_strategy_payload_wires_season_state_and_mode(tmp_path):
+    """§12-13: with `season_rounds_total` set equal to the current round
+    number (rounds_remaining == 1), the synthetic-round horizon is empty
+    and no historical corpus is ever touched — this isolates the wiring
+    (state/history/table -> season_simulation) from the cost of fitting a
+    real corpus, which season_simulation.py's own tests already cover."""
+    from datetime import datetime
+
+    from super6.config import FROZEN_PHASE1_V1
+    from super6.league import LeagueStanding, OpponentRound
+    from super6.model import dixon_coles
+    from super6.recommend import recommend_round
+    from super6.round import Fixture, Round
+    from super6.web import _opponent_bias_payload, _season_strategy_payload
+
+    from test_dixon_coles import synthetic_matches
+
+    params = dixon_coles.fit(synthetic_matches(), xi=0.0)
+    rnd = Round(
+        round_number=5,
+        deadline_at=datetime(2026, 10, 18, 14, 0),
+        fixtures=(
+            Fixture("Strong", "Weak"), Fixture("Weak", "Strong"),
+            Fixture("Middling A", "Middling B"), Fixture("Middling B", "Middling A"),
+            Fixture("Strong", "Middling A"), Fixture("Weak", "Middling B"),
+        ),
+    )
+    recommendation = recommend_round(params, rnd, FROZEN_PHASE1_V1)
+    max_ev = tuple((f.pick_home, f.pick_away) for f in recommendation.fixtures)
+
+    history = [OpponentRound("Dave", 2026, 5, max_ev, "t")]
+    table = (
+        LeagueStanding("You", 2, 20, 2, 6, 1),
+        LeagueStanding("Dave", 1, 25, 3, 6, 1),
+    )
+    config = WebConfig(prediction_history_path=tmp_path / "prediction_history.json")
+    favourite, _ = _opponent_bias_payload(history, {}, config)
+    state = {"player_name": "You", "season_rounds_total": 5}
+
+    payload = _season_strategy_payload(rnd, table, history, favourite, recommendation, state, config)
+    assert payload["season_state"]["points_gap"] == -5
+    assert payload["season_state"]["rounds_remaining"] == 1
+    assert payload["mode"] in {"NORMAL", "ATTACK", "DEFEND"}
+    assert len(payload["picks"]) == 6
+    assert payload["candidates"]
+    assert any(c["name"] == "MAX_EV" for c in payload["candidates"])
+
+
+def test_season_strategy_payload_is_empty_without_a_recommendation(tmp_path):
+    from super6.web import _season_strategy_payload
+
+    config = WebConfig(prediction_history_path=tmp_path / "prediction_history.json")
+    from super6.round import Fixture, Round
+    from datetime import datetime
+
+    rnd = Round(round_number=1, deadline_at=datetime(2026, 10, 18, 14, 0), fixtures=(Fixture("A", "B"),) * 1)
+    assert _season_strategy_payload(rnd, (), [], (), None, {"player_name": "You"}, config) == {}

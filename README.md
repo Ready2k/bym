@@ -110,7 +110,8 @@ src/super6/
 ├── verify.py            `super6 verify-live` — per-source live checks
 ├── league.py             opponent history, league table, single-round strategy sim (§11-13)
 ├── opponent_intelligence.py  favourite bias, influence weight, predicted picks, chase/defend (§11)
-├── strategy.py           candidate generation + significance test for league.py
+├── strategy.py           single-round candidate generation + CORRELATE (DEFEND) candidate
+├── season_simulation.py  season Monte Carlo: season state, Round Opportunity Model, paired test, mode labels (§12-13)
 ├── db.py                 SQLite schema (jobs, availability, evidence, claims, …)
 ├── secrets.py            credential loading, hostname-only in logs/provenance
 ├── web.py + web_assets/  local decision UI (`super6 serve`, stdlib http.server)
@@ -168,19 +169,27 @@ deliberately no code path from a news/availability event to a `λ`
 adjustment yet — that is the still-deferred Increment 5 player-impact
 model).
 
-**Phase 3 (beat the mates) has started.** Opponent-pick import, league
-standings and opponent profiles (§11) are built, including model-relative
-behaviour (`opponent_intelligence.py`): favourite bias/upset rate, a
-continuous Bayesian opponent-influence weight, a predicted-pick
-distribution for the current round's fixtures (§49.3), and chase/defend
-tendencies relative to private-league standing. `league.recommend_strategy`
-picks between candidate score sets by simulated chance of finishing
-first — but only for **the current round** against current standings, not
-the season-long Monte Carlo simulator §13 specifies (no
-known/unknown-future-round split, no Round Opportunity Model, no
-`ATTACK`/`DEFEND` labels, no 100 Club annotation). Treat §13's full season
-simulator as still to be built; what exists today is a single-round
-approximation of it, now with a richer opponent model feeding it.
+**Phase 3 (beat the mates) is substantially built.** Opponent-pick
+import, league standings and opponent profiles (§11) are built, including
+model-relative behaviour (`opponent_intelligence.py`): favourite
+bias/upset rate, a continuous Bayesian opponent-influence weight, a
+predicted-pick distribution for the current round's fixtures (§49.3), and
+chase/defend tendencies relative to private-league standing.
+`season_simulation.py` adds §13's actual season-length Monte Carlo on top:
+§13.1 season state, a §13.2 Round Opportunity Model for the rounds Sky
+hasn't published yet (six fixtures sampled from the historical corpus,
+forecast with current parameters), §13.3's paired significance test
+(`D_i = Win_i(candidate) - Win_i(baseline)`, accepted only when the lower
+confidence bound clears zero and a configurable minimum gain), and
+`NORMAL`/`ATTACK`/`DEFEND` labels attached to whichever candidate the test
+actually accepts — including a new `strategy.build_correlate_candidate`
+("match the field's likely picks") giving DEFEND a genuine candidate to
+choose, not just a label with nothing behind it. `league.recommend_strategy`
+(single-round only) is kept alongside it as the fast path; both are shown
+on the League page. Still missing: the full §13.2 characteristic-matching
+for synthetic rounds (favourite strength, home/away balance, ...) and the
+§12.1 100 Club annotation — there is no source of national-entrant pick
+data to estimate scoreline rarity from.
 
 **Measurement is prospective** through 2026/27 —
 [results/prospective_2026_27.md](results/prospective_2026_27.md). No Phase
@@ -219,10 +228,14 @@ Per the phase gates in §23 and the ablation rule in §28:
   nothing yet converts one into a model parameter change; gated behind
   `QUANTITATIVE_IMPACT_MODEL_ENABLED = False` until a fitted, versioned
   impact model earns its place under §28.
-- **Season Monte Carlo simulator, Round Opportunity Model, ATTACK/DEFEND
-  labels** (§12-13), **100 Club annotation** (§12.1) — the strategy engine
-  that exists today (`strategy.py`, `league.recommend_strategy`) only
-  compares candidates for the current round, not the remaining season.
+- **Full §13.2 Round Opportunity Model characteristic-matching**
+  (favourite strength, home/away balance, competitiveness, goal totals) —
+  `season_simulation.sample_synthetic_round` draws fixtures from the
+  historical corpus but doesn't yet match them to observed Super 6
+  characteristics beyond "a competition the model knows"; a documented
+  follow-on gated by §28, not assumed to matter until shown to.
+- **100 Club annotation** (§12.1) — no source of national-entrant pick
+  data exists to estimate scoreline rarity from.
 - **Team-specific opponent bias** (favours large clubs, underrates
   promoted clubs, §11) — needs a club-reputation reference independent of
   any one fixture's forecast; not faked with a hard-coded club list.

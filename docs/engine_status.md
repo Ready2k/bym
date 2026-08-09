@@ -33,8 +33,9 @@ An adapter existing is **not** "live".
 | API read-model contracts | BUILT, TESTED OFFLINE | frozen for the future UI |
 | **UI (§37+)** | BUILT, TESTED OFFLINE, **ACTIVE** | see "Local decision UI" below — no longer deferred |
 | Opponent history + profiles (§11) | BUILT, TESTED OFFLINE, ACTIVE | descriptive + model-relative — see caveat below |
-| Opponent-aware strategy (§12-14) | BUILT, TESTED OFFLINE, ACTIVE | **current round only** — see caveat below |
-| **Season Monte Carlo simulator (§13.1-13.3), Round Opportunity Model (§13.2), ATTACK/DEFEND labels (§12), 100 Club annotation (§12.1)** | **DEFERRED — not started** | see caveat below |
+| Opponent-aware strategy, single round (§12-14) | BUILT, TESTED OFFLINE, ACTIVE | current round only, kept alongside the season simulator below |
+| Season Monte Carlo simulator (§13, `season_simulation.py`) | BUILT, TESTED OFFLINE, ACTIVE | Round Opportunity Model, paired significance test, ATTACK/DEFEND/NORMAL labels — see caveat below |
+| **100 Club annotation (§12.1)** | **DEFERRED — not started** | no national-entrant data exists to estimate rarity from |
 | **Increment 5 player-impact model (evidence → λ)** | **DEFERRED — not started** | deliberate, gated on `QUANTITATIVE_IMPACT_MODEL_ENABLED` |
 
 ## Local decision UI
@@ -100,22 +101,63 @@ narrowed with `opponent_intelligence.py`:
   underrates promoted clubs) — this needs a club-reputation reference
   that doesn't exist independent of a specific fixture's forecast, and
   deliberately hasn't been faked with a hard-coded "big club" list.
-* **Strategy** (`strategy.py`, `league.recommend_strategy`) evaluates
-  candidate pick sets for the **current round only** against the current
-  standings — not the season-long Monte Carlo in §13 (no known/unknown
-  future-round split, no Round Opportunity Model, no cached "future world"
-  common-random-numbers architecture, no `rounds_remaining`/
-  `exact_score_gap` season state). Candidate generation stacks single-fixture
-  deviations greedily rather than §13.3's top-N-per-fixture portfolio
-  search. Output uses `NORMAL`/`DIFFERENTIATE` labels, not §12's
-  `ATTACK`/`DEFEND`.
-* **100 Club** (§12.1) has no code path at all.
+* **Single-round strategy** (`strategy.py`, `league.recommend_strategy`)
+  evaluates candidate pick sets for the current round only, using
+  `strategy.noise_floor`/`preferred`'s ad hoc symmetric-margin check.
+  Still there, unchanged, as the fast path the season simulator's UI panel
+  sits alongside — see `_strategy_payload` vs `_season_strategy_payload`
+  in `web.py`.
+* **Season Monte Carlo simulator** (`season_simulation.py`, new) adds the
+  season-length dimension §13 actually specifies:
+  * `season_state` — §13.1's `points_gap`/`exact_score_gap`/
+    `rounds_remaining`, computed from standings plus a user-supplied
+    season length (Settings → Season; Sky never publishes this, so it
+    stays a manual estimate, `season_rounds_total`, default 38).
+  * `sample_synthetic_round` — §13.2's Round Opportunity Model: six
+    fixtures drawn from the historical corpus and forecast with the
+    *current* fitted parameters, standing in for a round Sky hasn't
+    selected yet. Deliberately simpler than §13.2's full description —
+    drawn from competitions the model already knows, not yet matched to
+    observed Super 6 characteristics (favourite strength, home/away
+    balance, competitiveness, goal totals). That richer matching is a
+    documented follow-on, gated by §28 like everything else here.
+  * `simulate_remaining_season` — combines the current round (real
+    fixtures, candidate-specific) with a representative subset of future
+    rounds (shared across every candidate — §13.3's common random
+    numbers), simulating each known opponent's pick per fixture per
+    simulated world from `opponent_intelligence.predict_pick_distribution`
+    (falling back to our own model's matrix with no evidence), with the
+    season's actual points-then-exact-score tiebreak (§2.1), not points
+    alone.
+  * `paired_comparison`/`PairedComparison.accepts` — §13.3's actual
+    mechanism: `D_i = Win_i(candidate) - Win_i(baseline)`, `ΔP = mean(D)`,
+    accepted only when the paired confidence interval's lower bound
+    exceeds zero **and** clears `configurable_minimum_gain`. Replaces the
+    single-round path's `noise_floor` symmetric-margin approximation for
+    every candidate the season simulator itself ranks.
+  * `recommend_season_strategy` — `NORMAL`/`ATTACK`/`DEFEND` as labels on
+    whichever candidate the paired test actually accepts, never a
+    hard-coded gap/rounds threshold. `ATTACK` names an accepted
+    differentiation win; `DEFEND` names an accepted
+    `strategy.build_correlate_candidate` win — a new candidate type that
+    picks the field's single most-likely scoreline per fixture (pooled
+    opponent predictions), the variance-reducing move §12 describes for a
+    leader, which no candidate generator produced before this.
+  Performance cap, stated rather than hidden: a web page load samples at
+  most `MAX_SYNTHETIC_ROUNDS = 12` future rounds and 1,000 simulated
+  worlds, not the full ~38-round season — only the current round's own
+  contribution differs between candidates, so a representative subset is
+  enough to compare them; `season_simulation.py`'s own functions accept
+  any horizon and are uncapped when called directly (CLI/tests).
+* **100 Club** (§12.1) still has no code path — there is no source of
+  national-entrant pick data to estimate scoreline rarity from, and
+  nothing here has invented one.
 
-None of this is incorrect where it exists — the significance test
-(`strategy.noise_floor`/`preferred`) correctly refuses a differential
-inside Monte Carlo sampling error — it is simply a single-round
-approximation of the season-level system the spec describes. Treat §13's
-full simulator as still to be built.
+The single-round path is not wrong where it still runs — it is now
+genuinely superseded by the season simulator wherever there is a
+`recommendation` and at least one other participant in the standings; the
+League page shows both panels, labelled by scope, so the difference is
+visible rather than silently swapped.
 
 ## Ollama
 
@@ -277,7 +319,7 @@ the run, so a forecast is produced with no credentials at all.
 ## Tests
 
 ```text
-496 passing, 6 skipped (live)
+521 passing, 6 skipped (live)
 ```
 
 Network access is blocked at the socket layer for the entire ordinary

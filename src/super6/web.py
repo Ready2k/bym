@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import mimetypes
+import os
 import re
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
@@ -80,6 +81,11 @@ DEFAULT_UI_STATE = {
     "notification_delivery": {"in_app": True, "email": False},
     "notification_email": "",
     "budget": {"target_monthly": 10, "hard_ceiling": 40},
+    # §13.1 season state / §13 season simulator: Sky does not publish how
+    # many Super 6 rounds a season holds, so this stays a plain user
+    # setting rather than something derived — a reasonable Premier League
+    # default, editable once the real cadence for the season is known.
+    "season_rounds_total": 38,
     "overrides": {},
     "opponents": {},
     "results": {},
@@ -122,7 +128,51 @@ def _scoreline(value: str) -> tuple[int, int]:
     return home, away
 
 
-def ollama_status() -> tuple[object | None, object]:
+def web_extractor_config(config: WebConfig):
+    """Resolve the extractor selected in the web UI, else retain env support.
+
+    The UI state deliberately wins only once a user has saved an extractor
+    preference. Existing local deployments configured with environment
+    variables therefore keep working without a migration.
+    """
+    from .knowledge.config import ExtractorConfig, ExtractorKind, from_env
+
+    setting = load_ui_state(config.ui_state_path).get("knowledge_extractor")
+    if not isinstance(setting, dict) or not setting.get("configured"):
+        return from_env()
+    return ExtractorConfig(
+        kind=(ExtractorKind.OLLAMA.value if setting.get("enabled") else ExtractorKind.NULL.value),
+        mode=setting["mode"],
+        base_url=setting["base_url"],
+        model=setting["model"],
+    )
+
+
+def extractor_settings_for_ui(config: WebConfig) -> dict:
+    """Return the effective, safe-to-display extractor preferences."""
+    state = load_ui_state(config.ui_state_path)
+    setting = state.get("knowledge_extractor")
+    effective = web_extractor_config(config)
+    parsed = urlparse(effective.base_url)
+    try:
+        port = parsed.port
+    except ValueError:
+        port = None
+    if parsed.hostname:
+        host = f"[{parsed.hostname}]" if ":" in parsed.hostname else parsed.hostname
+        safe_base_url = f"{parsed.scheme}://{host}{f':{port}' if port else ''}{parsed.path}"
+    else:
+        safe_base_url = ""
+    return {
+        "configured": bool(isinstance(setting, dict) and setting.get("configured")),
+        "enabled": effective.kind == "ollama",
+        "base_url": safe_base_url.rstrip("/"),
+        "model": effective.model,
+        "mode": effective.mode,
+    }
+
+
+def ollama_status(extractor_config=None) -> tuple[object | None, object]:
     """Return configured extractor health without probing an unused host.
 
     A default/null extractor has no Ollama dependency at all. Calling a
@@ -131,7 +181,7 @@ def ollama_status() -> tuple[object | None, object]:
     """
     from .knowledge.config import ExtractorKind, from_env
 
-    config = from_env()
+    config = extractor_config or from_env()
     if config.kind != ExtractorKind.OLLAMA.value:
         return None, config
     from .knowledge.ollama import check_health
@@ -291,13 +341,20 @@ def _dashboard(config: WebConfig):
     )
     router = _fit_router(matches)
     known_teams = _known_teams(matches)
-    ollama_health, extractor_config = ollama_status()
+    extractor_config = web_extractor_config(config)
+    ollama_health, extractor_config = ollama_status(extractor_config)
     season = _season_for(rnd)
     generated_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
     with db.connect(config.database_path) as conn:
+        from .knowledge.config import build_extractor
+
         result = run_engine(
             conn, rnd, router, season=season, submission_path=config.submissions_path,
             known_teams=known_teams, corpus=_corpus_label(config.divisions),
+            tavily_api_key=os.environ.get("TAVILY_API_KEY"),
+            extractor=build_extractor(extractor_config),
+            extractor_config=extractor_config,
+            run_knowledge=extractor_config.kind == "ollama",
         )
         health = service.build_system_health(
             conn,
@@ -406,7 +463,7 @@ def _dashboard(config: WebConfig):
                 "league_name", "player_name", "notifications", "notification_delivery",
                 "notification_email", "budget",
             )
-        },
+        } | {"knowledge_extractor": extractor_settings_for_ui(config)},
         "teams": sorted(known_teams),
     }, result
 
@@ -633,11 +690,50 @@ def save_settings(payload: dict, config: WebConfig) -> dict:
                 state["budget"][key] = amount
         if state["budget"]["hard_ceiling"] < state["budget"]["target_monthly"]:
             raise ValueError("Hard ceiling cannot be lower than the monthly target.")
+    if "season_rounds_total" in payload:
+        total = int(payload["season_rounds_total"])
+        if not 1 <= total <= 60:
+            raise ValueError("Season length must be between 1 and 60 rounds.")
+        state["season_rounds_total"] = total
+    if "knowledge_extractor" in payload:
+        extractor = payload["knowledge_extractor"]
+        if not isinstance(extractor, dict):
+            raise ValueError("LLM settings must be an object.")
+        enabled = extractor.get("enabled")
+        if not isinstance(enabled, bool):
+            raise ValueError("Choose whether to enable the Ollama extractor.")
+        mode = str(extractor.get("mode", "")).lower()
+        if mode not in {"shadow", "active"}:
+            raise ValueError("Extractor mode must be Shadow or Active.")
+        base_url = str(extractor.get("base_url", "")).strip()
+        parsed = urlparse(base_url)
+        if (
+            len(base_url) > 512
+            or parsed.scheme not in {"http", "https"}
+            or not parsed.hostname
+            or parsed.username
+            or parsed.password
+            or parsed.query
+            or parsed.fragment
+        ):
+            raise ValueError(
+                "Enter an Ollama base URL such as http://localhost:11434 (without credentials)."
+            )
+        model = str(extractor.get("model", "")).strip()
+        if not model or len(model) > 256 or any(char.isspace() for char in model):
+            raise ValueError("Enter an Ollama model name without spaces.")
+        state["knowledge_extractor"] = {
+            "configured": True,
+            "enabled": enabled,
+            "base_url": base_url.rstrip("/"),
+            "model": model,
+            "mode": mode,
+        }
     save_ui_state(state, config.ui_state_path)
     return {"settings": {key: state[key] for key in (
         "league_name", "player_name", "notifications", "notification_delivery",
-        "notification_email", "budget",
-    )}}
+        "notification_email", "budget", "season_rounds_total",
+    )} | {"knowledge_extractor": extractor_settings_for_ui(config)}}
 
 
 def import_opponent(payload: dict, config: WebConfig) -> dict:
@@ -838,7 +934,121 @@ def _league_payload(
         },
     }
     payload.update(_strategy_payload(rnd, table, history, state, recommendation))
+    payload["season_strategy"] = _season_strategy_payload(
+        rnd, table, history, favourite, recommendation, state, config
+    )
     return payload
+
+
+MAX_SYNTHETIC_ROUNDS = 12
+SEASON_SIMULATIONS = 1000
+
+
+def _season_strategy_payload(
+    rnd: Round, table, history, favourite, recommendation, state: dict, config: WebConfig,
+) -> dict:
+    """§12-13 season-length strategy — a genuine season Monte Carlo
+    (`season_simulation.py`) layered on top of `_strategy_payload`'s
+    single-round view above. Returns `{}` (never a half-computed season
+    estimate) whenever there isn't enough to run one: no recommendation
+    yet, no rivals in the table, or the configured season has no rounds
+    left.
+
+    Performance note: only the *current* round's own contribution differs
+    between candidates; every further round contributes the same shared
+    noise regardless of which one is being tested. Simulating the full
+    remaining season (up to ~38 rounds) at every page load is therefore
+    unnecessary — a representative subset (`MAX_SYNTHETIC_ROUNDS`) stands
+    in for the unknown-round horizon. This is a documented performance
+    cap, not a claim that fewer rounds actually remain.
+    """
+    from . import opponent_intelligence as oi
+    from . import season_simulation as ss
+    from . import strategy
+    from .league import opponent_profiles
+
+    if recommendation is None:
+        return {}
+    player = state["player_name"]
+    rounds_remaining = int(state.get("season_rounds_total", 38)) - rnd.round_number + 1
+    if rounds_remaining < 1:
+        return {}
+
+    season_state = ss.season_state(table, player, rounds_remaining)
+    if season_state is None:
+        return {}
+
+    profiles = {profile.participant: profile for profile in opponent_profiles(history)}
+    average = oi.league_average_profile(history)
+    joined = oi.join_picks_with_forecasts(history, prediction_path=config.prediction_history_path)
+    average_rate = oi.league_average_favourite_rate(joined)
+    bias_by_participant = {item.participant: item for item in favourite}
+
+    current_round_picks = [
+        record for record in history
+        if record.season == _season_for(rnd) and record.round_number == rnd.round_number
+        and record.participant != player
+    ]
+    if not any(row.participant != player for row in table):
+        return {}
+
+    candidates = list(strategy.build_candidates(recommendation, current_round_picks))
+    correlate = strategy.build_correlate_candidate(
+        recommendation, profiles, bias_by_participant, average, average_rate
+    )
+    if correlate is not None and correlate.picks not in {c.picks for c in candidates}:
+        candidates.append(correlate)
+
+    synthetic_rounds: list = []
+    extra_rounds = min(rounds_remaining - 1, MAX_SYNTHETIC_ROUNDS)
+    if extra_rounds > 0:
+        matches = load_matches(
+            config.data_path,
+            list(range(config.seasons[0], config.seasons[1] + 1)),
+            config.divisions,
+            fetch=False,
+        )
+        router = _fit_router(matches)
+        synthetic_rounds = [
+            ss.sample_synthetic_round(matches, router, FROZEN_PHASE1_V1, seed=ss.DEFAULT_SEED, slot=slot)
+            for slot in range(extra_rounds)
+        ]
+
+    simulation = ss.simulate_remaining_season(
+        recommendation, candidates, table, player, current_round_picks,
+        profiles, bias_by_participant, average, average_rate,
+        synthetic_rounds=synthetic_rounds, simulations=SEASON_SIMULATIONS,
+    )
+    if simulation is None:
+        return {}
+    recommendation_out = ss.recommend_season_strategy(simulation)
+    by_name = {c.name: c for c in candidates}
+    return {
+        "season_state": asdict(season_state),
+        "mode": recommendation_out.mode,
+        "active": recommendation_out.chosen.name != recommendation_out.baseline.name,
+        "picks": [f"{h}-{a}" for h, a in by_name[recommendation_out.chosen.name].picks],
+        "reason": (
+            strategy.describe_candidate(by_name[recommendation_out.chosen.name], recommendation)
+            + f" Simulated across {simulation.simulations} worlds and "
+            f"{len(synthetic_rounds)} representative future rounds "
+            f"(of {rounds_remaining - 1} remaining beyond this one)."
+        ),
+        "comparison": {
+            "mean_gain_pp": round(recommendation_out.comparison.mean_gain * 100, 2),
+            "lower_bound_pp": round(recommendation_out.comparison.lower_bound * 100, 2),
+            "upper_bound_pp": round(recommendation_out.comparison.upper_bound * 100, 2),
+        },
+        "candidates": [
+            {
+                "name": candidate.name,
+                "finish_first_probability": candidate.finish_first_probability,
+                "expected_final_points": candidate.expected_final_points,
+                "recommended": candidate.name == recommendation_out.chosen.name,
+            }
+            for candidate in simulation.candidates
+        ],
+    }
 
 
 def _opponent_bias_payload(history, results, config: WebConfig):
@@ -857,11 +1067,9 @@ def _fixture_favoured_result(fixture) -> str:
     """Our own recommended pick's implied result — the "favourite" a rival's
     pick is compared against. See opponent_intelligence.favourite_bias_profiles
     for the same approximation stated explicitly."""
-    if fixture.pick_home > fixture.pick_away:
-        return "HOME"
-    if fixture.pick_home < fixture.pick_away:
-        return "AWAY"
-    return "DRAW"
+    from . import opponent_intelligence as oi
+
+    return oi.result_of(fixture.pick_home, fixture.pick_away)
 
 
 def _predicted_picks_payload(recommendation, history, favourite, config: WebConfig) -> dict:

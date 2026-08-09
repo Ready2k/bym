@@ -85,6 +85,13 @@ def _result_of(score: Scoreline) -> str:
     return "DRAW"
 
 
+def result_of(home_goals: int, away_goals: int) -> str:
+    """Public HOME/AWAY/DRAW label for a scoreline — the word-based
+    convention this module and `season_simulation.py` share, as opposed to
+    `scoring.result_of`'s H/D/A letters used by the scoring core."""
+    return _result_of((home_goals, away_goals))
+
+
 @dataclass(frozen=True)
 class JoinedPick:
     """One recorded opponent pick, matched to the forecast fixture it was made against."""

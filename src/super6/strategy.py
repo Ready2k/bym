@@ -31,10 +31,12 @@ already produced.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Mapping
 
 import numpy as np
 
-from .league import ScorelineScenario, StrategyCandidate, OpponentRound
+from . import opponent_intelligence as oi
+from .league import OpponentProfile, ScorelineScenario, StrategyCandidate, OpponentRound
 from .recommend import RoundRecommendation
 
 DEFAULT_SCENARIOS = 2000
@@ -194,6 +196,54 @@ def build_candidates(
             )
         )
     return tuple(candidates)
+
+
+def build_correlate_candidate(
+    recommendation: RoundRecommendation,
+    profiles: Mapping[str, OpponentProfile],
+    favourite: Mapping[str, oi.FavouriteBiasProfile],
+    average_profile: OpponentProfile | None,
+    average_rate: float | None,
+) -> StrategyCandidate | None:
+    """§12 DEFEND-shaped candidate: per fixture, the single scoreline the
+    field is most likely to pick, pooled across every known rival's
+    predicted distribution (`opponent_intelligence.predict_pick_distribution`).
+
+    This is the opposite move to `build_candidates`' differentiation
+    alternatives — matching the field instead of deviating from it, which
+    only helps while *leading* (it caps the leader's own downside without
+    trying to out-score anyone). Returns `None` when there is no pooled
+    opponent evidence at all, rather than fabricating a "field" out of
+    zero rivals; the season simulator (`season_simulation.py`) decides
+    whether this candidate actually beats maximum EV, it is never assumed
+    to.
+    """
+    if average_profile is None or not profiles:
+        return None
+    picks: list[tuple[int, int]] = []
+    any_evidence = False
+    for fixture in recommendation.fixtures:
+        favoured = oi.result_of(fixture.pick_home, fixture.pick_away)
+        pooled: dict[str, float] = {}
+        for name, profile in profiles.items():
+            bias = favourite.get(name)
+            if bias is None:
+                continue
+            distribution = oi.predict_pick_distribution(
+                profile, bias, average_profile, average_rate, favoured
+            )
+            for score, probability in distribution.items():
+                pooled[score] = pooled.get(score, 0.0) + probability
+        if not pooled:
+            picks.append((fixture.pick_home, fixture.pick_away))
+            continue
+        any_evidence = True
+        best_score = max(pooled.items(), key=lambda item: item[1])[0]
+        home, away = (int(part) for part in best_score.split("-", 1))
+        picks.append((home, away))
+    if not any_evidence:
+        return None
+    return StrategyCandidate(name="CORRELATE", picks=tuple(picks))
 
 
 def describe_candidate(
