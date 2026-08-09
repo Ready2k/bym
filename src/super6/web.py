@@ -177,6 +177,59 @@ def extractor_settings_for_ui(config: WebConfig) -> dict:
     }
 
 
+def _valid_ollama_base_url(value: object) -> str:
+    """Validate an Ollama endpoint before saving or probing it."""
+    base_url = str(value or "").strip()
+    parsed = urlparse(base_url)
+    try:
+        parsed.port
+    except ValueError as exc:
+        raise ValueError(
+            "Enter an Ollama base URL such as http://localhost:11434 (without credentials)."
+        ) from exc
+    if (
+        len(base_url) > 512
+        or parsed.scheme not in {"http", "https"}
+        or not parsed.hostname
+        or parsed.username
+        or parsed.password
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise ValueError(
+            "Enter an Ollama base URL such as http://localhost:11434 (without credentials)."
+        )
+    return base_url.rstrip("/")
+
+
+def available_ollama_models(payload: dict, session=None) -> dict:
+    """List models exposed by an explicitly supplied Ollama endpoint."""
+    import requests
+
+    base_url = _valid_ollama_base_url(payload.get("base_url"))
+    host = urlparse(base_url).hostname or "the Ollama host"
+    try:
+        response = (session or requests).get(f"{base_url}/api/tags", timeout=5)
+    except requests.Timeout as exc:
+        raise ValueError(f"Timed out while contacting {host}.") from exc
+    except requests.RequestException as exc:
+        raise ValueError(f"Could not contact Ollama at {host}.") from exc
+    if response.status_code >= 400:
+        raise ValueError(f"Ollama at {host} returned HTTP {response.status_code}.")
+    try:
+        models = response.json().get("models")
+    except ValueError as exc:
+        raise ValueError(f"Ollama at {host} returned an invalid model list.") from exc
+    if not isinstance(models, list):
+        raise ValueError(f"Ollama at {host} returned an invalid model list.")
+    names = sorted({
+        str(model["name"]).strip()
+        for model in models
+        if isinstance(model, dict) and isinstance(model.get("name"), str) and model["name"].strip()
+    }, key=str.casefold)
+    return {"models": names[:100]}
+
+
 def ollama_status(extractor_config=None) -> tuple[object | None, object]:
     """Return configured extractor health without probing an unused host.
 
@@ -726,27 +779,14 @@ def save_settings(payload: dict, config: WebConfig) -> dict:
         mode = str(extractor.get("mode", "")).lower()
         if mode not in {"shadow", "active"}:
             raise ValueError("Extractor mode must be Shadow or Active.")
-        base_url = str(extractor.get("base_url", "")).strip()
-        parsed = urlparse(base_url)
-        if (
-            len(base_url) > 512
-            or parsed.scheme not in {"http", "https"}
-            or not parsed.hostname
-            or parsed.username
-            or parsed.password
-            or parsed.query
-            or parsed.fragment
-        ):
-            raise ValueError(
-                "Enter an Ollama base URL such as http://localhost:11434 (without credentials)."
-            )
+        base_url = _valid_ollama_base_url(extractor.get("base_url"))
         model = str(extractor.get("model", "")).strip()
         if not model or len(model) > 256 or any(char.isspace() for char in model):
             raise ValueError("Enter an Ollama model name without spaces.")
         state["knowledge_extractor"] = {
             "configured": True,
             "enabled": enabled,
-            "base_url": base_url.rstrip("/"),
+            "base_url": base_url,
             "model": model,
             "mode": mode,
         }
@@ -1434,6 +1474,8 @@ class Super6RequestHandler(BaseHTTPRequestHandler):
                 self._send_json(HTTPStatus.OK, save_pick_overrides(payload, self.config))
             elif path == "/api/settings":
                 self._send_json(HTTPStatus.OK, save_settings(payload, self.config))
+            elif path == "/api/ollama/models":
+                self._send_json(HTTPStatus.OK, available_ollama_models(payload))
             elif path == "/api/opponents":
                 self._send_json(HTTPStatus.OK, import_opponent(payload, self.config))
             elif path == "/api/results":

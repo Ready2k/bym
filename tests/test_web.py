@@ -8,6 +8,7 @@ import pytest
 from super6.round import load_round, round_from_dict, round_to_dict
 from super6.web import (
     WebConfig,
+    available_ollama_models,
     create_round,
     cup_prediction,
     import_opponent,
@@ -256,6 +257,28 @@ def test_ollama_web_settings_never_expose_environment_url_credentials(tmp_path, 
     monkeypatch.setenv("OLLAMA_BASE_URL", "http://user:secret@ollama.local:11434")
     settings = extractor_settings_for_ui(configured_round(tmp_path))
     assert settings["base_url"] == "http://ollama.local:11434"
+
+
+def test_web_can_list_models_from_the_current_ollama_url():
+    class Response:
+        status_code = 200
+
+        def json(self):
+            return {"models": [
+                {"name": "llama3.1:8b"}, {"name": "mistral"},
+                {"name": "llama3.1:8b"}, {"name": ""},
+            ]}
+
+    class Session:
+        def get(self, url, timeout):
+            assert url == "http://ollama.local:11434/api/tags"
+            assert timeout == 5
+            return Response()
+
+    result = available_ollama_models(
+        {"base_url": "http://ollama.local:11434"}, session=Session()
+    )
+    assert result == {"models": ["llama3.1:8b", "mistral"]}
 
 
 def test_manual_entry_freezes_prospective_arms_and_results_score_them(tmp_path):
