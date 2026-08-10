@@ -149,6 +149,14 @@ def parse_season_csv(
             "away_team": df["AwayTeam"].astype(str).str.strip(),
             "home_goals": df["FTHG"].astype(int),
             "away_goals": df["FTAG"].astype(int),
+            # Shot counts, for §7's zero-cost xG stand-in (model/shots.py).
+            # Present for every season and division in this corpus, but
+            # coerced rather than cast: an older file missing them should
+            # yield NaN and no proxy, not a parse failure.
+            "home_shots": pd.to_numeric(df.get("HS"), errors="coerce"),
+            "away_shots": pd.to_numeric(df.get("AS"), errors="coerce"),
+            "home_shots_target": pd.to_numeric(df.get("HST"), errors="coerce"),
+            "away_shots_target": pd.to_numeric(df.get("AST"), errors="coerce"),
         }
     )
     out = pd.concat(

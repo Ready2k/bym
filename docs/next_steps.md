@@ -20,18 +20,18 @@ scores > Golden Goal/national prizes > 100 Club) and that measurement is
 prospective-only now (2025/26 holdout is spent and grid-searched,
 VALIDATION.md):
 
-1. **§4's free routes** — the shots-based proxy and the "is there really
-   no free xG source?" research, both wrongly filed under a budget
-   decision that only applies to a paid feed. The cheapest work left.
-2. Items 1 and 2 wait on elapsed rounds rather than on anyone's time.
-   §5 whenever a conversational layer would genuinely help.
+1. Nothing here is both ready and clearly worth doing. Items 1 and 2
+   wait on elapsed rounds rather than on anyone's time; §3 needs a data
+   source that may not exist; §4 is now purely a budget decision; §5 is
+   marked low priority by the spec itself. This is the honest state of a
+   backlog that has been worked down rather than a queue to keep pulling
+   from.
 
-§4 leads to an ablation, and with the 2025/26 holdout spent an ablation
-can now only *retire* a candidate, not promote one — promotion needs
-prospective evidence. That is a reason to run one (retiring a candidate
-cheaply is worth it) but not a reason to expect a model change at the
-end. Three candidates have now been retired this way: Shin's method,
-MOV-Elo (ablation_007), and totals + Asian handicap (ablation_008).
+With the 2025/26 holdout spent, an ablation can now only *retire* a
+candidate, not promote one — promotion needs prospective evidence. That
+is still a reason to run one, and four candidates have been retired this
+way: Shin's method and MOV-Elo (ablation_007), totals and Asian handicap
+(ablation_008), and the shots-based xG proxy (ablation_009).
 
 Five items left this file on 2026-08-09. The round-file rename is done —
 `rounds/` now holds one real round per file, named
@@ -179,59 +179,55 @@ markets have now been tested and neither helped.
 
 ---
 
-## 4. xG (Shin's method and MOV-Elo: retired 2026-08-09)
+## 4. xG — free routes exhausted, paid route is your decision
 
-**What.** Standing ablation candidates from §7, §29.4, §32.1.
+**What.** §7's standing candidate: expected goals as a model input.
 
-**Shin's method and MOV-Elo are done** — both implemented and run through
-the ladder on the 2024/25 validation season, both **rejected**. See
-[results/ablation_007_shin_and_mov_elo.md](../results/ablation_007_shin_and_mov_elo.md)
-and the VALIDATION.md decisions table. Shin's is indistinguishable from
-proportional devigging here (only 1 of 932 picks changed; paired log loss
-−0.00015, CI straddling zero), largely because w=0.5 dilutes half of any
-devig difference before it reaches a probability. MOV-Elo is marginally
-worse than *plain* Elo, which means ablation_003's redundancy verdict is
-about what per-division α/β already capture rather than about rating
-quality. Both stay available behind flags (`devig="shin"`,
-`use_elo=True, elo_mov=True`) and neither is in the frozen model path.
+**Shin's method and MOV-Elo** were the other two candidates once filed
+here; both were run through the ablation ladder on 2026-08-09 and
+rejected ([results/ablation_007](../results/ablation_007_shin_and_mov_elo.md)).
 
-**Correction, 2026-08-09.** This item said flatly "xG needs a budget
-decision — your manual approval per §25, not an engineering call". That
-bundled three separate questions together and pushed all of them onto the
-one person who could not answer two of them. Only the third is actually a
-budget decision:
+**The free-source survey, done 2026-08-10.** This item previously
+asserted "no confirmed free source exists" without ever checking. The
+conclusion holds, but not for the stated reason, and it got worse in
+January:
 
-1. **A zero-cost proxy is already possible and nobody has tried it.**
-   `data/` carries shots, shots on target and corners at ~100% coverage
-   for every season and both divisions (`HS`, `AS`, `HST`, `AST`, `HC`,
-   `AC`). A shot-based goal-expectation proxy is buildable and ablatable
-   today at no cost. It is *not* xG — no shot locations, no chance
-   quality, and shot counts are a much cruder signal — but §28 does not
-   require a candidate to be the best possible version of itself before
-   being tested. If a crude proxy adds nothing, that is informative about
-   whether paying for the real thing is worth it.
-2. **"No confirmed free source exists" was asserted, never researched.**
-   It should not be carried as established fact. Checking what free or
-   licence-compatible xG sources exist is an engineering task, not a
-   spending decision.
-3. **A paid feed is the only part that is genuinely yours.** Sportmonks
-   and similar breach the £10/month target (§25), and spending money is
-   your call — but it should be the *last* question asked here, not the
-   first.
+| source | Championship? | free? | usable live? |
+|---|---|---|---|
+| Understat | **No** — 6 top-tier leagues only | yes (scrape) | PL only |
+| FBref | had it | was free | **No** — Opta cut the feed 2026-01-20 |
+| FootyStats API | yes | **£29.99/mo** | yes, 3× the §25 target |
+| API-Football | yes | free tier paywalls current seasons | no |
 
-**Unblock.** Try (1), do the research in (2), and only bring (3) to a
-budget decision if the cheap routes look insufficient *and* the proxy
-suggested there is signal worth paying for.
+The binding constraint is the **Championship — 59% of the corpus**. A
+Premier-League-only feed cannot serve a model fitted across both
+divisions.
 
-**Effort.** (1) small. (2) an afternoon of research. (3) not effort at
-all — a decision.
+**The zero-cost proxy was built and tested, and failed.** Shots and shots
+on target are in the free corpus at 100% coverage for both divisions.
+`model/shots.py` turns them into a goal expectation and fits a second
+Dixon-Coles on that smoother target; ablation_009 rejects it at every
+blend weight, with log loss degrading monotonically.
 
-**Worth knowing before adding another rung here.** With the 2025/26
-holdout spent, no ablation on the validation season can promote anything
-on its own any more — a win there could not be confirmed on unseen data,
-and VALIDATION.md is explicit that those scores are biased upward. Running
-a rung is still worth it to *retire* a candidate, as ablation_007 did.
-Promoting one now needs prospective evidence (`results/prospective_*`).
+The reason is worth carrying forward: the proxy has no shot-quality
+information, so it **persistently** underrates strong teams (Man City
++0.39 goals/match above its shot profile) and overrates weak ones —
+year-over-year residual correlation +0.19, so bias rather than noise. See
+[results/ablation_009](../results/ablation_009_shot_proxy.md).
+
+**Read that result the right way.** It is *not* evidence that real xG
+would fail here. The proxy fails precisely because it lacks chance
+quality, which is the thing real xG adds. It establishes only that the
+free route is exhausted.
+
+**Unblock.** Only a budget decision remains — a Championship-covering
+feed at ~£30/month against §25's £10 target. That is genuinely yours, and
+now it is the *only* part that is: the two engineering questions
+underneath it have been answered.
+
+**Effort.** Not effort — a decision. And note that even with a feed,
+promotion needs prospective evidence: the 2025/26 holdout is spent, so an
+ablation could only retire the candidate, not adopt it.
 
 ---
 

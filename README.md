@@ -136,6 +136,7 @@ src/super6/
 │   ├── dixon_coles.py   weighted MLE: μ, γ, α, β, ρ (§29-31)
 │   ├── elo.py            Elo covariate (θ) — fitted but BINNED, see ablation ladder
 │   ├── priors.py         promoted/relegated-team empirical-Bayes priors (§29.4, ADOPTED)
+│   ├── shots.py           zero-cost xG stand-in from shot counts (§7, REJECTED — ablation_009)
 │   ├── market.py          margin removal + result-constrained reweighting (§32)
 │   ├── matrix.py        score matrix w/ tail handling + EV (§31, §2/§33)
 │   └── golden_goal.py   first-goal hazard, Sky minute bands (§15)
@@ -273,10 +274,14 @@ Per the phase gates in §23 and the ablation rule in §28. For what would
 actually unblock each of these — not just that they're missing — see
 [docs/next_steps.md](docs/next_steps.md).
 
-- **xG** (Phase 1B) — fields are nullable by design. The "no confirmed
-  free source" claim has never actually been researched, and a zero-cost
-  shots-based proxy is possible from data already on disk; only a *paid*
-  feed is a §25 budget decision. See next_steps.md item 4.
+- **xG** (Phase 1B) — fields are nullable by design. Free routes are now
+  exhausted and documented: no free source covers the Championship (59%
+  of the corpus) since Opta cut FBref's feed in January 2026, and the
+  zero-cost shots proxy was built and **rejected** — it lacks shot
+  quality, so it persistently underrates strong teams
+  ([results/ablation_009](results/ablation_009_shot_proxy.md)). That is
+  not evidence against real xG; only a paid Championship-covering feed
+  remains, which is a §25 budget decision. See next_steps.md item 4.
 - **Shin's method** for margin removal, **MOV-Elo** — both implemented and
   run through the ablation ladder on 2026-08-09, both **rejected**: Shin's
   is indistinguishable from proportional devigging on this corpus, and

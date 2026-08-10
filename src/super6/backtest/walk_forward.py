@@ -33,7 +33,7 @@ import numpy as np
 import pandas as pd
 
 from ..config import DEFAULT_MODEL, FROZEN_PHASE1_V1, ModelConfig
-from ..model import dixon_coles, elo, market, priors
+from ..model import dixon_coles, elo, market, priors, shots
 from ..model.matrix import score_matrix
 from ..recommend import confidence_v1
 from .metrics import BacktestMetrics, evaluate
@@ -60,6 +60,7 @@ def run_model(
     devig: str = "proportional",
     totals_blend: float | None = None,
     handicap_blend: float | None = None,
+    shot_blend: float | None = None,
     promoted_priors: priors.PromotedPriors | None = None,
     season_decay: float = 1.0,
     cfg: ModelConfig = DEFAULT_MODEL,
@@ -88,6 +89,20 @@ def run_model(
     set — never closing odds, which contain post-deadline information).
     Fixtures without odds fall back to the raw model matrix — graceful
     degradation, not imputation.
+
+    shot_blend (§7) mixes in a second Dixon-Coles fit whose target is
+    shot-derived expected goals (model/shots.py) instead of actual goals,
+    blending at the λ level: λ = (1-w)·λ_goals + w·λ_shots. Testing the
+    xG thesis with the only free signal that covers both divisions —
+    goals are a noisy realisation, so fitting on a smoother target may
+    estimate strength better.
+
+    The proxy arm is fitted with fix_rho_zero=True, deliberately and
+    visibly: proxy goals are continuous, and Dixon-Coles' τ identifies
+    its {0,1}² cells by exact equality, so ρ would be unidentifiable and
+    drift silently. Blending at λ means the champion's own ρ still shapes
+    the final matrix, so the comparison isolates the fitting target
+    rather than confounding it with the loss of the correction.
 
     devig selects §32.1's margin-removal method for those odds:
     "proportional" (the incumbent) or "shin". Only meaningful alongside
@@ -120,6 +135,7 @@ def run_model(
     test = matches[test_mask].sort_values("date")
     rows = []
     params_by_div: dict[str, dixon_coles.DixonColesParams] = {}
+    shot_params_by_div: dict[str, dixon_coles.DixonColesParams] = {}
     last_fit: pd.Timestamp | None = None
     n_refits = 0
 
@@ -150,10 +166,22 @@ def run_model(
                 sorted(test["division"].unique()) if per_division else ["ALL"]
             )
             refreshed = {}
+            refreshed_shots = {}
             for div in divisions:
                 train = train_slice(date, div)
                 if len(train) < 200:
                     continue  # not enough history yet to fit sensibly
+                if shot_blend is not None:
+                    conversion = shots.fit_conversion(train)
+                    if conversion is not None:
+                        refreshed_shots[div] = dixon_coles.fit(
+                            shots.with_proxy_goals(train, conversion),
+                            xi=xi, reference_date=date,
+                            fix_rho_zero=True,  # τ is undefined on a continuous target
+                            season_decay=season_decay,
+                            reference_season=int(test["season"].max()),
+                            cfg=cfg,
+                        )
                 refreshed[div] = dixon_coles.fit(
                     train, xi=xi, reference_date=date,
                     fix_rho_zero=fix_rho_zero, use_elo=use_elo,
@@ -164,6 +192,7 @@ def run_model(
                 )
             if refreshed:
                 params_by_div = refreshed
+                shot_params_by_div = refreshed_shots
                 last_fit = date
                 n_refits += 1
         if not params_by_div:
@@ -180,6 +209,13 @@ def run_model(
             lam_h, lam_a = params.lambdas(
                 r["home_team"], r["away_team"], cfg, elo_diff=d_elo
             )
+            shot_params = shot_params_by_div.get(key) if shot_blend else None
+            if shot_params is not None:
+                shot_h, shot_a = shot_params.lambdas(
+                    r["home_team"], r["away_team"], cfg
+                )
+                lam_h = (1.0 - shot_blend) * lam_h + shot_blend * shot_h
+                lam_a = (1.0 - shot_blend) * lam_a + shot_blend * shot_a
             m = score_matrix(lam_h, lam_a, params.rho, cfg)
             if market_blend is not None and pd.notna(r["odds_h"]):
                 mh, md, ma = implied(r["odds_h"], r["odds_d"], r["odds_a"])
