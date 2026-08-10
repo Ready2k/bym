@@ -22,10 +22,11 @@ VALIDATION.md):
 
 1. Nothing here is both ready and clearly worth doing. Items 1 and 2
    wait on elapsed rounds rather than on anyone's time; §3 needs a data
-   source that may not exist; §4 is now purely a budget decision; §5 is
-   marked low priority by the spec itself. This is the honest state of a
-   backlog that has been worked down rather than a queue to keep pulling
-   from.
+   source that may not exist; §4 is **closed** — xG is not being bought;
+   §5 is marked low priority by the spec itself. This is the honest state
+   of a backlog that has been worked down rather than a queue to keep
+   pulling from. Three of the four remaining items are waiting on the
+   world, not on effort.
 
 With the 2025/26 holdout spent, an ablation can now only *retire* a
 candidate, not promote one — promotion needs prospective evidence. That
@@ -179,7 +180,7 @@ markets have now been tested and neither helped.
 
 ---
 
-## 4. xG — free routes exhausted, paid route is your decision
+## 4. xG — CLOSED 2026-08-10: not worth the money
 
 **What.** §7's standing candidate: expected goals as a model input.
 
@@ -258,15 +259,32 @@ history into an xG-based E0 fit, so §29.4's priors would straddle two
 units; surmountable if the xG source is calibrated to goals, but it is a
 real wrinkle rather than a detail.
 
-**Unblock.** Only a budget decision remains — a Championship-covering
-feed at ~£30/month against §25's £10 target, from a source whose terms
-permit programmatic use. That is genuinely yours, and now it is the
-*only* part that is: the two engineering questions underneath it have
-been answered.
+**DECISION, 2026-08-10: no. Not being bought.**
 
-**Effort.** Not effort — a decision. And note that even with a feed,
-promotion needs prospective evidence: the 2025/26 holdout is spent, so an
-ablation could only retire the candidate, not adopt it.
+The budget question was put to the one person who could answer it and the
+answer is that ~£30/month — £360 a year, against §25's £10/month target —
+is not worth it for this system. That closes the item; it is recorded here
+rather than left open so it is not re-litigated every time an xG source is
+suggested.
+
+The evidence supports the call rather than merely permitting it. The
+champion's fitted attack parameter already correlates +0.807 with the
+shot-profile residual — it has *already* absorbed most of what xG would
+be brought in to supply — and the model is currently market-equivalent on
+the holdout (7.47 vs 7.42 pts/round). Paying an annual subscription for
+an unquantified improvement on top of that is a poor trade, and it could
+not even be *validated* without a season of prospective data, since the
+holdout is spent.
+
+**What would reopen this, at zero cost.** A free source that covers the
+Championship and whose terms permit programmatic access. Four have been
+checked and dated in the table above; if a fifth appears, the engineering
+underneath is already done — `model/shots.py` shows the shape a proxy
+takes, the per-division argument above shows how a Premier-League-only
+feed could still be used, and §7's fields are nullable by design. Nothing
+needs rebuilding, only re-sourcing.
+
+**Effort.** None. Closed.
 
 ---
 

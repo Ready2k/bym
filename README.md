@@ -281,8 +281,9 @@ actually unblock each of these — not just that they're missing — see
   quality, so it persistently underrates strong teams
   ([results/ablation_009](results/ablation_009_shot_proxy.md)). Four
   candidate sources have now been probed and dated in next_steps.md item
-  4; none is usable. That is not evidence against real xG — only a paid
-  Championship-covering feed remains, which is a §25 budget decision.
+  4; none is usable. A paid Championship-covering feed (~£30/month
+  against §25's £10 target) was **declined on 2026-08-10** — the item is
+  closed, and reopens only if a free, terms-permitting source appears.
 - **Shin's method** for margin removal, **MOV-Elo** — both implemented and
   run through the ablation ladder on 2026-08-09, both **rejected**: Shin's
   is indistinguishable from proportional devigging on this corpus, and

@@ -41,6 +41,7 @@ An adapter existing is **not** "live".
 | Opponent-aware strategy, single round (§12-14) | BUILT, TESTED OFFLINE, ACTIVE | current round only, kept alongside the season simulator below |
 | Season Monte Carlo simulator (§13, `season_simulation.py`) | BUILT, TESTED OFFLINE, ACTIVE | Round Opportunity Model, paired significance test, ATTACK/DEFEND/NORMAL labels — see caveat below |
 | Private-league tiebreak (§27 decision #7) | BUILT, TESTED OFFLINE, ACTIVE | points → exact scores → Golden Goal closeness, `league.league_standings` |
+| **xG (§7)** | **CLOSED — declined 2026-08-10** | free sources exhausted (4 probed, next_steps.md item 4); paid feed judged not worth ~£30/month. `model/shots.py` proxy built and rejected (ablation_009) |
 | **100 Club annotation (§12.1)** | **DEFERRED — not started** | no national-entrant data exists to estimate rarity from |
 | **Increment 5 player-impact model (evidence → λ)** | **DEFERRED — training data now accruing** | model itself not started and gated on `QUANTITATIVE_IMPACT_MODEL_ENABLED`; `claim_outcomes.py` pairs recorded claims with realised results so there is something to fit on later (`super6 readiness`) |
 
