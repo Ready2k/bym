@@ -187,21 +187,24 @@ markets have now been tested and neither helped.
 here; both were run through the ablation ladder on 2026-08-09 and
 rejected ([results/ablation_007](../results/ablation_007_shin_and_mov_elo.md)).
 
-**The free-source survey, done 2026-08-10.** This item previously
-asserted "no confirmed free source exists" without ever checking. The
-conclusion holds, but not for the stated reason, and it got worse in
-January:
+**Sources evaluated — dated, so this is not re-derived a fourth time.**
+This item previously asserted "no confirmed free source exists" without
+ever checking. Each candidate below was actually probed, and the same
+three keep being re-proposed:
 
-| source | Championship? | free? | usable live? |
-|---|---|---|---|
-| Understat | **No** — 6 top-tier leagues only | yes (scrape) | PL only |
-| FBref | had it | was free | **No** — Opta cut the feed 2026-01-20 |
-| FootyStats API | yes | **£29.99/mo** | yes, 3× the §25 target |
-| API-Football | yes | free tier paywalls current seasons | no |
+| source | evaluated | Championship? | xG? | verdict |
+|---|---|---|---|---|
+| [Understat](https://understat.com/) | 2026-08-10 | **No** — 6 top-tier leagues | yes, good | **Blocked on terms.** `robots.txt` is `User-agent: *` / `Disallow: /`, no API. §18.1 gates on terms and `sky_super6` is PROHIBITED on exactly this basis |
+| [FBref](https://fbref.com/) | 2026-08-10 | had it | **gone** | Stats Perform terminated the Opta feed **2026-01-20** and required removal. Historical data remains, never updates. Also 403s automated fetches |
+| API-Football | 2026-08-08 (live probe) | yes | not in registered purposes | **Current seasons paywalled** on the free tier (2025+ rejected, "try from 2022 to 2024"). The 100/day cap is the lesser problem |
+| [Big Balls Sports Data](https://bigballsdata.com/) | 2026-08-10 (live key) | **No** — `/v1/leagues` returns 8, England = EPL only | **absent from payload** | 0 of 30 finished EPL matches had any `team_stats`; the 1-in-40 that did carried 28 fields with no xG. Lineups `available=false`. Fixtures stop 2026-05-24. Registered `REVIEW_REQUIRED`; key kept in `secrets/` as a cross-reference, nothing queries it |
 
 The binding constraint is the **Championship — 59% of the corpus**. A
 Premier-League-only feed cannot serve a model fitted across both
-divisions.
+divisions — *unless* the per-division argument below is taken up, which
+would make a Premier-League-only feed genuinely usable. Every PL-only
+source found so far is blocked for some *other* reason, so that route
+stays open in principle and closed in practice.
 
 **The zero-cost proxy was built and tested, and failed.** Shots and shots
 on target are in the free corpus at 100% coverage for both divisions.
@@ -220,22 +223,32 @@ would fail here. The proxy fails precisely because it lacks chance
 quality, which is the thing real xG adds. It establishes only that the
 free route is exhausted.
 
-**"Understat covers most Super 6 fixtures anyway" — asked and answered,
-2026-08-10.** The reasoning is sound and worth recording so it is not
-re-derived: Super 6 leans heavily Premier League (the one round observed
+**"A PL-only feed would cover most Super 6 fixtures anyway" — asked and
+answered, 2026-08-10.** The reasoning is sound and worth recording,
+because it is the one argument that would make the Championship gap
+survivable: Super 6 leans heavily Premier League (the one round observed
 so far is 6/6 E0), the model already fits *per division* (ablation_002),
 so an E0-only xG signal is architecturally coherent rather than a patch —
 the E0 fit would use xG, the E1 fit goals — and a fixture without xG
 would degrade to the goal-fitted model, the same graceful degradation
 missing odds already get.
 
-It fails on **terms, not coverage**. Understat's `robots.txt` is
+What it needs is a PL xG feed that is *otherwise* usable, and none of
+the candidates is. **Understat fails on terms, not coverage.** Its
+`robots.txt` is
 `User-agent: *` / `Disallow: /` — automated access is disallowed
 site-wide, and there is no API. §18.1 gates every outbound query on
 checked terms, and `sky_super6` is already PERMANENTLY PROHIBITED on
 exactly this basis ("Sky's terms prohibit automated and unauthorised
 manual data extraction"). Applying that rule consistently, Understat
 cannot be registered APPROVED. The precedent is the project's own.
+
+**Big Balls Sports Data fails on payload, not terms.** It is a legitimate
+API with a free tier, so the terms objection genuinely does not apply —
+but the advertised xG is not in any response (see the table above), which
+leaves nothing to feed the E0 fit. Its key is kept in `secrets/` as a
+cross-reference on results and scores; it is registered
+`REVIEW_REQUIRED` and nothing queries it.
 
 Two smaller notes for whoever revisits this: Understat does not cover the
 Champions League either (six domestic leagues only), and such fixtures are

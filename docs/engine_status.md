@@ -25,6 +25,7 @@ An adapter existing is **not** "live".
 | The Odds API adapter | **LIVE VERIFIED** | 20 UK books, consensus confirmed |
 | API-Football adapter | **BLOCKED — free plan** | adapter correct vs 2024; current season paywalled |
 | Tavily adapter | **LIVE VERIFIED** | `topic=news` required for dates |
+| Big Balls Sports Data | **REVIEW_REQUIRED — evaluated, not adopted** | probed 2026-08-10 as an xG candidate and rejected (no Championship, no xG in payload); key held in `secrets/` as a cross-reference, no adapter, nothing queries it |
 | Market movement / divergence | BUILT, TESTED OFFLINE | needs live odds to exercise |
 | Scheduler | BUILT, TESTED OFFLINE | restart-safe, SQLite, three job types |
 | Always-on orchestration | BUILT, TESTED OFFLINE | odds + availability + event-driven knowledge |

@@ -279,9 +279,10 @@ actually unblock each of these — not just that they're missing — see
   of the corpus) since Opta cut FBref's feed in January 2026, and the
   zero-cost shots proxy was built and **rejected** — it lacks shot
   quality, so it persistently underrates strong teams
-  ([results/ablation_009](results/ablation_009_shot_proxy.md)). That is
-  not evidence against real xG; only a paid Championship-covering feed
-  remains, which is a §25 budget decision. See next_steps.md item 4.
+  ([results/ablation_009](results/ablation_009_shot_proxy.md)). Four
+  candidate sources have now been probed and dated in next_steps.md item
+  4; none is usable. That is not evidence against real xG — only a paid
+  Championship-covering feed remains, which is a §25 budget decision.
 - **Shin's method** for margin removal, **MOV-Elo** — both implemented and
   run through the ablation ladder on 2026-08-09, both **rejected**: Shin's
   is indistinguishable from proportional devigging on this corpus, and

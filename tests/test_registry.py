@@ -76,3 +76,31 @@ def test_prohibited_cannot_be_promoted(path):
     with pytest.raises(reg.SourceNotApprovedError, match="cannot be promoted"):
         reg.approve("sky_super6", path=path)
     assert reg.load_registry(path)["sky_super6"].usage_status == "PROHIBITED"
+
+
+def test_an_evaluated_but_unadopted_source_is_registered_and_still_gated(tmp_path):
+    """A key sits in secrets/ for Big Balls Sports Data as a cross-reference.
+    The registry entry exists so its presence is explained rather than
+    rediscovered — but §18.1 must still refuse to let anything query it."""
+    from super6.sources.registry import (
+        SourceNotApprovedError, UsageStatus, assert_approved, load_registry,
+    )
+
+    registry = load_registry(tmp_path / "absent.json")  # seeded defaults
+    record = registry["big_balls_sports_data"]
+    assert record.usage_status == UsageStatus.REVIEW_REQUIRED.value
+    assert record.purpose == [], "nothing consumes it, so it claims no purpose"
+    assert record.terms_checked_at == "", "terms were never reviewed — do not imply they were"
+
+    with pytest.raises(SourceNotApprovedError):
+        assert_approved("big_balls_sports_data", tmp_path / "absent.json")
+
+
+def test_the_evaluation_findings_survive_in_the_registry(tmp_path):
+    """The point of the entry is that nobody probes this source a fourth
+    time, so the findings have to be in it, not only in a results doc."""
+    from super6.sources.registry import load_registry
+
+    notes = load_registry(tmp_path / "absent.json")["big_balls_sports_data"].notes
+    for fact in ("Championship", "xG", "2026-08-10"):
+        assert fact in notes, fact

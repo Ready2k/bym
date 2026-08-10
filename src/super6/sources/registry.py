@@ -180,6 +180,32 @@ def _seed() -> list[SourceRecord]:
             "and ledger scoring was manual JSON entry.",
         ),
         SourceRecord(
+            source_id="big_balls_sports_data",
+            source_name="Big Balls Sports Data",
+            acquisition_method=AcquisitionMethod.API.value,
+            usage_status=UsageStatus.REVIEW_REQUIRED.value,
+            terms_url="https://bigballsdata.com/docs",
+            terms_checked_at="",  # capability probed, terms NOT yet reviewed
+            refresh_limit="free tier: 1000 requests/day (2000 with a GitHub account)",
+            retention_policy="none — nothing queries this source",
+            purpose=[],
+            notes="EVALUATED 2026-08-10 as a candidate xG source (§7) and "
+            "REJECTED for that purpose. A key is held in secrets/ as a "
+            "cross-reference, and nothing in the codebase queries it — this "
+            "entry exists so the key's presence is explained rather than "
+            "rediscovered. Probed with a live key: /v1/leagues returns 8 "
+            "competitions, England = EPL only, so NO Championship (59% of "
+            "the corpus). Its advertised match-level xG does not appear in "
+            "any payload — 0 of 30 finished EPL matches had any team_stats, "
+            "and the one match in 40 that did carried 28 fields (shots, "
+            "shots on target, possession, passing, cards) with no xG in "
+            "either the stats or the match object. Lineups return "
+            "available=false. Fixture horizon ended 2026-05-24, so it has "
+            "no 2026/27 season yet. Terms have NOT been reviewed: do that "
+            "first if this is ever promoted. Genuine but modest value as a "
+            "second opinion on results/scores alongside football_data_org.",
+        ),
+        SourceRecord(
             source_id="sky_super6",
             source_name="Sky Sports Super 6",
             acquisition_method=AcquisitionMethod.MANUAL.value,

@@ -20,6 +20,19 @@
     "notes": "Structured availability source for Phase 2 Increment 3B. Terms permit using the data to build applications and fantasy-football projects but prohibit reselling the feed directly \u2014 this private analytical system is a permitted use. Provides confirmed XIs (typically 20-40 min before kickoff) and injuries (Missing Fixture vs Questionable, refreshed roughly every four hours). Does NOT provide predicted/expected lineups; that gap is deliberately left to manual entry or the later knowledge agent, since Sportmonks' expected-lineups product is far outside the GBP10 budget (\u00a725). Promote to APPROVED only once an account exists and the terms have been accepted."
   },
   {
+    "source_id": "big_balls_sports_data",
+    "source_name": "Big Balls Sports Data",
+    "acquisition_method": "API",
+    "usage_status": "REVIEW_REQUIRED",
+    "terms_url": "https://bigballsdata.com/docs",
+    "terms_checked_at": "",
+    "refresh_limit": "free tier: 1000 requests/day (2000 with a GitHub account)",
+    "retention_policy": "none \u2014 nothing queries this source",
+    "attribution_required": false,
+    "purpose": [],
+    "notes": "EVALUATED 2026-08-10 as a candidate xG source (\u00a77) and REJECTED for that purpose. A key is held in secrets/ as a cross-reference, and nothing in the codebase queries it \u2014 this entry exists so the key's presence is explained rather than rediscovered. Probed with a live key: /v1/leagues returns 8 competitions, England = EPL only, so NO Championship (59% of the corpus). Its advertised match-level xG does not appear in any payload \u2014 0 of 30 finished EPL matches had any team_stats, and the one match in 40 that did carried 28 fields (shots, shots on target, possession, passing, cards) with no xG in either the stats or the match object. Lineups return available=false. Fixture horizon ended 2026-05-24, so it has no 2026/27 season yet. Terms have NOT been reviewed: do that first if this is ever promoted. Genuine but modest value as a second opinion on results/scores alongside football_data_org."
+  },
+  {
     "source_id": "football_data_co_uk",
     "source_name": "Football-Data.co.uk",
     "acquisition_method": "DATASET",
