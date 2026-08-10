@@ -331,7 +331,33 @@ def build_system_health(
         except sqlite3.Error:
             pending, next_check = 0, None
 
+    # Recent extraction reliability. Read from what really ran rather than
+    # probed here: a latency probe costs ~20s on a cold model, and putting
+    # that on the page-load path is the exact mistake this replaced.
+    recent_total = recent_failed = 0
+    last_error = ""
+    try:
+        rows = conn.execute(
+            "SELECT status, error FROM extraction_runs "
+            "ORDER BY id DESC LIMIT 20"
+        ).fetchall()
+        recent_total = len(rows)
+        for row in rows:
+            if row["status"] != "OK":
+                recent_failed += 1
+                if not last_error and row["error"]:
+                    last_error = str(row["error"])[:120]
+    except sqlite3.Error:
+        pass
+
     warnings = []
+    if recent_total >= 5 and recent_failed / recent_total >= 0.25:
+        share = recent_failed / recent_total
+        warnings.append(
+            f"knowledge extraction failing: {recent_failed} of the last "
+            f"{recent_total} runs ({share:.0%}). Credits are spent on the "
+            f"search before the model reads it. Last error: {last_error}"
+        )
     for source in sources:
         # Only REVIEW_REQUIRED is a task. EVALUATED means assessed and not
         # adopted — warning about it demands action nobody intends to take,
@@ -385,6 +411,9 @@ def build_system_health(
             "NO" if ollama_health else "UNKNOWN"
         ),
         database_schema_version=schema_version,
+        extraction_recent_total=recent_total,
+        extraction_recent_failed=recent_failed,
+        extraction_last_error=last_error,
         warnings=warnings,
     )
 

@@ -354,3 +354,116 @@ def test_health_reports_no_credentials():
     session = FakeSession(get_response=FakeResponse(200, {"models": []}))
     described = check_health(config, session).describe()
     assert "secret" not in described
+
+
+# ---------------------------------------------------------------------------
+# Latency probe: reachability is the wrong question
+
+
+class _SlowSession:
+    """Connects instantly, never finishes — the recorded failure mode."""
+
+    def __init__(self):
+        self.attempts = 0
+
+    def post(self, *args, **kwargs):
+        import requests as _requests
+
+        self.attempts += 1
+        raise _requests.Timeout("read timed out")
+
+
+class _FastSession:
+    def __init__(self, status=200):
+        self.status = status
+        self.attempts = 0
+
+    def post(self, *args, **kwargs):
+        self.attempts += 1
+        return type("R", (), {"status_code": self.status})()
+
+
+def test_a_host_that_connects_but_never_answers_is_not_responsive():
+    """All 23 recorded failures connected fine and then timed out, so a
+    /api/tags ping would have passed every one of them and the Tavily
+    credits would have been spent regardless."""
+    from super6.knowledge.config import ExtractorConfig, ExtractorKind
+    from super6.knowledge.ollama import probe_latency
+
+    config = ExtractorConfig(kind=ExtractorKind.OLLAMA.value)
+    session = _SlowSession()
+    responsive, seconds, detail = probe_latency(
+        config, session=session, attempts=3, sleep=lambda _s: None
+    )
+    assert responsive is False
+    assert seconds is None
+    assert session.attempts == 3, "three attempts, as briefed"
+    assert "no response" in detail
+
+
+def test_a_responsive_host_reports_how_long_it_took():
+    from super6.knowledge.config import ExtractorConfig, ExtractorKind
+    from super6.knowledge.ollama import probe_latency
+
+    config = ExtractorConfig(kind=ExtractorKind.OLLAMA.value)
+    responsive, seconds, detail = probe_latency(
+        config, session=_FastSession(), sleep=lambda _s: None
+    )
+    assert responsive is True
+    assert seconds is not None and seconds >= 0
+    assert "answered" in detail
+
+
+def test_one_slow_reading_does_not_condemn_a_working_host():
+    """The first call after an idle period pays a cold-load cost later ones
+    do not — measured at ~15-20s on a real host."""
+    import requests as _requests
+
+    from super6.knowledge.config import ExtractorConfig, ExtractorKind
+    from super6.knowledge.ollama import probe_latency
+
+    class Flaky:
+        def __init__(self):
+            self.attempts = 0
+
+        def post(self, *args, **kwargs):
+            self.attempts += 1
+            if self.attempts == 1:
+                raise _requests.Timeout("cold load")
+            return type("R", (), {"status_code": 200})()
+
+    responsive, _s, _d = probe_latency(
+        ExtractorConfig(kind=ExtractorKind.OLLAMA.value),
+        session=Flaky(), sleep=lambda _s: None,
+    )
+    assert responsive is True
+
+
+def test_the_model_is_kept_resident_between_the_calls_of_a_sweep():
+    """Cold-loading costs ~15-20s and generation under a second, so without
+    keep_alive a 12-team sweep pays the load twelve times and times out."""
+    from super6.knowledge.config import DEFAULT_KEEP_ALIVE, ExtractorConfig
+
+    assert ExtractorConfig().keep_alive == DEFAULT_KEEP_ALIVE
+    assert DEFAULT_KEEP_ALIVE.endswith("m")
+
+    import inspect
+
+    from super6.knowledge import ollama
+
+    source = inspect.getsource(ollama.OllamaClaimExtractor)
+    assert '"keep_alive": self.config.keep_alive' in source
+
+
+def test_a_failing_probe_never_rewrites_the_user_setting():
+    """The host being slow for ten minutes is not a decision to turn the
+    feature off, and rewriting the preference would lose the difference
+    between what the user chose and what we observed."""
+    import inspect
+
+    from super6 import worker
+
+    source = inspect.getsource(worker)
+    assert "extractor_is_responsive" in source
+    for forbidden in ("enabled=False", '"enabled": False', "save_ui_state"):
+        assert forbidden not in source, forbidden

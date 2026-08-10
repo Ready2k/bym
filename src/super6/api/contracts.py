@@ -225,6 +225,12 @@ class SystemHealth(Contract):
     ollama_reachable: str = "UNKNOWN"
     ollama_model_available: str = "UNKNOWN"
     database_schema_version: int = 0
+    # Observed reliability of the last extraction attempts, not a synthetic
+    # probe: a reachable host that times out on every article is the failure
+    # mode that actually occurred, and only real runs reveal it.
+    extraction_recent_total: int = 0
+    extraction_recent_failed: int = 0
+    extraction_last_error: str = ""
     warnings: list[str] = field(default_factory=list)
 
 

@@ -1469,8 +1469,21 @@ def research_now(payload: dict, config: WebConfig) -> dict:
             "spend what is left before the deadline."
         )
 
-    rnd = load_round(config.round_path)
     extractor = build_extractor(extractor_config)
+    if not payload.get("force") and not worker_mod.extractor_is_responsive(extractor):
+        # Refused rather than silently burning 36 credits on searches whose
+        # articles cannot be read. `force` is the "gather evidence now,
+        # extract later" escape hatch: evidence is stored independently of
+        # extraction, so the articles are not wasted — they can be
+        # re-extracted once the model keeps up.
+        raise ValueError(
+            "The model did not answer a trivial prompt in three attempts, so "
+            "no credits were spent. Check Ollama is running, or retry with "
+            "'gather evidence anyway' to cache the articles for later "
+            "extraction."
+        )
+
+    rnd = load_round(config.round_path)
     accepted = rejected = failures = 0
     with db.connect(config.database_path) as conn:
         for fixture in rnd.fixtures:

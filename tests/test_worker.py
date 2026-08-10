@@ -312,3 +312,25 @@ def test_poll_failure_does_not_kill_the_loop(monkeypatch, tmp_path, router):
         assert reloaded.status == "PENDING"  # retried, not abandoned
         assert "API timeout" in reloaded.last_error
     assert any(e.event_type == "POLL_FAILED" for e in events.load(log))
+
+
+def test_a_sweep_is_skipped_rather_than_paid_for_when_the_model_is_silent(monkeypatch):
+    """Every recorded extraction failure connected fine and then timed out,
+    so the searches were paid for and the claims never arrived. The credits
+    go before the model is ever asked to read anything."""
+    import inspect
+
+    from super6 import worker
+
+    source = inspect.getsource(worker._run_knowledge_job)
+    assert "extractor_is_responsive" in source
+    # And the skip must come before any research call spends credits.
+    assert source.index("extractor_is_responsive") < source.index("knowledge_worker.research")
+
+
+def test_an_extractor_with_no_ollama_config_is_treated_as_responsive():
+    """The null extractor costs nothing and has nothing to probe."""
+    from super6.worker import extractor_is_responsive
+
+    assert extractor_is_responsive(None) is True
+    assert extractor_is_responsive(object()) is True

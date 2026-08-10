@@ -28,7 +28,8 @@ from enum import Enum
 
 DEFAULT_OLLAMA_BASE_URL = "http://Desktop-HomePC.local:11434"
 DEFAULT_OLLAMA_MODEL = "llama3.1"
-DEFAULT_TIMEOUT_SECONDS = 120
+DEFAULT_TIMEOUT_SECONDS = 180  # was 120: measured cold-load alone is ~20s
+DEFAULT_KEEP_ALIVE = "15m"
 
 
 class ExtractorKind(str, Enum):
@@ -52,6 +53,13 @@ class ExtractorConfig:
     base_url: str = DEFAULT_OLLAMA_BASE_URL
     model: str = DEFAULT_OLLAMA_MODEL
     timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS
+    # How long Ollama keeps the model resident after a call. Measured on a
+    # real host, loading is ~15-20s and dominates a short extraction, while
+    # generation is under a second. Sweeps run 12 teams back to back, so
+    # without this every one of them pays the load again — the single
+    # biggest cause of the 120s timeouts that failed 34% of calls.
+    # Ollama's own default is 5m, which expires between scheduled sweeps.
+    keep_alive: str = DEFAULT_KEEP_ALIVE
 
     @property
     def host(self) -> str:

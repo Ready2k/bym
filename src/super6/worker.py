@@ -344,6 +344,24 @@ def _run_knowledge_job(
                 round_number=rnd.round_number, now=now,
             )
         )
+    elif not extractor_is_responsive(extractor):
+        # Never spend Tavily credits on a sweep the model cannot finish.
+        # Every recorded extraction failure connected fine and then timed
+        # out, so the searches were paid for and the claims never arrived.
+        # The user's setting is deliberately NOT changed: the host being
+        # slow for ten minutes is not a decision to turn the feature off,
+        # and rewriting their preference would lose the difference between
+        # what they chose and what we observed.
+        emitted.append(
+            events.make_event(
+                events.EventType.POLL_FAILED,
+                events.Severity.NOTICE,
+                "Knowledge research skipped: the extractor did not answer a "
+                "trivial prompt in three attempts, so no Tavily credits were "
+                "spent. It resumes automatically once the model responds.",
+                round_number=rnd.round_number, now=now,
+            )
+        )
     else:
         for fixture in rnd.fixtures:
             for team in (fixture.home, fixture.away):
@@ -365,6 +383,23 @@ def _run_knowledge_job(
             rnd.deadline_at, now, budget_constrained=knowledge_budget_low()
         ),
     )
+
+
+def extractor_is_responsive(extractor) -> bool:
+    """Will a real extraction finish, not merely connect?
+
+    Reachability is the wrong question — `probe_latency` times an actual
+    generation instead. Extractors without a config (the null extractor,
+    or a test double) are treated as responsive: they cost nothing and
+    have nothing to probe.
+    """
+    config = getattr(extractor, "config", None)
+    if config is None or getattr(config, "kind", "null") != "ollama":
+        return True
+    from .knowledge.ollama import probe_latency
+
+    responsive, _seconds, _detail = probe_latency(config)
+    return responsive
 
 
 def knowledge_budget_low(quota_path: Path | None = None) -> bool:

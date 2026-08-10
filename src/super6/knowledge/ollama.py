@@ -227,6 +227,11 @@ class OllamaClaimExtractor:
             "stream": False,
             "format": claims_json_schema(),
             "options": {"temperature": 0},
+            # Keep the model resident between the dozen calls a sweep
+            # makes. Cold-loading costs ~15-20s on a real host and
+            # generation costs under a second, so without this a sweep
+            # pays the load twelve times over and times out.
+            "keep_alive": self.config.keep_alive,
             "messages": [
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": build_user_prompt(evidence)},
@@ -330,6 +335,13 @@ class OllamaHealth:
     extractor: str
     detail: str = ""
     models_seen: int = 0
+    # Seconds the model took to answer a trivial prompt, or None if not
+    # probed. Reachability alone is a poor predictor of whether extraction
+    # will succeed: every one of the 23 recorded failures connected fine
+    # and then timed out, so a /api/tags ping would have passed all of
+    # them and the Tavily credits would have been spent regardless.
+    responded_in: float | None = None
+    responsive: bool | None = None
 
     def describe(self) -> str:
         lines = [
@@ -343,6 +355,65 @@ class OllamaHealth:
         if self.detail:
             lines.append(f"Detail: {self.detail}")
         return "\n".join(lines)
+
+
+def probe_latency(
+    config: ExtractorConfig,
+    session=None,
+    attempts: int = 3,
+    gap_seconds: float = 2.0,
+    sleep=None,
+) -> tuple[bool, float | None, str]:
+    """Time a trivial generation, retrying a few times with gaps.
+
+    Returns (responsive, seconds, detail). The point is to answer "will a
+    real extraction finish inside the timeout?", which reachability cannot:
+    a host can accept the connection instantly and still take three minutes
+    to load a model. Several attempts because the first call after an idle
+    period pays the cold-load cost that later ones do not, and one slow
+    reading should not condemn a working host.
+    """
+    import time as _time
+
+    session = session or requests
+    sleep = sleep or _time.sleep
+    last_detail = "not probed"
+    for attempt in range(1, attempts + 1):
+        started = _time.monotonic()
+        try:
+            response = session.post(
+                f"{config.base_url.rstrip('/')}/api/generate",
+                json={
+                    "model": config.model,
+                    "prompt": "Reply with exactly: OK",
+                    "stream": False,
+                    "keep_alive": config.keep_alive,
+                    "options": {"temperature": 0, "num_predict": 4},
+                },
+                timeout=config.timeout_seconds,
+            )
+        except requests.Timeout:
+            last_detail = (
+                f"attempt {attempt}: no response within "
+                f"{config.timeout_seconds}s"
+            )
+        except requests.RequestException as exc:
+            last_detail = f"attempt {attempt}: {type(exc).__name__}"
+        else:
+            elapsed = _time.monotonic() - started
+            if response.status_code < 400:
+                return True, round(elapsed, 1), (
+                    f"answered a trivial prompt in {elapsed:.0f}s"
+                    + (
+                        " — slow, so long articles may still time out"
+                        if elapsed > config.timeout_seconds / 3
+                        else ""
+                    )
+                )
+            last_detail = f"attempt {attempt}: HTTP {response.status_code}"
+        if attempt < attempts:
+            sleep(gap_seconds)
+    return False, None, last_detail
 
 
 def check_health(
