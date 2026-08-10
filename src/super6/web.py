@@ -1009,7 +1009,19 @@ def _league_payload(
             golden_goal_actual[(int(season_text), int(round_text))] = minute
         except (TypeError, ValueError):
             continue
-    table = league_standings(history, results, golden_goal_actual)
+    # The league table is this season's bragging rights, not an all-time
+    # ledger — a new season (a round whose deadline falls in a later year)
+    # starts every participant back at 0-0 with no manual reset. Opponent
+    # modelling below still learns from the unfiltered `history` across
+    # every season recorded, since behavioural tendencies only get more
+    # reliable with more evidence.
+    season = _season_for(rnd)
+    season_history = [record for record in history if record.season == season]
+    season_results = {key: value for key, value in results.items() if key[0] == season}
+    season_golden_goal_actual = {
+        key: value for key, value in golden_goal_actual.items() if key[0] == season
+    }
+    table = league_standings(season_history, season_results, season_golden_goal_actual)
     # You belong in your own league table from the start. Without this you
     # appear only once a round of yours has been scored, which also means
     # the P(finish 1st) column has nobody to show a figure against.
@@ -1026,6 +1038,7 @@ def _league_payload(
         ))
     favourite, team_bias, chase_defend = _opponent_bias_payload(history, results, config)
     payload = {
+        "season": season,
         "standings": [asdict(row) for row in table],
         "profiles": [asdict(profile) for profile in opponent_profiles(history)],
         "favourite_bias": [asdict(item) for item in favourite],
@@ -1058,7 +1071,6 @@ def _league_payload(
     # the model's own — the thing a strategy pick is a deviation *from*.
     if recommendation is not None:
         raw_picks = [f"{f.pick_home}-{f.pick_away}" for f in recommendation.fixtures]
-        season = _season_for(rnd)
         rivals = {
             record.participant
             for record in history

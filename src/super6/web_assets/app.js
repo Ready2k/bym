@@ -299,12 +299,18 @@ function emptyState(title, copy, action = "") {
   return `<section class="empty-state"><p class="eyebrow">Nothing to review</p><h2>${escapeHtml(title)}</h2><p>${escapeHtml(copy)}</p>${action}</section>`;
 }
 
+function seasonLabel(season) {
+  return season ? `${season}/${String(season + 1).slice(-2)}` : "";
+}
+
 function leagueView() {
   const league = appData.league;
   const name = appData.settings.league_name;
-  if (!league.standings.length) return `${pageHeader(name, "League position", "Add opponent predictions and entered picks, then record final results to build the private-league table.")}${emptyState("No scored private-league rounds yet", "Opponent selections are kept locally and never collected from Sky.", '<button class="button" data-page="opponents">Import opponent predictions</button>')}`;
+  const season = seasonLabel(league.season);
+  if (!league.standings.length) return `${pageHeader(name, "League position", `Add opponent predictions and entered picks, then record final results to build the ${season} private-league table. Every new season starts back at 0-0 automatically.`)}${emptyState("No scored private-league rounds yet", "Opponent selections are kept locally and never collected from Sky.", '<button class="button" data-page="opponents">Import opponent predictions</button>')}`;
   const first = league.finish_first ? percent(league.finish_first.probability) : "Not estimated";
-  return `${pageHeader(name, "League position", "Every point below is calculated from your recorded picks and final results.")}<section class="stat-table-card"><table><thead><tr><th>Rank</th><th>Player</th><th>Points</th><th>Exact</th><th>Golden Goal avg.</th><th>Rounds</th><th>P(Finish 1st)</th></tr></thead><tbody>${league.standings.map((row) => `<tr class="${row.participant === appData.settings.player_name ? "you-row" : ""}"><td>${row.rank}</td><td>${escapeHtml(row.participant)}</td><td>${row.points}</td><td>${row.exact_scores}</td><td>${row.golden_goal_average_distance === null || row.golden_goal_average_distance === undefined ? "—" : `${row.golden_goal_average_distance} min`}</td><td>${row.rounds_scored}</td><td>${row.participant === appData.settings.player_name ? first : "—"}</td></tr>`).join("")}</tbody></table></section><section class="callout muted"><strong>Tiebreak order (§27)</strong><span>Points, then most correct exact scores, then closest average Golden Goal guess. Only a tie surviving all three actually splits.</span></section>${seasonStrategyPanel()}${strategyPanel()}<section class="callout muted"><strong>How P(1st) is estimated</strong><span>${escapeHtml(league.finish_first_reason)}</span></section>`;
+  const seasonHeadline = "League position — " + season + " season";
+  return `${pageHeader(name, seasonHeadline, "Every point below is calculated from your recorded picks and final results, scoped to this season only.")}<section class="stat-table-card"><table><thead><tr><th>Rank</th><th>Player</th><th>Points</th><th>Exact</th><th>Golden Goal avg.</th><th>Rounds</th><th>P(Finish 1st)</th></tr></thead><tbody>${league.standings.map((row) => `<tr class="${row.participant === appData.settings.player_name ? "you-row" : ""}"><td>${row.rank}</td><td>${escapeHtml(row.participant)}</td><td>${row.points}</td><td>${row.exact_scores}</td><td>${row.golden_goal_average_distance === null || row.golden_goal_average_distance === undefined ? "—" : `${row.golden_goal_average_distance} min`}</td><td>${row.rounds_scored}</td><td>${row.participant === appData.settings.player_name ? first : "—"}</td></tr>`).join("")}</tbody></table></section><section class="callout muted"><strong>Tiebreak order (§27)</strong><span>Points, then most correct exact scores, then closest average Golden Goal guess. Only a tie surviving all three actually splits.</span></section>${seasonStrategyPanel()}${strategyPanel()}<section class="callout muted"><strong>How P(1st) is estimated</strong><span>${escapeHtml(league.finish_first_reason)}</span></section>`;
 }
 
 // §12-13: judges a candidate by its effect on P(Finish 1st) at the end of

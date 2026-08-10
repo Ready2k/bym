@@ -202,6 +202,34 @@ def test_league_payload_ranks_by_golden_goal_after_a_points_and_exact_tie(tmp_pa
     assert standings["Steve"]["golden_goal_average_distance"] == 20
 
 
+def test_league_table_resets_each_season_but_opponent_profiles_keep_history(tmp_path):
+    """A new season starts the private-league table back at 0-0 with no
+    manual reset, since `_league_payload` scopes `league_standings` to the
+    round's own season. Opponent behavioural profiles are a different
+    story — they keep learning from every season ever recorded, since more
+    evidence only makes favourite bias / conservatism etc. more reliable."""
+    from super6.league import record_opponent_round
+    from super6.web import _league_payload, save_ui_state
+
+    config = configured_round(tmp_path)
+    scores = [(2, 0), (1, 1), (2, 1), (1, 2), (3, 0), (1, 2)]
+    # Dave racked up a full house of points last season (2025).
+    record_opponent_round("Dave", 2025, 38, scores, path=config.opponent_history_path)
+    state = load_ui_state(config.ui_state_path)
+    state["results"]["2025:38"] = ["2-0", "1-1", "2-1", "1-2", "3-0", "1-2"]
+    save_ui_state(state, config.ui_state_path)
+
+    # `payload()`'s deadline is in 2026 — a new season, no picks recorded yet.
+    rnd = load_round(config.round_path)
+    assert rnd.deadline_at.year == 2026
+    state = load_ui_state(config.ui_state_path)
+    result = _league_payload(rnd, state, config)
+
+    assert result["season"] == 2026
+    assert not any(row["participant"] == "Dave" for row in result["standings"])
+    assert any(profile["participant"] == "Dave" for profile in result["profiles"])
+
+
 def test_ollama_is_not_probed_when_the_optional_extractor_is_disabled(monkeypatch):
     monkeypatch.delenv("CLAIM_EXTRACTOR", raising=False)
     health, config = ollama_status()
