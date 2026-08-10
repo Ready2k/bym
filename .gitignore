@@ -2,7 +2,13 @@
 __pycache__/
 *.pyc
 *.egg-info/
-data/
+# The Football-Data corpus, at the repo root only. Anchored deliberately:
+# an unanchored `data/` matches a directory of that name at ANY depth, and
+# silently excluded the whole of src/super6/data/ — the Football-Data
+# ingestion package — from the repository. web.py and cli.py import it at
+# module level, so a fresh clone could not import super6 at all.
+/data/
+research/data/
 secrets/
 .pytest_cache/
 .run/

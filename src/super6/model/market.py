@@ -20,6 +20,8 @@ from __future__ import annotations
 
 import numpy as np
 
+from dataclasses import replace
+
 from .matrix import ScoreMatrix
 
 
@@ -144,3 +146,161 @@ def blend_matrix(
         matrix.lambda_away,
         matrix.rho,
     )
+
+
+# ---------------------------------------------------------------------------
+# §32.3 Option B, generalised: constraining a marginal other than the result
+#
+# The 1X2 blend above reweights three result buckets. A handicap and a
+# total constrain different marginals — supremacy (home - away) and goal
+# count (home + away) — which is exactly what a 1X2 price cannot say
+# anything about, and exactly what an exact-score competition is scored on.
+#
+# Both markets, and every handicap line type, reduce to one statement.
+# A stake on the home side of any of them returns, per scoreline, some
+# fraction won (`f_win`) and some fraction lost (`f_lose`), the remainder
+# being pushed back. Fair decimal odds `o` satisfy
+#
+#     (o - 1) * E[f_win] = E[f_lose]      =>      1/o = E[f_win] / (E[f_win] + E[f_lose])
+#
+# so the devigged price *is* an estimate of that ratio. Half lines make
+# f_win/f_lose zero-or-one; whole lines push an entire scoreline; quarter
+# lines split the stake across two adjacent lines and so push half of it.
+# One formulation covers all three rather than three special cases.
+
+
+def implied_two_way(odds_home: float, odds_away: float) -> tuple[float, float]:
+    """Proportional margin removal for a two-outcome book.
+
+    The same §32.1 method the 1X2 path uses. Shin's is available but was
+    not promoted (ablation_007), and a two-way book carries less margin
+    for it to act on anyway.
+    """
+    inv = np.array([1.0 / odds_home, 1.0 / odds_away], dtype=float)
+    q = inv / inv.sum()
+    return float(q[0]), float(q[1])
+
+
+def _margin_grid(max_goals: int) -> np.ndarray:
+    goals = np.arange(max_goals + 1)
+    return goals[:, None] - goals[None, :]
+
+
+def _total_grid(max_goals: int) -> np.ndarray:
+    goals = np.arange(max_goals + 1)
+    return goals[:, None] + goals[None, :]
+
+
+def _settlement(value: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Stake fractions won and lost for a bet settling on `value > 0`."""
+    return (value > 0).astype(float), (value < 0).astype(float)
+
+
+def handicap_weights(line: float, max_goals: int) -> tuple[np.ndarray, np.ndarray]:
+    """Per-scoreline win/lose stake fractions for the home side of an Asian
+    handicap at `line` (Football-Data's `AHh`: negative means home gives
+    goals).
+
+    A quarter line is genuinely half a bet on each adjacent line, so it is
+    modelled as exactly that rather than rounded to the nearest half — the
+    rounding would be a silent quarter-goal lie on 53% of fixtures, which
+    is the most common line type in the corpus.
+    """
+    margin = _margin_grid(max_goals)
+    quarter = abs(line * 4) % 2 == 1  # ±.25 / ±.75
+    lines = (line - 0.25, line + 0.25) if quarter else (line, line)
+    win = np.zeros_like(margin, dtype=float)
+    lose = np.zeros_like(margin, dtype=float)
+    for component in lines:
+        component_win, component_lose = _settlement(margin + component)
+        win += 0.5 * component_win
+        lose += 0.5 * component_lose
+    return win, lose
+
+
+def totals_weights(line: float, max_goals: int) -> tuple[np.ndarray, np.ndarray]:
+    """Per-scoreline win/lose stake fractions for the OVER side of a totals
+    market. 2.5 is a half line, so nothing ever pushes; the general form is
+    kept so a whole or quarter total needs no new code."""
+    total = _total_grid(max_goals)
+    quarter = abs(line * 4) % 2 == 1
+    lines = (line - 0.25, line + 0.25) if quarter else (line, line)
+    win = np.zeros_like(total, dtype=float)
+    lose = np.zeros_like(total, dtype=float)
+    for component in lines:
+        component_win, component_lose = _settlement(total - component)
+        win += 0.5 * component_win
+        lose += 0.5 * component_lose
+    return win, lose
+
+
+def constrain_matrix(
+    matrix: ScoreMatrix,
+    win: np.ndarray,
+    lose: np.ndarray,
+    market_probability: float,
+    weight: float,
+) -> ScoreMatrix:
+    """Reweight a score matrix so a market's implied probability is matched.
+
+    Each scoreline's mass is split into the fraction the bet wins, the
+    fraction it loses and the remainder it pushes. The win and lose
+    components are scaled to hit the blended target; pushed mass is left
+    alone, because a market that returns your stake on 1-0 has said
+    nothing about how likely 1-0 was. Within each side the relative shape
+    is untouched — §32.3 Option B's guarantee, applied to a different
+    partition.
+
+    The rescaled components sum back to exactly 1 by construction, so no
+    renormalisation is needed and none is done: renormalising would hide
+    an arithmetic error rather than prevent one.
+
+    Returns the matrix unchanged when the market carries no information
+    for it — a line so extreme that every scoreline in range falls on one
+    side has nothing to redistribute *between*.
+    """
+    if not 0.0 <= weight <= 1.0:
+        raise ValueError(f"blend weight must be in [0,1], got {weight}")
+    probs = matrix.probs
+    won, lost = float((probs * win).sum()), float((probs * lose).sum())
+    if won <= 0.0 or lost <= 0.0:
+        return matrix
+    model_probability = won / (won + lost)
+    target = weight * market_probability + (1.0 - weight) * model_probability
+    push = 1.0 - win - lose
+
+    # Scale the won and lost components by s_win / s_lose. The naive
+    # choice — scale each side so its mass becomes the target share — is
+    # right only when nothing pushes. On a quarter line a scoreline is half
+    # won and half pushed, so its *pushed* half still carries win weight
+    # when the ratio is measured again afterwards, and the constraint lands
+    # short. Since 53% of the corpus's lines are quarters, that is the
+    # common case, not an edge one.
+    #
+    # Solve for the pair that makes the re-measured ratio exactly the
+    # target while conserving total mass. No scoreline is ever both won and
+    # lost, so the cross terms vanish and the system is linear:
+    #
+    #   A·s_win + C = target · (A·s_win + C + E·s_lose + F)
+    #   W·s_win + L·s_lose = W + L
+    a_term = float((probs * win * win).sum())
+    c_term = float((probs * push * win).sum())
+    e_term = float((probs * lose * lose).sum())
+    f_term = float((probs * push * lose).sum())
+
+    denominator = (1.0 - target) * a_term + target * e_term * won / lost
+    if denominator <= 0.0:
+        return matrix
+    s_win = (
+        target * f_term
+        - (1.0 - target) * c_term
+        + target * e_term * (won + lost) / lost
+    ) / denominator
+    s_lose = (won + lost - won * s_win) / lost
+    if s_win < 0.0 or s_lose < 0.0:
+        # The target is unreachable without a negative probability. Leave
+        # the forecast alone rather than clip into something unfalsifiable.
+        return matrix
+
+    adjusted = probs * (win * s_win + lose * s_lose + push)
+    return replace(matrix, probs=adjusted)

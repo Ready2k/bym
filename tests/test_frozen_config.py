@@ -40,6 +40,8 @@ def test_ablation_007_candidates_stay_out_of_the_production_path():
     # The frozen arm carries no knowledge of either candidate.
     assert not hasattr(FROZEN_PHASE1_V1, "devig")
     assert not hasattr(FROZEN_PHASE1_V1, "elo_mov")
+    assert not hasattr(FROZEN_PHASE1_V1, "totals_blend")
+    assert not hasattr(FROZEN_PHASE1_V1, "handicap_blend")
     assert FROZEN_PHASE1_V1.market_blend_weight == 0.5
     assert FROZEN_PHASE1_V1.xi == 0.003
 
@@ -48,6 +50,9 @@ def test_ablation_007_candidates_stay_out_of_the_production_path():
     assert defaults["devig"].default == "proportional"
     assert defaults["elo_mov"].default is False
     assert defaults["use_elo"].default is False
+    # ablation_008's two rejected market constraints, same discipline.
+    assert defaults["totals_blend"].default is None
+    assert defaults["handicap_blend"].default is None
     assert inspect.signature(elo.compute).parameters["margin_of_victory"].default is False
 
     # The incumbent devig is what an unconfigured caller gets.

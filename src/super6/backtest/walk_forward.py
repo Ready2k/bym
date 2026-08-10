@@ -58,6 +58,8 @@ def run_model(
     elo_mov: bool = False,
     market_blend: float | None = None,
     devig: str = "proportional",
+    totals_blend: float | None = None,
+    handicap_blend: float | None = None,
     promoted_priors: priors.PromotedPriors | None = None,
     season_decay: float = 1.0,
     cfg: ModelConfig = DEFAULT_MODEL,
@@ -90,6 +92,15 @@ def run_model(
     devig selects §32.1's margin-removal method for those odds:
     "proportional" (the incumbent) or "shin". Only meaningful alongside
     market_blend.
+
+    totals_blend / handicap_blend apply the same Option B idea to the
+    over/under 2.5 and Asian-handicap markets, which constrain goal count
+    and supremacy rather than the result. Both are independent of
+    market_blend and of each other, so an ablation can attribute any
+    change to one market. Applied after the 1X2 blend, so they refine a
+    matrix the result market has already shaped; a fixture missing that
+    market's price is left alone, the same graceful degradation h2h odds
+    already get.
 
     promoted_priors (§29.4): per-division fits give each team newly
     arrived in its division *this test season* a Gaussian prior on (α, β)
@@ -173,6 +184,18 @@ def run_model(
             if market_blend is not None and pd.notna(r["odds_h"]):
                 mh, md, ma = implied(r["odds_h"], r["odds_d"], r["odds_a"])
                 m = market.blend_matrix(m, mh, md, ma, market_blend)
+            if totals_blend is not None and pd.notna(r.get("odds_over25")):
+                over, _under = market.implied_two_way(
+                    r["odds_over25"], r["odds_under25"]
+                )
+                win, lose = market.totals_weights(2.5, m.max_goals)
+                m = market.constrain_matrix(m, win, lose, over, totals_blend)
+            if handicap_blend is not None and pd.notna(r.get("odds_ah_h")) and pd.notna(r.get("ah_line")):
+                home_cover, _away = market.implied_two_way(
+                    r["odds_ah_h"], r["odds_ah_a"]
+                )
+                win, lose = market.handicap_weights(float(r["ah_line"]), m.max_goals)
+                m = market.constrain_matrix(m, win, lose, home_cover, handicap_blend)
             ph, pa = m.best_pick()
             p_result, p_score = m.p_result(ph, pa), m.p_score(ph, pa)
             rows.append(

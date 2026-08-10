@@ -32,3 +32,30 @@ def test_closing_odds_nan_when_absent(tmp_path):
     df = parse_season_csv(p, 2015, "E0")
     assert df.iloc[0]["odds_h"] == pytest.approx(1.50)
     assert df["odds_ch"].isna().all()
+
+
+def test_the_corpus_carries_handicap_and_totals_odds_all_along():
+    """docs/next_steps.md item 3 said no historical odds existed for these
+    markets. They were always there at ~100% coverage — the parser simply
+    never read the columns."""
+    from pathlib import Path
+
+    from super6.data.football_data import load_matches
+
+    matches = load_matches(Path("data"), [2024], ("E0",), fetch=False)
+    for column in ("ah_line", "odds_ah_h", "odds_ah_a", "odds_over25", "odds_under25"):
+        assert column in matches.columns
+        assert matches[column].notna().mean() > 0.95, column
+    # And the closing set, for the MARKET-ORACLE side of the split.
+    for column in ("ah_cline", "odds_cah_h", "odds_cover25"):
+        assert matches[column].notna().mean() > 0.95, column
+
+
+def test_handicap_lines_are_the_quarter_grid_the_market_actually_quotes():
+    from pathlib import Path
+
+    from super6.data.football_data import load_matches
+
+    lines = load_matches(Path("data"), [2024], ("E0",), fetch=False)["ah_line"].dropna()
+    assert ((lines * 4) % 1 == 0).all(), "lines should fall on the quarter grid"
+    assert lines.between(-4, 4).all()

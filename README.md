@@ -236,11 +236,12 @@ explicitly, at the extra credit cost that implies (§25). Not consumed by
 the forecast: Football-Data.co.uk, the backtesting corpus, has no
 historical totals odds to validate a use against per §28's ablation
 rule — captured for §6's "capture where available" and a future
-prospective ablation, not wired into `P(score)`. Asian handicap, BTTS and
-correct-score markets remain unfetched — though the *historical* corpus
-does carry Asian handicap and over/under 2.5 at ~100% coverage (the
-parser has simply never read those columns), so that half is ablatable
-today. See next_steps.md item 3.
+prospective ablation, not wired into `P(score)`. BTTS and correct-score
+markets remain unfetched and have no historical corpus to validate
+against. Asian handicap and over/under 2.5 *are* in the historical
+corpus at ~100% coverage and are now parsed; both were tested as score-
+matrix constraints on 2026-08-10 and **neither was promoted** —
+[results/ablation_008](results/ablation_008_totals_and_handicap.md).
 
 **Measurement is prospective** through 2026/27 —
 [results/prospective_2026_27.md](results/prospective_2026_27.md). No Phase

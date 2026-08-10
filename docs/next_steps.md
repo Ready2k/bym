@@ -20,22 +20,18 @@ scores > Golden Goal/national prizes > 100 Club) and that measurement is
 prospective-only now (2025/26 holdout is spent and grid-searched,
 VALIDATION.md):
 
-1. **§3's Asian handicap + totals half** — highest potential leverage
-   left, and *not* blocked: the corpus has both markets at ~100% coverage
-   and the parser simply never read them (see the correction under item
-   3). They price supremacy and goal count, which bear on `λ` far more
-   directly than 1X2 does.
-2. **§4's free routes** — the shots-based proxy and the "is there really
-   no free xG source?" research, both of which were wrongly filed under a
-   budget decision that only applies to a paid feed.
-3. Items 1 and 2 wait on elapsed rounds rather than on anyone's time.
+1. **§4's free routes** — the shots-based proxy and the "is there really
+   no free xG source?" research, both wrongly filed under a budget
+   decision that only applies to a paid feed. The cheapest work left.
+2. Items 1 and 2 wait on elapsed rounds rather than on anyone's time.
    §5 whenever a conversational layer would genuinely help.
 
-Both §3 and §4 lead to ablations, and with the 2025/26 holdout spent an
-ablation can now only *retire* a candidate, not promote one — promotion
-needs prospective evidence. That is a reason to run them (retiring a
-candidate cheaply is worth it) but not a reason to expect a model change
-at the end.
+§4 leads to an ablation, and with the 2025/26 holdout spent an ablation
+can now only *retire* a candidate, not promote one — promotion needs
+prospective evidence. That is a reason to run one (retiring a candidate
+cheaply is worth it) but not a reason to expect a model change at the
+end. Three candidates have now been retired this way: Shin's method,
+MOV-Elo (ablation_007), and totals + Asian handicap (ablation_008).
 
 Five items left this file on 2026-08-09. The round-file rename is done —
 `rounds/` now holds one real round per file, named
@@ -150,64 +146,36 @@ sit at zero indefinitely without that.
 
 ---
 
-## 3. Asian handicap / BTTS / correct-score markets (§6)
+## 3. BTTS / correct-score markets (§6)
 
-**What.** Only `h2h` and opt-in `totals` are fetched today
+**What.** Only `h2h` and opt-in `totals` are fetched live today
 (`sources/odds_api.py`).
 
-**Correction, 2026-08-09.** This item previously said "no historical odds
-for these markets exist in the Football-Data.co.uk backtesting corpus".
-**That is false for Asian handicap and totals**, and the error made a
-ready piece of work look blocked. Checked directly against `data/`:
+**Asian handicap and totals are done — tested 2026-08-10, both rejected.**
+See [results/ablation_008_totals_and_handicap.md](../results/ablation_008_totals_and_handicap.md).
+The historical odds *were* in the corpus all along at ~100% coverage; the
+parser never read them, and this item wrongly recorded that as "no data
+exists". Both markets are now parsed into the canonical frame (pre-match
+and closing) and both constraints are implemented behind
+`totals_blend` / `handicap_blend`, neither promoted.
 
-```text
-column                          coverage (2019-2025, E0 + E1)
-AHh, AvgAHH, AvgAHA, B365AHH…   ~100%   Asian handicap, pre-match
-AHCh, AvgCAHH, B365CAHH…        ~100%   Asian handicap, closing
-Avg>2.5, Avg<2.5, B365>2.5…     ~100%   over/under 2.5, pre-match
-AvgC>2.5, B365C>2.5…            ~100%   over/under 2.5, closing
-BTTS, correct score             absent  no such columns in any season
-```
+The reason they fail is worth keeping, because it is not "the market
+knows nothing": model and market disagree by ~5-6pp on goal count and
+supremacy, but with ~zero *mean* difference. The disagreement is
+symmetric, so correcting toward the market adds variance without removing
+bias. A candidate has to be better in a *directional* way to survive
+blending, which is what the 1X2 market was and these are not.
 
-Both come with the pre-match/closing pair, so the MARKET-AVAILABLE vs
-MARKET-ORACLE split VALIDATION.md already relies on for h2h applies
-unchanged. The parser simply never read these columns
-(`data/football_data.py:_pick_odds` selects h2h only) — the data was
-always there.
+**Still blocked: BTTS and correct score.** Neither appears in the corpus
+in any season — unlike the two above, that claim was checked and holds.
 
-**So this splits in two.**
+**Unblock.** Either find a supplementary historical-odds source covering
+them, or accumulate live 2026/27 data prospectively and treat a season of
+it as the validation set (slow, but requires no new data source).
 
-*Asian handicap + totals — NOT blocked, and the more valuable half.* A
-1X2 price says nothing about how a result splits across scorelines, which
-is why §32.3 Option B has to preserve the model's own within-result
-shape. Asian handicap prices **supremacy** and totals price **goal
-count** — both of which map onto `λ_home`/`λ_away` far more directly than
-1X2 does, and Super 6 is scored on exact scorelines. This is a
-substantially stronger candidate than Shin's method was (ablation_007),
-and it can be ablated today on the 2024/25 validation season with no new
-data source.
-
-*BTTS + correct score — still blocked as originally described.* Neither
-appears in the corpus. Either find a supplementary historical source or
-accumulate live 2026/27 data prospectively and treat a season of it as
-the validation set.
-
-**Unblock (AH + totals).**
-1. Extend `_pick_odds` to read the handicap line and the AH/totals price
-   pair, pre-match and closing, alongside the existing h2h columns.
-2. Decide how they constrain the score matrix — the honest analogue of
-   §32.3 Option B is to constrain the supremacy and total-goals
-   *marginals* rather than the result distribution.
-3. Ablate against the current h2h-only blend on 2024/25 (§28).
-
-**Effort.** Medium. Step 1 is small and mechanical; step 2 is the real
-design work, and is a genuine modelling change rather than a
-re-parameterisation like Shin's.
-
-**Read this before starting.** With the 2025/26 holdout spent, a win on
-2024/25 cannot be promoted on its own — it would need prospective
-confirmation (see the note under item 4). An ablation can still retire
-the idea cheaply, which is worth doing either way.
+**Effort.** Small to fetch. The real cost is validating any use of them,
+and on current evidence the prior should be modest: two closely related
+markets have now been tested and neither helped.
 
 ---
 

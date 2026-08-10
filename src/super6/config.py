@@ -122,6 +122,12 @@ class DataConfig:
     extended_divisions: tuple[str, ...] = ("E0", "E1", "E2", "E3", "EC")
     # Bookmaker odds column preference order (first available wins).
     odds_prefixes: tuple[str, ...] = ("B365", "PS", "Avg", "BbAv", "WH")
+    # Football-Data names the derivative markets with a different prefix
+    # set from 1X2 — Pinnacle is `PSH` for the match result but `PAHH` and
+    # `P>2.5` for handicap and totals. A separate list rather than a
+    # transformation of the one above, because the mapping is not a rule,
+    # it is just how the file is laid out.
+    derivative_odds_prefixes: tuple[str, ...] = ("B365", "P", "Avg", "Max", "BFE")
 
 
 DEFAULT_MODEL = ModelConfig()
