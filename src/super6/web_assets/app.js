@@ -421,15 +421,51 @@ function modelView() {
   return `${pageHeader("Expert", "Model Lab", "Technical detail is available here without competing with the weekly decision.")}<section class="callout muted"><strong>Frozen evaluation model</strong><span>${escapeHtml(appData.model.note)} ${escapeHtml(transparency.evaluation_reason || "")}</span></section><section class="spec-grid">${values.map(([label, value]) => `<article><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></article>`).join("")}</section><section class="form-card"><h2>How a pick is selected</h2><p>The scoreline with the highest expected Super 6 value is recommended. Expected points uses the probability of the selected match result plus the probability of the exact score; confidence remains a separate category.</p><p class="subtitle">Open any fixture for its expected-value breakdown, and expand “Score matrix &amp; provenance” there for the full scoreline distribution and source freshness.</p></section>`;
 }
 
+// §18.1's registry answers three different questions, and showing them as
+// one list implied a parity that does not exist: a source nothing queries
+// sat beside six the workers depend on, looking equivalent. Group by what
+// is actually being said, and tell the user how to act where action is
+// theirs to take — a status they cannot resolve and are not told how to
+// resolve is a dead end, not governance.
+const SOURCE_GROUPS = [
+  { key: "in-use", heading: "In use", statuses: ["APPROVED"],
+    blurb: "Approved and queried by the always-on workers." },
+  { key: "awaiting", heading: "Awaiting your review", statuses: ["REVIEW_REQUIRED"],
+    blurb: "Read the terms, then approve from the command line. Nothing queries these until you do." },
+  { key: "evaluated", heading: "Evaluated — not in use", statuses: ["EVALUATED"],
+    blurb: "Assessed and deliberately not adopted. Recorded so the decision is not re-derived; nothing is pending." },
+  { key: "prohibited", heading: "Prohibited", statuses: ["PROHIBITED"],
+    blurb: "Cannot be used and cannot be promoted." },
+];
+
+function sourceCard(source) {
+  const pill = source.usage_status === "APPROVED" ? "approved"
+    : source.usage_status === "PROHIBITED" ? "prohibited" : "neutral";
+  const checked = source.terms_checked_at
+    ? `checked ${escapeHtml(source.terms_checked_at)}`
+    : (source.usage_status === "EVALUATED" ? "terms not reviewed — not needed, nothing queries it"
+                                           : "terms not reviewed yet");
+  const action = source.usage_status === "REVIEW_REQUIRED"
+    ? `<code class="source-action">super6 sources approve ${escapeHtml(source.source_id)}</code>`
+    : "";
+  return `<article class="source-card"><div><span class="status-pill ${pill}">${escapeHtml(titleCase(source.usage_status))}</span><h2>${escapeHtml(source.source_name)}</h2><p>${escapeHtml(source.acquisition_method)} · ${checked}</p></div><p>${escapeHtml(source.notes)}</p><small>Purpose: ${escapeHtml((source.purpose || []).join(", ") || "None — nothing queries this source")}</small>${action}${source.terms_url ? `<a href="${escapeHtml(source.terms_url)}" target="_blank" rel="noreferrer">View terms</a>` : ""}</article>`;
+}
+
 function sourcesView() {
-  return `${pageHeader("Evidence governance", "Sources", "Every source remains visible with its approval state, terms review and intended purpose.")}<div class="source-grid">${appData.sources.map((source) => `<article class="source-card"><div><span class="status-pill ${source.usage_status === "APPROVED" ? "approved" : source.usage_status === "PROHIBITED" ? "prohibited" : "neutral"}">${escapeHtml(titleCase(source.usage_status))}</span><h2>${escapeHtml(source.source_name)}</h2><p>${escapeHtml(source.acquisition_method)} · checked ${escapeHtml(source.terms_checked_at || "not yet")}</p></div><p>${escapeHtml(source.notes)}</p><small>Purpose: ${escapeHtml((source.purpose || []).join(", ") || "Not available")}</small>${source.terms_url ? `<a href="${escapeHtml(source.terms_url)}" target="_blank" rel="noreferrer">View terms</a>` : ""}</article>`).join("")}</div>`;
+  const all = appData.sources || [];
+  const sections = SOURCE_GROUPS.map((group) => {
+    const members = all.filter((s) => group.statuses.includes(s.usage_status));
+    if (!members.length) return "";
+    return `<section class="source-group"><div class="section-heading"><div><p class="eyebrow">${escapeHtml(group.heading)}</p><p class="subtitle">${escapeHtml(group.blurb)}</p></div></div><div class="source-grid">${members.map(sourceCard).join("")}</div></section>`;
+  }).filter(Boolean).join("");
+  return `${pageHeader("Evidence governance", "Sources", "Every source remains visible with its approval state, terms review and intended purpose.")}${sections}`;
 }
 
 function healthView() {
   const health = appData.health;
   const ollama = health.ollama || {};
   const ollamaLabel = ollama.configured ? health.ollama_reachable : "Not configured";
-  return `${pageHeader("Operational status", "System Health", "Health is visible when needed but stays out of the weekly decision flow.")}<section class="health-grid"><article><span>Scheduler</span><strong>${health.scheduler_jobs_pending ? `${health.scheduler_jobs_pending} pending` : "Ready"}</strong></article><article><span>Database</span><strong>Healthy · schema ${health.database_schema_version}</strong></article><article><span>Knowledge extractor</span><strong>${escapeHtml(health.extractor)} · ${escapeHtml(health.extractor_mode)}</strong></article><article><span>Ollama</span><strong>${escapeHtml(ollamaLabel)}</strong><small>${escapeHtml(ollama.detail || "")}</small></article></section>${health.warnings.length ? `<section class="warning-list">${health.warnings.map((warning) => `<p>${escapeHtml(warning)}</p>`).join("")}</section>` : ""}<section class="stat-table-card"><table><thead><tr><th>Source</th><th>Status</th><th>Quota</th></tr></thead><tbody>${health.sources.map((source) => `<tr><td>${escapeHtml(source.source_id)}</td><td>${escapeHtml(titleCase(source.usage_status))}</td><td>${source.quota_limit ? `${source.quota_used}/${source.quota_limit} per ${escapeHtml(source.quota_period)}` : "Not metered"}</td></tr>`).join("")}</tbody></table></section>`;
+  return `${pageHeader("Operational status", "System Health", "Health is visible when needed but stays out of the weekly decision flow.")}<section class="health-grid"><article><span>Scheduler</span><strong>${health.scheduler_jobs_pending ? `${health.scheduler_jobs_pending} pending` : "Ready"}</strong></article><article><span>Database</span><strong>Healthy · schema ${health.database_schema_version}</strong></article><article><span>Knowledge extractor</span><strong>${escapeHtml(health.extractor)} · ${escapeHtml(health.extractor_mode)}</strong><small>Research runs on a schedule, six sweeps a round.</small>${health.extractor === "NullExtractor" ? "" : `<button class="plain-button" type="button" data-action="research-now">Research now</button>`}</article><article><span>Ollama</span><strong>${escapeHtml(ollamaLabel)}</strong><small>${escapeHtml(ollama.detail || "")}</small></article></section>${health.warnings.length ? `<section class="warning-list">${health.warnings.map((warning) => `<p>${escapeHtml(warning)}</p>`).join("")}</section>` : ""}<section class="stat-table-card"><table><thead><tr><th>Source</th><th>Status</th><th>Quota</th></tr></thead><tbody>${health.sources.map((source) => `<tr><td>${escapeHtml(source.source_id)}</td><td>${escapeHtml(titleCase(source.usage_status))}</td><td>${source.quota_limit ? `${source.quota_used}/${source.quota_limit} per ${escapeHtml(source.quota_period)}` : "Not metered"}</td></tr>`).join("")}</tbody></table></section>`;
 }
 
 function settingsView() {
@@ -704,6 +740,22 @@ document.addEventListener("click", async (event) => {
   if (activityTab) { activityFilter = activityTab.dataset.activityFilter; renderPage(); }
   const action = event.target.closest("[data-action]")?.dataset.action;
   if (action === "mark-entered") openEntryDialog();
+  if (action === "research-now") {
+    const button = event.target.closest("[data-action]");
+    button.disabled = true;
+    const previous = button.textContent;
+    button.textContent = "Researching…";
+    try {
+      const result = await post("/api/research", {});
+      toast(result.message);
+      await loadApp();
+    } catch (error) {
+      toast(error.message);
+    } finally {
+      button.disabled = false;
+      button.textContent = previous;
+    }
+  }
   if (action === "find-ollama-models") {
     try {
       const form = $("#settings-form");

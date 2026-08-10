@@ -88,7 +88,11 @@ def test_an_evaluated_but_unadopted_source_is_registered_and_still_gated(tmp_pat
 
     registry = load_registry(tmp_path / "absent.json")  # seeded defaults
     record = registry["big_balls_sports_data"]
-    assert record.usage_status == UsageStatus.REVIEW_REQUIRED.value
+    # EVALUATED, not REVIEW_REQUIRED: the latter means "awaiting your terms
+    # review" — a task — and raised a System Health warning demanding action
+    # nobody intended to take. This is a record, and nothing is pending.
+    assert record.usage_status == UsageStatus.EVALUATED.value
+    assert record.usage_status != UsageStatus.REVIEW_REQUIRED.value
     assert record.purpose == [], "nothing consumes it, so it claims no purpose"
     assert record.terms_checked_at == "", "terms were never reviewed — do not imply they were"
 

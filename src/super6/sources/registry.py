@@ -10,6 +10,16 @@ harmless in a diff.
 Promotion REVIEW_REQUIRED -> APPROVED is a deliberate human act
 (`super6 sources approve`), never automatic, and is refused outright for
 PROHIBITED sources.
+
+The four statuses say different things about *who owes what*:
+
+    APPROVED         cleared; workers may query it
+    REVIEW_REQUIRED  awaiting your terms review — a task
+    EVALUATED        assessed and not adopted — a record, nothing pending
+    PROHIBITED       cannot be used, cannot be promoted
+
+Only REVIEW_REQUIRED is a call to action, and only that one raises a
+System Health warning.
 """
 
 from __future__ import annotations
@@ -26,6 +36,13 @@ DEFAULT_REGISTRY_PATH = Path("config/source_registry.json")
 class UsageStatus(str, Enum):
     APPROVED = "APPROVED"
     REVIEW_REQUIRED = "REVIEW_REQUIRED"
+    # Assessed and deliberately not adopted. Distinct from REVIEW_REQUIRED,
+    # which means "awaiting your review, and will be used once approved" —
+    # a source in that state is a task. EVALUATED is a *record*: nothing
+    # queries it, nothing is waiting on you, and it exists so the decision
+    # is not re-derived. Without this, parking a source raised a System
+    # Health warning demanding action nobody intended to take.
+    EVALUATED = "EVALUATED"
     PROHIBITED = "PROHIBITED"
 
 
@@ -183,17 +200,18 @@ def _seed() -> list[SourceRecord]:
             source_id="big_balls_sports_data",
             source_name="Big Balls Sports Data",
             acquisition_method=AcquisitionMethod.API.value,
-            usage_status=UsageStatus.REVIEW_REQUIRED.value,
+            usage_status=UsageStatus.EVALUATED.value,
             terms_url="https://bigballsdata.com/docs",
             terms_checked_at="",  # capability probed, terms NOT yet reviewed
             refresh_limit="free tier: 1000 requests/day (2000 with a GitHub account)",
             retention_policy="none — nothing queries this source",
             purpose=[],
-            notes="EVALUATED 2026-08-10 as a candidate xG source (§7) and "
-            "REJECTED for that purpose. A key is held in secrets/ as a "
-            "cross-reference, and nothing in the codebase queries it — this "
-            "entry exists so the key's presence is explained rather than "
-            "rediscovered. Probed with a live key: /v1/leagues returns 8 "
+            notes="Assessed 2026-08-10 as a candidate xG source (§7) and "
+            "not adopted. NOTHING QUERIES THIS SOURCE: there is no adapter, "
+            "purpose is empty, and no validation or cross-checking runs "
+            "against it. A key is held in secrets/ only so the option stays "
+            "open; this entry exists so its presence is explained rather "
+            "than rediscovered. Probed with a live key: /v1/leagues returns 8 "
             "competitions, England = EPL only, so NO Championship (59% of "
             "the corpus). Its advertised match-level xG does not appear in "
             "any payload — 0 of 30 finished EPL matches had any team_stats, "

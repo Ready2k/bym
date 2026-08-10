@@ -23,7 +23,7 @@
     "source_id": "big_balls_sports_data",
     "source_name": "Big Balls Sports Data",
     "acquisition_method": "API",
-    "usage_status": "REVIEW_REQUIRED",
+    "usage_status": "EVALUATED",
     "terms_url": "https://bigballsdata.com/docs",
     "terms_checked_at": "",
     "refresh_limit": "free tier: 1000 requests/day (2000 with a GitHub account)",

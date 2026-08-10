@@ -64,3 +64,80 @@ def test_round_credit_estimate_fits_free_tier():
 def test_naive_datetimes_accepted():
     naive_deadline = DEADLINE.replace(tzinfo=None)
     assert cadence.poll_interval(naive_deadline, at(hours=3).replace(tzinfo=None))
+
+
+# ---------------------------------------------------------------------------
+# §8 knowledge research runs on a news cadence, not the odds one
+
+
+def test_knowledge_research_is_six_sweeps_a_round_not_thirty_two():
+    """Team news changes maybe twice a week per team and a sweep costs 36
+    Tavily credits; odds move minute to minute and cost 1 for all six
+    fixtures. On the odds ladder a single round cost 1,152 credits against
+    a 1,000/month tier — one round exhausting a month."""
+    from datetime import datetime, timedelta, timezone
+
+    from super6 import cadence
+
+    deadline = datetime(2026, 8, 15, 14, 0, tzinfo=timezone.utc)
+
+    def sweeps(interval_fn):
+        now, count = deadline - timedelta(days=7), 0
+        while (step := interval_fn(deadline, now)) is not None:
+            count += 1
+            now += step
+            if count > 5000:
+                break
+        return count
+
+    assert sweeps(cadence.knowledge_interval) == 6
+    assert sweeps(cadence.poll_interval) == 32  # odds, unchanged
+
+
+def test_a_round_of_research_fits_inside_the_monthly_tier():
+    """Four to five rounds a month against Tavily's 1,000 free credits."""
+    from super6 import cadence
+
+    per_round = 6 * cadence.KNOWLEDGE_CREDITS_PER_PASS
+    assert per_round == 216
+    assert per_round * 4 <= 1000, "four rounds must fit"
+
+
+def test_knowledge_sweeps_are_weighted_toward_the_deadline():
+    """Confirmed lineups land in the final hours — that is when a sweep is
+    worth 36 credits, and a week out it is not."""
+    from datetime import datetime, timedelta, timezone
+
+    from super6 import cadence
+
+    deadline = datetime(2026, 8, 15, 14, 0, tzinfo=timezone.utc)
+    far = cadence.knowledge_interval(deadline, deadline - timedelta(days=6))
+    near = cadence.knowledge_interval(deadline, deadline - timedelta(hours=5))
+    assert far > near
+    assert near <= timedelta(hours=2)
+
+
+def test_a_low_budget_widens_the_knowledge_cadence_rather_than_stopping():
+    """Going silent is the failure you notice last."""
+    from datetime import datetime, timedelta, timezone
+
+    from super6 import cadence
+
+    deadline = datetime(2026, 8, 15, 14, 0, tzinfo=timezone.utc)
+    now = deadline - timedelta(hours=5)
+    normal = cadence.knowledge_interval(deadline, now)
+    degraded = cadence.knowledge_interval(deadline, now, budget_constrained=True)
+    assert degraded > normal
+    assert degraded is not None, "degrade, never stop"
+
+
+def test_the_odds_ladder_is_untouched():
+    """This change must not alter odds polling, which is separately tuned
+    and whose credits are a different order of magnitude."""
+    from datetime import timedelta
+
+    from super6 import cadence
+
+    assert cadence.LADDER[0] == (timedelta(minutes=90), timedelta(minutes=12))
+    assert cadence.BASE_INTERVAL == timedelta(days=1)
+    assert cadence.DEGRADED_MIN_INTERVAL == timedelta(minutes=30)

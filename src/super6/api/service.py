@@ -333,10 +333,37 @@ def build_system_health(
 
     warnings = []
     for source in sources:
+        # Only REVIEW_REQUIRED is a task. EVALUATED means assessed and not
+        # adopted — warning about it demands action nobody intends to take,
+        # and a warning nobody should act on trains you to ignore the panel.
         if source.usage_status == "REVIEW_REQUIRED":
             warnings.append(
-                f"{source.source_id} is REVIEW_REQUIRED — not usable until approved"
+                f"{source.source_id} is REVIEW_REQUIRED — review its terms, "
+                f"then run `super6 sources approve {source.source_id}`"
             )
+        # §25: a quota running out is the failure you notice last, because
+        # the symptom is things quietly not happening. Say it while there
+        # is still time to decide what to spend the rest on.
+        if source.quota_limit:
+            left = source.quota_limit - (source.quota_used or 0)
+            if left <= 0:
+                warnings.append(
+                    f"{source.source_id} quota EXHAUSTED for this "
+                    f"{source.quota_period} ({source.quota_used}/"
+                    f"{source.quota_limit}) — it will stop returning data"
+                )
+            elif left <= source.quota_limit * 0.2:
+                consequence = (
+                    " Knowledge research degrades to a wider cadence rather "
+                    "than going silent."
+                    if source.source_id == "tavily"
+                    else ""
+                )
+                warnings.append(
+                    f"{source.source_id} quota low: {left} of "
+                    f"{source.quota_limit} left this "
+                    f"{source.quota_period}.{consequence}"
+                )
 
     return SystemHealth(
         sources=sources,

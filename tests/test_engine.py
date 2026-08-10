@@ -381,3 +381,35 @@ def test_golden_goal_still_counts_market_only_fixtures(conn, router):
     assert fallback.round_summary.golden_goal.minute == (
         plain.round_summary.golden_goal.minute
     )
+
+
+def test_a_page_load_never_triggers_knowledge_research(tmp_path):
+    """Research is acquisition: one round is 12 teams of Tavily searches
+    plus a remote LLM call each at a 120s timeout. Running it inline made
+    every request hang and burned ~490 Tavily credits of a 1000/month tier
+    in a day. scheduler.KNOWLEDGE_RESEARCH and worker._run_knowledge_job
+    already do it on a cadence."""
+    import inspect
+
+    from super6 import web
+
+    source = inspect.getsource(web._dashboard)
+    assert "run_knowledge=False" in source, (
+        "the web layer must never ask the engine to research"
+    )
+    # Specific to the defect: research must not be switched on by the
+    # extractor being configured. `extractor_config.kind` appears elsewhere
+    # in this function for health reporting, which is fine.
+    assert "run_knowledge=extractor_config" not in source
+
+
+def test_the_engine_says_research_is_scheduled_rather_than_disabled():
+    """Reporting the knowledge layer as disabled moments after the user
+    switched it on is worse than saying nothing."""
+    import inspect
+
+    from super6 import engine
+
+    source = inspect.getsource(engine.run_engine)
+    assert "runs on the scheduled" in source
+    assert 'extractor_config.kind != "null"' in source

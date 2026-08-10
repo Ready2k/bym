@@ -312,6 +312,15 @@ def run_engine(
         notes.append(
             "knowledge: skipped (needs TAVILY_API_KEY and a configured extractor)"
         )
+    elif extractor_config is not None and extractor_config.kind != "null":
+        # Configured and running — just not from here. Without this note the
+        # UI would report the knowledge layer as disabled moments after the
+        # user switched it on, which is worse than saying nothing.
+        knowledge_summary["enabled"] = True
+        notes.append(
+            "knowledge: extractor configured; research runs on the scheduled "
+            "cadence (`super6 tick` / the always-on worker), not on page load"
+        )
 
     # ---- submission state (§46) ----------------------------------------
     from . import submission as submission_mod

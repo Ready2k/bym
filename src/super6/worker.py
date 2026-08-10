@@ -36,6 +36,15 @@ from .sources.odds_api import FREE_TIER_MONTHLY_CREDITS, credits_used_this_month
 # cadence degrades rather than exhausting credits before the deadline.
 BUDGET_DEGRADE_AT = 0.15
 
+# Tavily's free tier, and the point at which knowledge research drops to
+# the degraded ladder. A sweep costs ~36 credits and a round wants six of
+# them, so a month of four or five rounds needs ~1,000 with nothing spare.
+# Degrading is deliberate rather than stopping: going quiet is the failure
+# you notice last, and the last sweep before a deadline is the one that
+# carries confirmed lineups.
+TAVILY_FREE_TIER_MONTHLY_CREDITS = 1000
+KNOWLEDGE_DEGRADE_AT = 0.20
+
 
 @dataclass
 class PollOutcome:
@@ -345,11 +354,40 @@ def _run_knowledge_job(
                 )
                 emitted.extend(result.events)
 
+    spent = len(rnd.fixtures) * 2 * cadence.KNOWLEDGE_CREDITS_PER_PASS // 12
     return PollOutcome(
-        round_number=rnd.round_number, fixtures_covered=0, credits_spent=0,
+        round_number=rnd.round_number, fixtures_covered=0,
+        credits_spent=spent if (tavily_key and extractor) else 0,
         reforecast=0, events=emitted,
-        next_run_at=cadence.next_poll_at(rnd.deadline_at, now),
+        # The news ladder, not the odds one — six sweeps a round rather
+        # than thirty-two (see cadence.KNOWLEDGE_LADDER).
+        next_run_at=cadence.next_knowledge_at(
+            rnd.deadline_at, now, budget_constrained=knowledge_budget_low()
+        ),
     )
+
+
+def knowledge_budget_low(quota_path: Path | None = None) -> bool:
+    """True once Tavily's monthly credits are nearly gone.
+
+    Read from the same quota file the client meters against, so this
+    cannot drift from what is actually being spent.
+    """
+    from .sources import quota
+
+    path = quota_path or Path("config/tavily_quota.json")
+    try:
+        used = quota.used(
+            quota.QuotaSpec(
+                source_id="tavily", limit=TAVILY_FREE_TIER_MONTHLY_CREDITS,
+                period="month",
+            ),
+            path,
+        )
+    except (OSError, ValueError, KeyError, TypeError):
+        return False
+    remaining = TAVILY_FREE_TIER_MONTHLY_CREDITS - used
+    return remaining <= TAVILY_FREE_TIER_MONTHLY_CREDITS * KNOWLEDGE_DEGRADE_AT
 
 
 def _investigate_unexplained(

@@ -451,7 +451,19 @@ def _dashboard(config: WebConfig):
             tavily_api_key=os.environ.get("TAVILY_API_KEY"),
             extractor=build_extractor(extractor_config),
             extractor_config=extractor_config,
-            run_knowledge=extractor_config.kind == "ollama",
+            # Never from a page load. Knowledge research is acquisition:
+            # for one round it is 12 teams of Tavily searches plus a remote
+            # LLM call each, at a 120s timeout apiece. Running that inline
+            # made every request hang and burned ~490 Tavily credits of a
+            # 1000/month tier in a day — invisible until the extractor was
+            # first switched on, because `kind` was NULL before that.
+            #
+            # `scheduler.KNOWLEDGE_RESEARCH` and `worker._run_knowledge_job`
+            # already do exactly this on a cadence, and worker.py calls
+            # itself "the one place the knowledge layer runs". It now is.
+            # The UI reads the claims that produced, rather than causing
+            # them — the same rule §67 sets for the conversational layer.
+            run_knowledge=False,
         )
         health = service.build_system_health(
             conn,
@@ -1424,6 +1436,65 @@ def _record_strategy_decision(
         pass
 
 
+def research_now(payload: dict, config: WebConfig) -> dict:
+    """Run one knowledge sweep, on demand (§8).
+
+    Research left the page-load path because it is acquisition, not
+    presentation — 36 Tavily credits and a dozen remote LLM calls per
+    sweep, which made every request hang. But removing it entirely left no
+    way to say "look now", which is exactly what you want in the hour
+    before a deadline when a lineup lands.
+
+    So: explicit, one sweep, and it reports what it cost. Refused when the
+    monthly budget is nearly gone, because spending the last credits on a
+    manual click is how you arrive at the deadline blind.
+    """
+    from . import worker as worker_mod
+    from .knowledge import queries
+    from .knowledge.config import build_extractor
+    from .knowledge import worker as knowledge_worker
+
+    extractor_config = web_extractor_config(config)
+    if extractor_config.kind == "null":
+        raise ValueError(
+            "The knowledge extractor is off. Enable Ollama in Settings first."
+        )
+    tavily_key = os.environ.get("TAVILY_API_KEY")
+    if not tavily_key:
+        raise ValueError("Research needs a Tavily API key (secrets/tavily).")
+    if worker_mod.knowledge_budget_low():
+        raise ValueError(
+            "Tavily's monthly credits are nearly gone. Scheduled sweeps have "
+            "already degraded to a wider cadence; a manual sweep now would "
+            "spend what is left before the deadline."
+        )
+
+    rnd = load_round(config.round_path)
+    extractor = build_extractor(extractor_config)
+    accepted = rejected = failures = 0
+    with db.connect(config.database_path) as conn:
+        for fixture in rnd.fixtures:
+            for team in (fixture.home, fixture.away):
+                result = knowledge_worker.research(
+                    conn, fixture.home, fixture.away,
+                    queries.plan_team_queries(team), tavily_key, extractor,
+                    round_number=rnd.round_number, mode=extractor_config.mode,
+                )
+                accepted += result.claims_accepted
+                rejected += result.claims_rejected
+                failures += result.extraction_failures
+    return {
+        "claims_accepted": accepted,
+        "claims_rejected": rejected,
+        "extraction_failures": failures,
+        "credits_spent": len(rnd.fixtures) * 2 * 3,
+        "message": (
+            f"Researched {len(rnd.fixtures) * 2} teams — {accepted} claims "
+            f"accepted, {rejected} rejected, {failures} extraction failures."
+        ),
+    }
+
+
 def _alerts_payload(activity: list[dict], state: dict) -> dict:
     """Filter the in-app alert centre by the user's material-event choices."""
     notification_map = {
@@ -1564,6 +1635,8 @@ class Super6RequestHandler(BaseHTTPRequestHandler):
                 self._send_json(HTTPStatus.OK, save_pick_overrides(payload, self.config))
             elif path == "/api/settings":
                 self._send_json(HTTPStatus.OK, save_settings(payload, self.config))
+            elif path == "/api/research":
+                self._send_json(HTTPStatus.OK, research_now(payload, self.config))
             elif path == "/api/ollama/models":
                 self._send_json(HTTPStatus.OK, available_ollama_models(payload))
             elif path == "/api/opponents":

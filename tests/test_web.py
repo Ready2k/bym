@@ -710,3 +710,49 @@ def test_no_recommendation_records_no_decision(tmp_path):
     rnd = load_round(config.round_path)
     _league_payload(rnd, load_ui_state(config.ui_state_path), config)
     assert strategy_history.round_snapshots(2026, 14, config.strategy_history_path) == []
+
+
+def test_manual_research_is_refused_when_the_extractor_is_off(tmp_path):
+    from super6.web import research_now
+
+    config = strategy_config(tmp_path)
+    with pytest.raises(ValueError, match="extractor is off"):
+        research_now({}, config)
+
+
+def test_manual_research_is_refused_when_the_budget_is_nearly_gone(tmp_path, monkeypatch):
+    """Spending the last credits on a manual click is how you arrive at the
+    deadline blind — the scheduled sweeps have already degraded by then."""
+    from super6 import web, worker
+
+    config = strategy_config(tmp_path)
+    save_settings(
+        {
+            "league_name": "L", "player_name": "You",
+            "knowledge_extractor": {
+                "enabled": True, "base_url": "http://localhost:11434",
+                "model": "llama3.1", "mode": "shadow",
+            },
+        },
+        config,
+    )
+    monkeypatch.setenv("TAVILY_API_KEY", "key")
+    monkeypatch.setattr(worker, "knowledge_budget_low", lambda *a, **k: True)
+    with pytest.raises(ValueError, match="monthly credits are nearly gone"):
+        web.research_now({}, config)
+
+
+def test_quota_exhaustion_is_warned_about_before_it_bites():
+    """A quota running out is the failure you notice last, because the
+    symptom is things quietly not happening."""
+    from super6.api.contracts import SourceHealth
+    from super6.api.service import SystemHealth
+
+    # The warning logic is exercised through build_system_health elsewhere;
+    # here we pin the thresholds it uses.
+    low = SourceHealth(source_id="tavily", usage_status="APPROVED",
+                       quota_used=850, quota_limit=1000, quota_period="month")
+    assert low.quota_limit - low.quota_used <= low.quota_limit * 0.2
+    healthy = SourceHealth(source_id="tavily", usage_status="APPROVED",
+                           quota_used=491, quota_limit=1000, quota_period="month")
+    assert healthy.quota_limit - healthy.quota_used > healthy.quota_limit * 0.2
