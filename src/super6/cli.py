@@ -1165,6 +1165,13 @@ def cmd_tune_market(args) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # Most commands read their keys straight from os.environ (§22). Fill it
+    # from the gitignored secrets/ directory first, so a key on disk works
+    # without exporting it in every shell. Environment always wins.
+    from .secrets import apply_to_environment
+
+    apply_to_environment()
+
     parser = argparse.ArgumentParser(prog="super6")
     sub = parser.add_subparsers(dest="command", required=True)
 
