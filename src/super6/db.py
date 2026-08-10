@@ -223,6 +223,7 @@ def migrate(conn: sqlite3.Connection) -> int:
     current = schema_version(conn)
     for index in range(current, len(MIGRATIONS)):
         conn.executescript(MIGRATIONS[index])
+        assert isinstance(index, int) and index >= 0, "Migration index must be a plain int"
         conn.execute(f"PRAGMA user_version = {index + 1}")
     return schema_version(conn)
 

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import os
 import smtplib
+import ssl
 from email.message import EmailMessage
 
 
@@ -37,7 +38,7 @@ def send_email_alert(*, destination: str, subject: str, body: str) -> None:
     message.set_content(body)
     with smtplib.SMTP(host, port, timeout=10) as client:
         if os.environ.get("SUPER6_SMTP_STARTTLS", "true").lower() != "false":
-            client.starttls()
+            client.starttls(context=ssl.create_default_context())
         username = os.environ.get("SUPER6_SMTP_USERNAME")
         if username:
             client.login(username, os.environ.get("SUPER6_SMTP_PASSWORD", ""))

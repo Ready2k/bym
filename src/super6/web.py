@@ -8,6 +8,7 @@ keeping the HTTP boundary that a hosted UI can later retain.
 from __future__ import annotations
 
 import json
+import logging
 import mimetypes
 import os
 import re
@@ -1633,8 +1634,13 @@ class Super6RequestHandler(BaseHTTPRequestHandler):
                 self._send_file(ASSET_DIR / Path(path).name)
             else:
                 self.send_error(HTTPStatus.NOT_FOUND)
-        except (OSError, ValueError, KeyError) as exc:
+        except (ValueError, KeyError) as exc:
             self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": str(exc)})
+        except OSError:
+            logging.exception("Internal server error handling GET %s", path)
+            self._send_json(
+                HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "An internal error occurred."}
+            )
 
     def do_POST(self) -> None:  # noqa: N802
         path = urlparse(self.path).path
@@ -1660,8 +1666,13 @@ class Super6RequestHandler(BaseHTTPRequestHandler):
                 self._send_json(HTTPStatus.OK, cup_prediction(payload, self.config))
             else:
                 self.send_error(HTTPStatus.NOT_FOUND)
-        except (OSError, ValueError, KeyError, json.JSONDecodeError) as exc:
+        except (ValueError, KeyError, json.JSONDecodeError) as exc:
             self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+        except OSError:
+            logging.exception("Internal server error handling POST %s", path)
+            self._send_json(
+                HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "An internal error occurred."}
+            )
 
 
 def missing_state_warnings(config: WebConfig) -> list[str]:
