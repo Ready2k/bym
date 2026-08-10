@@ -277,9 +277,17 @@ function submissionRecord(round) {
   </span></section>`;
 }
 
+function teamPickerField(index, side, value, teams) {
+  const known = teams.includes(value);
+  const options = teams.map((team) => `<option value="${escapeHtml(team)}" ${team === value ? "selected" : ""}>${escapeHtml(team)}</option>`).join("");
+  const label = side === "home" ? "Home" : "Away";
+  return `<label><span class="sr-only">Fixture ${index + 1} ${label.toLowerCase()} team</span><select data-team-select data-target="${side}_${index}">${options}<option value="__other__" ${known ? "" : "selected"}>Other (cup game, etc.)</option></select><input required name="${side}_${index}" value="${escapeHtml(value)}" placeholder="${label} team" ${known ? "hidden" : ""}></label>`;
+}
+
 function roundSetupView() {
   const { round } = appData;
-  return `<section class="form-card"><div class="section-heading"><div><p class="eyebrow">Manual configuration</p><h2>Set up a Super 6 round</h2><p class="subtitle">Sky stays outside the system boundary. Add the six fixtures and confirm the UK deadline here.</p></div></div><form id="round-form"><div class="form-grid"><label>Round number<input required name="round_number" type="number" min="1" value="${round.round_number}"></label><label>Deadline (UK time)<input required name="deadline_at" type="datetime-local" value="${localDateTime(round.deadline_at)}"></label></div><div class="fixture-form-list">${round.fixtures.map((fixture, index) => `<div class="fixture-form-row"><span>${index + 1}</span><label><span class="sr-only">Fixture ${index + 1} home team</span><input required name="home_${index}" value="${escapeHtml(fixture.home_team)}" placeholder="Home team"></label><b>v</b><label><span class="sr-only">Fixture ${index + 1} away team</span><input required name="away_${index}" value="${escapeHtml(fixture.away_team)}" placeholder="Away team"></label></div>`).join("")}</div><div class="form-actions"><button class="button" type="submit">Save round &amp; refresh forecast</button></div></form></section>`;
+  const teams = (appData.teams || []).slice().sort();
+  return `<section class="form-card"><div class="section-heading"><div><p class="eyebrow">Manual configuration</p><h2>Set up a Super 6 round</h2><p class="subtitle">Sky stays outside the system boundary. Add the six fixtures and confirm the UK deadline here. Pick a team from the list, or choose "Other" for a cup tie or a side the model doesn't know.</p></div></div><form id="round-form"><div class="form-grid"><label>Round number<input required name="round_number" type="number" min="1" value="${round.round_number}"></label><label>Deadline (UK time)<input required name="deadline_at" type="datetime-local" value="${localDateTime(round.deadline_at)}"></label></div><div class="fixture-form-list">${round.fixtures.map((fixture, index) => `<div class="fixture-form-row"><span>${index + 1}</span>${teamPickerField(index, "home", fixture.home_team, teams)}<b>v</b>${teamPickerField(index, "away", fixture.away_team, teams)}</div>`).join("")}</div><div class="form-actions"><button class="button" type="submit">Save round &amp; refresh forecast</button></div></form></section>`;
 }
 
 function resultsView(results) {
@@ -729,6 +737,20 @@ async function loadApp() {
 }
 
 window.addEventListener("hashchange", renderPage);
+document.addEventListener("change", (event) => {
+  const select = event.target.closest("[data-team-select]");
+  if (!select) return;
+  const target = select.form?.elements[select.dataset.target];
+  if (!target) return;
+  if (select.value === "__other__") {
+    target.hidden = false;
+    target.value = "";
+    target.focus();
+  } else {
+    target.value = select.value;
+    target.hidden = true;
+  }
+});
 document.addEventListener("click", async (event) => {
   const fixture = event.target.closest("[data-fixture]");
   if (fixture) openFixture(Number(fixture.dataset.fixture));
