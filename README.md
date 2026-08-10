@@ -87,6 +87,81 @@ Select the recency-decay hyperparameter ξ by out-of-sample validation
 super6 tune-xi --seasons 2019 2024 --validation-season 2024 --data data
 ```
 
+## Other commands
+
+`super6 <command> --help` gives the full flag list for any of these; the
+common `--data`/`--seasons`/`--divisions` flags mean the same thing they do
+above.
+
+**Always-on operation** — `worker.py`'s §9 loop, driven by the scheduler
+rather than a one-off report:
+
+- `super6 watch --round rounds/2026_27_round_01.json --seasons 2019 2025 --data data`
+  — schedules odds/availability polling for a round per the §9 cadence.
+  `--loop` runs it now instead of waiting for cron/systemd; `--with-knowledge`
+  also schedules routine knowledge research (costs Tavily credits).
+- `super6 tick --seasons 2019 2025 --data data` — runs one scheduler pass;
+  what cron/systemd actually calls.
+- `super6 jobs` — lists scheduled polling jobs and their next-run times.
+- `super6 engine-run --round rounds/2026_27_round_01.json --seasons 2019 2025 --data data`
+  — one full four-layer engine pass (forecast/market/team/knowledge) for a
+  round, independent of the scheduler. `--json out.json` writes the
+  `RoundSummary` API contract to a file.
+- `super6 health` — engine + Ollama health check (schema version, pending
+  jobs, extractor mode, per-source status).
+- `super6 activity` — the §53 chronological activity feed. `--type` filters
+  by event type; `--all` includes routine snapshots, not just material
+  changes.
+
+**Sources & credits** — §18.1 registry and metering:
+
+- `super6 sources list` / `super6 sources approve <source_id>` — inspect or
+  promote entries in `config/source_registry.json`.
+- `super6 quota` — API credit usage across all metered sources.
+- `super6 verify-live` — live-checks each external source (not a cached
+  read), for confirming credentials and connectivity actually work.
+- `super6 coverage --season 2025` — probes API-Football's fixture coverage
+  per league/season before relying on it.
+- `super6 research status|sample|harvest|prevalence|freeze` — the standalone
+  `AVAILABILITY_ORACLE_RESEARCH_V1` harness (`research/`) that measures
+  whether availability data would be worth wiring into λ; separate from the
+  live model, gated by its own request cap and pacing flags.
+
+**Submission & scoring** — §46 state machine and §19 prospective ledger:
+
+- `super6 submission status|mark-reviewed|mark-entered --round <file>` — the
+  local record of whether you reviewed/entered picks in Sky. The agent
+  itself never submits anything (see above).
+- `super6 record --round <file> --seasons 2019 2025 --data data` — records
+  prospective picks for a round before its deadline, for the §19 arm
+  comparison. `--submitted` logs the six scores you actually entered.
+- `super6 score --round <file>` — scores a recorded round once results are
+  known; fetches results from football-data.org via `--round-file` if
+  `--results` isn't given directly.
+- `super6 ledger` — the running prospective comparison across arms behind
+  [results/prospective_2026_27.md](results/prospective_2026_27.md).
+
+**Model diagnostics**:
+
+- `super6 forecast --home <team> --away <team> --seasons 2019 2025 --data data`
+  — forecasts one ad-hoc fixture as a sanity check. `--odds H D A` blends in
+  a market price the way the real engine would; `--extended` widens the
+  corpus to League One/Two and the National League for cup ties, which
+  means it is no longer `PHASE1_MODEL_V1`.
+- `super6 tune-market --seasons 2019 2024 --validation-season 2024 --data data`
+  — selects the §32 market-blend weight w by validation, the same way
+  `tune-xi` selects ξ.
+- `super6 final-test --seasons 2019 2025 --test-season 2025 --data data --i-understand-this-is-single-use`
+  — the single-shot frozen-model run against the untouched holdout season.
+  Gated behind the acknowledgement flag because the holdout is spent the
+  moment it runs.
+- `super6 readiness` — how close the data-blocked backlog items
+  ([docs/next_steps.md](docs/next_steps.md)) are to having enough evidence
+  for an ablation: claim-outcome sample size and round-characteristic
+  coverage.
+- `super6 shadow-report` — metrics on the knowledge agent's `SHADOW`-mode
+  extractions (§8), since nothing yet consumes them into the model.
+
 ## Layout
 
 ```
