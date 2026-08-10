@@ -220,10 +220,36 @@ would fail here. The proxy fails precisely because it lacks chance
 quality, which is the thing real xG adds. It establishes only that the
 free route is exhausted.
 
+**"Understat covers most Super 6 fixtures anyway" — asked and answered,
+2026-08-10.** The reasoning is sound and worth recording so it is not
+re-derived: Super 6 leans heavily Premier League (the one round observed
+so far is 6/6 E0), the model already fits *per division* (ablation_002),
+so an E0-only xG signal is architecturally coherent rather than a patch —
+the E0 fit would use xG, the E1 fit goals — and a fixture without xG
+would degrade to the goal-fitted model, the same graceful degradation
+missing odds already get.
+
+It fails on **terms, not coverage**. Understat's `robots.txt` is
+`User-agent: *` / `Disallow: /` — automated access is disallowed
+site-wide, and there is no API. §18.1 gates every outbound query on
+checked terms, and `sky_super6` is already PERMANENTLY PROHIBITED on
+exactly this basis ("Sky's terms prohibit automated and unauthorised
+manual data extraction"). Applying that rule consistently, Understat
+cannot be registered APPROVED. The precedent is the project's own.
+
+Two smaller notes for whoever revisits this: Understat does not cover the
+Champions League either (six domestic leagues only), and such fixtures are
+outside the E0/E1 corpus anyway — already handled by
+`MARKET_ONLY_FALLBACK`. And a promoted team would carry goal-based E1
+history into an xG-based E0 fit, so §29.4's priors would straddle two
+units; surmountable if the xG source is calibrated to goals, but it is a
+real wrinkle rather than a detail.
+
 **Unblock.** Only a budget decision remains — a Championship-covering
-feed at ~£30/month against §25's £10 target. That is genuinely yours, and
-now it is the *only* part that is: the two engineering questions
-underneath it have been answered.
+feed at ~£30/month against §25's £10 target, from a source whose terms
+permit programmatic use. That is genuinely yours, and now it is the
+*only* part that is: the two engineering questions underneath it have
+been answered.
 
 **Effort.** Not effort — a decision. And note that even with a feed,
 promotion needs prospective evidence: the 2025/26 holdout is spent, so an
