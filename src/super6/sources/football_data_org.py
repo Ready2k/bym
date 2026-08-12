@@ -160,6 +160,33 @@ def fetch_matches(
     return parse_matches(payload)
 
 
+def current_matchday(matches: list[Match]) -> int | None:
+    """The matchday of the next fixture that hasn't kicked off yet — the
+    one a Last Man Standing entrant needs a pick for right now.
+
+    Deliberately not "the earliest matchday that isn't 100% FINISHED":
+    English football postpones and reschedules fixtures constantly (cup
+    replays, European fixtures), and a stuck postponed game from an
+    earlier matchday must not block picking for the matchday actually
+    coming up. None once nothing SCHEDULED remains in what was fetched
+    (e.g. past the end of the season).
+    """
+    upcoming = [
+        m for m in matches
+        if m.matchday is not None and m.status == FixtureStatus.SCHEDULED.value
+    ]
+    if not upcoming:
+        return None
+    return min(upcoming, key=lambda m: m.kickoff_at).matchday
+
+
+def fixtures_for_matchday(matches: list[Match], matchday: int) -> list[Match]:
+    """Every fixture in one matchday, kickoff order."""
+    return sorted(
+        (m for m in matches if m.matchday == matchday), key=lambda m: m.kickoff_at
+    )
+
+
 def results_for_round(
     matches: list[Match],
     fixtures: list[tuple[str, str]],

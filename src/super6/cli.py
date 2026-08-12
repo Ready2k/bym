@@ -460,6 +460,8 @@ def cmd_serve(args) -> int:
             database_path=Path(args.db),
             submissions_path=Path(args.submissions),
             registry_path=Path(args.registry),
+            lms_gameweek_path=Path(args.lms_gameweek),
+            lms_state_path=Path(args.lms_state),
             seasons=tuple(args.seasons),
             divisions=tuple(args.divisions),
         ),
@@ -1164,6 +1166,234 @@ def cmd_tune_market(args) -> int:
     return 0
 
 
+def cmd_lms_recommend(args) -> int:
+    """Last Man Standing: rank every eligible club by P(win) for one
+    gameweek, reusing the same fitted Dixon-Coles router Super 6 uses.
+
+    Fetches the current Premier League gameweek from football-data.org by
+    default — pass --gameweek for a manually written file instead (no key
+    configured, or a fixture needs correcting)."""
+    from .config import FROZEN_PHASE1_V1
+    from .data.football_data import load_matches
+    from . import lms
+
+    matches = load_matches(Path(args.data), _season_range(args), tuple(args.divisions))
+    known = set(matches["home_team"]) | set(matches["away_team"])
+    if args.gameweek:
+        gw = lms.load_gameweek(Path(args.gameweek))
+    else:
+        try:
+            gw = _fetch_lms_gameweek(known, args.fd_season)
+        except RuntimeError as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
+        print(f"Gameweek {gw.number} — {len(gw.fixtures)} fixture(s) fetched from football-data.org\n")
+    for f in gw.fixtures:
+        for team in (f.home, f.away):
+            if team not in known:
+                print(
+                    f"WARNING: '{team}' not in training data — it will use "
+                    "league-average strength. Check the spelling matches "
+                    "Football-Data.co.uk names.",
+                    file=sys.stderr,
+                )
+
+    router = _fit_router(matches, args.xi, FROZEN_PHASE1_V1)
+
+    used: set[str] = set(args.used or [])
+    if args.entrant:
+        state = lms.get_state(args.entrant, Path(args.state))
+        if not state.alive:
+            print(f"{args.entrant} is already eliminated (see `lms-status`).")
+            return 0
+        used |= set(state.used_clubs)
+
+    candidates = lms.recommend_gameweek(router, gw, used, FROZEN_PHASE1_V1)
+    print(lms.format_recommendations(gw, candidates, used))
+    return 0
+
+
+def cmd_lms_pick(args) -> int:
+    """Book a Last Man Standing pick against an entrant's used-club list."""
+    from . import lms
+
+    path = Path(args.state)
+    states = lms.load_states(path)
+    state = states.get(args.entrant, lms.LMSState(entrant=args.entrant))
+    try:
+        lms.record_pick(state, args.gameweek, args.team, args.opponent, args.home)
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    states[args.entrant] = state
+    lms.save_states(states, path)
+    print(f"Recorded: {args.entrant} picks {args.team} (GW{args.gameweek})")
+    return 0
+
+
+def cmd_lms_result(args) -> int:
+    """Manually settle a Last Man Standing gameweek — anything but a WIN
+    eliminates. This is the fallback for a fixture `lms-settle` can't
+    resolve (no key configured, or outside football-data.org's coverage);
+    prefer `lms-settle` when it's available, since a self-reported result
+    in a multi-entrant competition is a conflict of interest an automatic
+    feed doesn't have. The saved record marks this one MANUAL either way."""
+    from . import lms
+
+    path = Path(args.state)
+    states = lms.load_states(path)
+    state = states.get(args.entrant, lms.LMSState(entrant=args.entrant))
+    try:
+        lms.record_result(state, args.gameweek, args.result)
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    states[args.entrant] = state
+    lms.save_states(states, path)
+    print(lms.format_status(state))
+    return 0
+
+
+def cmd_lms_settle(args) -> int:
+    """Fetch full-time results from football-data.org and settle every
+    PENDING pick whose fixture has finished — the trusted path, since it
+    does not depend on an entrant reporting their own survival."""
+    from . import lms
+    from .secrets import get_key
+    from .sources import football_data_org as fdo
+    from .sources.registry import SourceNotApprovedError
+    from .sources.teams import resolve as resolve_team_name
+
+    gw = lms.load_gameweek(Path(args.gameweek))
+    api_key = get_key("FOOTBALL_DATA_ORG_KEY")
+    if not api_key:
+        print(
+            "No FOOTBALL_DATA_ORG_KEY found — nothing to settle "
+            "automatically. Use `lms-result` to enter a result by hand.",
+            file=sys.stderr,
+        )
+        return 1
+
+    fixtures = [(f.home, f.away) for f in gw.fixtures]
+    matches = []
+    try:
+        for division in args.divisions:
+            if division not in fdo.COMPETITION_CODES:
+                continue
+            matches.extend(fdo.fetch_matches(division, args.fd_season, api_key))
+    except SourceNotApprovedError as exc:
+        print(f"{exc}", file=sys.stderr)
+        return 1
+    except Exception as exc:
+        print(f"Result fetch failed: {exc}", file=sys.stderr)
+        return 1
+
+    results = fdo.results_for_round(matches, fixtures, resolve_team_name)
+    path = Path(args.state)
+    states = lms.load_states(path)
+    settled = lms.auto_settle(states, gw, results)
+    if settled:
+        lms.save_states(states, path)
+        for name, gameweek, result in settled:
+            print(f"  {name}: GW{gameweek} {result} (auto)")
+    else:
+        print("  Nothing to settle yet — no finished result for any pending pick.")
+    return 0
+
+
+def _fetch_lms_gameweek(known_teams: set[str], fd_season: int):
+    """Fetch the current Premier League matchday from football-data.org
+    and resolve it onto the training corpus's team names.
+
+    Shared by `lms-fixtures` and `lms-recommend --auto` so both build the
+    same Gameweek the same way. Raises RuntimeError with a message meant
+    to be printed as-is on any failure — no key, no upcoming fixtures, or
+    the request itself failing.
+    """
+    from . import lms
+    from .secrets import get_key
+    from .sources import football_data_org as fdo
+    from .sources.registry import SourceNotApprovedError
+    from .sources.teams import resolve as resolve_team_name
+
+    api_key = get_key("FOOTBALL_DATA_ORG_KEY")
+    if not api_key:
+        raise RuntimeError(
+            "No FOOTBALL_DATA_ORG_KEY found — cannot fetch fixtures "
+            "automatically. Use --gameweek with a manually written file instead."
+        )
+    try:
+        matches = fdo.fetch_matches("E0", fd_season, api_key)
+    except SourceNotApprovedError as exc:
+        raise RuntimeError(str(exc)) from exc
+    except Exception as exc:
+        raise RuntimeError(f"Fixture fetch failed: {exc}") from exc
+
+    matchday = fdo.current_matchday(matches)
+    if matchday is None:
+        raise RuntimeError(
+            "football-data.org has no upcoming Premier League fixtures right now."
+        )
+    day_matches = fdo.fixtures_for_matchday(matches, matchday)
+    fixtures = tuple(
+        lms.GameweekFixture(
+            home=resolve_team_name(m.home_team, known_teams) or m.home_team,
+            away=resolve_team_name(m.away_team, known_teams) or m.away_team,
+        )
+        for m in day_matches
+    )
+    return lms.Gameweek(number=matchday, fixtures=fixtures)
+
+
+def cmd_lms_fixtures(args) -> int:
+    """Fetch the current Premier League gameweek's fixtures from
+    football-data.org and save them — no manual fixture entry needed."""
+    import json
+
+    from . import lms
+    from .data.football_data import load_matches
+
+    matches = load_matches(Path(args.data), _season_range(args), tuple(args.divisions))
+    known = set(matches["home_team"]) | set(matches["away_team"])
+    try:
+        gw = _fetch_lms_gameweek(known, args.fd_season)
+    except RuntimeError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+
+    path = Path(args.gameweek)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "gameweek": gw.number,
+                "fixtures": [{"home": f.home, "away": f.away} for f in gw.fixtures],
+            },
+            indent=2,
+        )
+        + "\n"
+    )
+    print(f"Gameweek {gw.number} — {len(gw.fixtures)} fixture(s) saved to {path}:")
+    for f in gw.fixtures:
+        print(f"  {f.home} v {f.away}")
+    return 0
+
+
+def cmd_lms_status(args) -> int:
+    from . import lms
+
+    path = Path(args.state)
+    if args.entrant:
+        print(lms.format_status(lms.get_state(args.entrant, path)))
+        return 0
+    states = lms.load_states(path)
+    if not states:
+        print("no Last Man Standing entrants recorded yet")
+        return 0
+    print("\n\n".join(lms.format_status(s) for s in states.values()))
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     # Most commands read their keys straight from os.environ (§22). Fill it
     # from the gitignored secrets/ directory first, so a key on disk works
@@ -1313,6 +1543,8 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--db", default="data/super6.db")
     p.add_argument("--submissions", default="data/submissions.json")
     p.add_argument("--registry", default="config/source_registry.json")
+    p.add_argument("--lms-gameweek", default="data/lms_gameweek.json")
+    p.add_argument("--lms-state", default="data/lms_state.json")
     p.add_argument("--host", default="127.0.0.1")
     p.add_argument("--port", default=8000, type=int)
     p.set_defaults(func=cmd_serve)
@@ -1410,6 +1642,83 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("ledger", help="running prospective comparison across arms")
     p.add_argument("--ledger", default="results/prospective_ledger.csv")
     p.set_defaults(func=cmd_ledger)
+
+    p = sub.add_parser(
+        "lms-recommend",
+        help="Last Man Standing: rank eligible clubs by P(win) for a gameweek",
+    )
+    common(p)
+    p.add_argument(
+        "--gameweek",
+        help="gameweek JSON file — omit to fetch the current Premier League "
+             "gameweek from football-data.org instead",
+    )
+    p.add_argument(
+        "--fd-season", type=int, default=2026,
+        help="football-data.org season start-year, used when --gameweek is omitted",
+    )
+    p.add_argument("--xi", type=float, default=DEFAULT_MODEL.xi)
+    p.add_argument(
+        "--entrant", help="pull already-used clubs from this entrant's saved state"
+    )
+    p.add_argument(
+        "--used", nargs="+", default=[],
+        help="extra club(s) to exclude ad hoc, on top of --entrant's history",
+    )
+    p.add_argument("--state", default="data/lms_state.json")
+    p.set_defaults(func=cmd_lms_recommend)
+
+    p = sub.add_parser(
+        "lms-fixtures",
+        help="Last Man Standing: fetch and save the current gameweek's fixtures",
+    )
+    common(p)
+    p.add_argument("--gameweek", default="data/lms_gameweek.json", help="output file")
+    p.add_argument(
+        "--fd-season", type=int, default=2026,
+        help="football-data.org season start-year (e.g. 2026 for 2026/27)",
+    )
+    p.set_defaults(func=cmd_lms_fixtures)
+
+    p = sub.add_parser("lms-pick", help="Last Man Standing: record a pick")
+    p.add_argument("--entrant", required=True)
+    p.add_argument("--gameweek", type=int, required=True)
+    p.add_argument("--team", required=True)
+    p.add_argument("--opponent", required=True)
+    p.add_argument("--home", action="store_true", help="team is at home this gameweek")
+    p.add_argument("--state", default="data/lms_state.json")
+    p.set_defaults(func=cmd_lms_pick)
+
+    p = sub.add_parser(
+        "lms-result",
+        help="Last Man Standing: settle a pick by hand (fallback — prefer lms-settle)",
+    )
+    p.add_argument("--entrant", required=True)
+    p.add_argument("--gameweek", type=int, required=True)
+    p.add_argument("--result", required=True, choices=["WIN", "DRAW", "LOSS"])
+    p.add_argument("--state", default="data/lms_state.json")
+    p.set_defaults(func=cmd_lms_result)
+
+    p = sub.add_parser(
+        "lms-settle",
+        help="Last Man Standing: auto-settle pending picks from football-data.org results",
+    )
+    p.add_argument(
+        "--gameweek", default="data/lms_gameweek.json",
+        help="gameweek JSON file (defaults to lms-fixtures' output path)",
+    )
+    p.add_argument("--state", default="data/lms_state.json")
+    p.add_argument(
+        "--fd-season", type=int, default=2026,
+        help="football-data.org season start-year (e.g. 2026 for 2026/27)",
+    )
+    p.add_argument("--divisions", nargs="+", default=["E0", "E1"])
+    p.set_defaults(func=cmd_lms_settle)
+
+    p = sub.add_parser("lms-status", help="Last Man Standing: survival status")
+    p.add_argument("--entrant", help="omit to show every recorded entrant")
+    p.add_argument("--state", default="data/lms_state.json")
+    p.set_defaults(func=cmd_lms_status)
 
     p = sub.add_parser(
         "final-test", help="single-shot frozen-model test on the holdout season"

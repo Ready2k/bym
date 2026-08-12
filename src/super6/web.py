@@ -46,6 +46,8 @@ class WebConfig:
     strategy_history_path: Path = Path("data/strategy_history.json")
     opponent_history_path: Path = Path("data/opponent_history.json")
     arm_registry_path: Path = Path("results/prospective_arms.json")
+    lms_gameweek_path: Path = Path("data/lms_gameweek.json")
+    lms_state_path: Path = Path("data/lms_state.json")
     seasons: tuple[int, int] = (2019, 2025)
     divisions: tuple[str, ...] = ("E0", "E1")
 
@@ -1551,6 +1553,285 @@ def _alerts_payload(activity: list[dict], state: dict) -> dict:
     }
 
 
+# ---------------------------------------------------------------------------
+# Last Man Standing — separate game, separate state file. Reuses the same
+# fitted Dixon-Coles router the Super 6 dashboard above just built, read as
+# win/draw/loss instead of an exact score. Nothing here feeds back into the
+# Super 6 round/engine state, and nothing above feeds into this.
+# ---------------------------------------------------------------------------
+
+
+def _lms_candidate_dict(candidate) -> dict:
+    return {
+        "team": candidate.team,
+        "opponent": candidate.opponent,
+        "is_home": candidate.is_home,
+        "p_win": candidate.p_win,
+        "p_draw": candidate.p_draw,
+        "p_loss": candidate.p_loss,
+        "confidence": candidate.confidence,
+    }
+
+
+def lms_payload(config: WebConfig, router=None, known_teams: set[str] | None = None) -> dict:
+    """Every entrant's survival state, plus this gameweek's clubs ranked by
+    P(win) for each entrant still alive (their own used-club list excluded).
+
+    The gameweek itself is fetched from football-data.org, not typed in —
+    see `_lms_current_gameweek`. `router`/`known_teams` let a caller that
+    already fitted one for the Super 6 round hand it over instead of
+    paying for a second fit — passed by `app_payload` below; a bare
+    `lms_payload(config)` call (e.g. a future standalone endpoint) fits
+    its own.
+    """
+    from . import lms as lms_mod
+
+    states = lms_mod.load_states(config.lms_state_path)
+
+    if router is None or known_teams is None:
+        matches = load_matches(
+            config.data_path,
+            list(range(config.seasons[0], config.seasons[1] + 1)),
+            config.divisions,
+            fetch=False,
+        )
+        if known_teams is None:
+            known_teams = _known_teams(matches)
+        if router is None:
+            router = _fit_router(matches)
+
+    gw, fixtures_info = _lms_current_gameweek(config, known_teams)
+
+    if gw is None:
+        entrants = {
+            name: {"entrant": s.entrant, "alive": s.alive, "used_clubs": s.used_clubs, "history": s.history}
+            for name, s in states.items()
+        }
+        return {
+            "gameweek": None, "entrants": entrants, "recommendations": {},
+            "unknown_teams": [], "auto_settle": {"ran": False, "settled": [], "note": None},
+            "fixtures_source": fixtures_info,
+        }
+
+    auto_settle_info = _lms_auto_settle(gw, states, config)
+    if auto_settle_info["settled"]:
+        lms_mod.save_states(states, config.lms_state_path)
+
+    entrants = {
+        name: {"entrant": s.entrant, "alive": s.alive, "used_clubs": s.used_clubs, "history": s.history}
+        for name, s in states.items()
+    }
+
+    unknown = sorted(
+        {team for f in gw.fixtures for team in (f.home, f.away) if team not in known_teams}
+    )
+
+    recommendations = {
+        "__all__": [
+            _lms_candidate_dict(c) for c in lms_mod.recommend_gameweek(router, gw, set())
+        ]
+    }
+    for name, state in states.items():
+        if not state.alive:
+            continue
+        recommendations[name] = [
+            _lms_candidate_dict(c)
+            for c in lms_mod.recommend_gameweek(router, gw, set(state.used_clubs))
+        ]
+
+    return {
+        "gameweek": {
+            "number": gw.number,
+            "fixtures": [
+                {"home": f.home, "away": f.away, "odds": list(f.odds) if f.odds else None}
+                for f in gw.fixtures
+            ],
+        },
+        "entrants": entrants,
+        "recommendations": recommendations,
+        "unknown_teams": unknown,
+        "auto_settle": auto_settle_info,
+        "fixtures_source": fixtures_info,
+    }
+
+
+def _lms_current_gameweek(config: WebConfig, known_teams: set[str]):
+    """The gameweek LMS should show right now, fetched from
+    football-data.org's Premier League fixture list — nobody has to type
+    fixtures in by hand. Falls back to whatever is cached at
+    `lms_gameweek_path` (a previous successful fetch, or a manual entry
+    from before a key was configured) when the live fetch can't run; the
+    cache is overwritten on the next successful fetch, since the live list
+    is the source of truth once a key is available.
+
+    Returns (Gameweek | None, {"mode": "auto" | "manual" | "none", "note": str | None}).
+    """
+    from . import lms as lms_mod
+    from .secrets import get_key
+    from .sources import football_data_org as fdo
+    from .sources.registry import SourceNotApprovedError
+    from .sources.teams import resolve as resolve_team_name
+
+    cached = None
+    if config.lms_gameweek_path.exists():
+        try:
+            cached = lms_mod.load_gameweek(config.lms_gameweek_path)
+        except (ValueError, KeyError, OSError):
+            cached = None
+
+    api_key = get_key("FOOTBALL_DATA_ORG_KEY")
+    if not api_key:
+        note = (
+            "No FOOTBALL_DATA_ORG_KEY configured — using the saved fixtures below."
+            if cached else
+            "No FOOTBALL_DATA_ORG_KEY configured — add fixtures manually below, "
+            "or add a key to fetch them automatically."
+        )
+        return cached, {"mode": "manual" if cached else "none", "note": note}
+
+    try:
+        matches = fdo.fetch_matches("E0", _lms_fd_season(), api_key)
+        matchday = fdo.current_matchday(matches)
+        if matchday is None:
+            note = "football-data.org has no upcoming Premier League fixtures right now."
+            return cached, {"mode": "manual" if cached else "none", "note": note}
+        day_matches = fdo.fixtures_for_matchday(matches, matchday)
+        fixtures = tuple(
+            lms_mod.GameweekFixture(
+                home=resolve_team_name(m.home_team, known_teams) or m.home_team,
+                away=resolve_team_name(m.away_team, known_teams) or m.away_team,
+            )
+            for m in day_matches
+        )
+        gw = lms_mod.Gameweek(number=matchday, fixtures=fixtures)
+        _write_lms_gameweek(gw, config.lms_gameweek_path)
+        return gw, {"mode": "auto", "note": None}
+    except SourceNotApprovedError as exc:
+        return cached, {"mode": "manual" if cached else "none", "note": str(exc)}
+    except Exception as exc:
+        note = f"Fixture fetch failed: {exc}"
+        if cached:
+            note += " — using the last saved fixtures."
+        return cached, {"mode": "manual" if cached else "none", "note": note}
+
+
+def _write_lms_gameweek(gw, path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "gameweek": gw.number,
+                "fixtures": [
+                    {
+                        "home": f.home,
+                        "away": f.away,
+                        **({"odds": list(f.odds)} if f.odds is not None else {}),
+                    }
+                    for f in gw.fixtures
+                ],
+            },
+            indent=2,
+        )
+        + "\n"
+    )
+
+
+def _lms_auto_settle(gw, states: dict, config: WebConfig) -> dict:
+    """Try to settle this gameweek's PENDING picks from a real results
+    feed before anyone sees them, so no entrant is ever the one deciding
+    whether their own pick survived.
+
+    Degrades like every other external call in this file: no key, no
+    coverage, or a request failure all just mean "nothing settled this
+    time" with a note explaining why, never a failed page load. `lms-settle`
+    on the CLI does the identical fetch for headless/cron use.
+    """
+    from . import lms as lms_mod
+    from .secrets import get_key
+    from .sources import football_data_org as fdo
+    from .sources.registry import SourceNotApprovedError
+    from .sources.teams import resolve as resolve_team_name
+
+    api_key = get_key("FOOTBALL_DATA_ORG_KEY")
+    if not api_key:
+        return {
+            "ran": False, "settled": [],
+            "note": "No FOOTBALL_DATA_ORG_KEY configured — pending picks "
+                     "must be settled by hand below until one is added.",
+        }
+    try:
+        fixtures = [(f.home, f.away) for f in gw.fixtures]
+        matches = []
+        for division in config.divisions:
+            if division not in fdo.COMPETITION_CODES:
+                continue
+            matches.extend(fdo.fetch_matches(division, _lms_fd_season(), api_key))
+        results = fdo.results_for_round(matches, fixtures, resolve_team_name)
+        settled = lms_mod.auto_settle(states, gw, results)
+        return {"ran": True, "settled": settled, "note": None}
+    except SourceNotApprovedError as exc:
+        return {"ran": False, "settled": [], "note": str(exc)}
+    except Exception as exc:
+        return {"ran": False, "settled": [], "note": f"result fetch failed: {exc}"}
+
+
+def _lms_fd_season() -> int:
+    """English football-season start year from today's date (Aug-Dec belongs
+    to the season starting that year; Jan-Jul belongs to the previous one)."""
+    now = datetime.now(timezone.utc)
+    return now.year if now.month >= 7 else now.year - 1
+
+
+def save_lms_gameweek(payload: dict, config: WebConfig) -> dict:
+    """Manual override — only meaningful until the next successful
+    football-data.org fetch overwrites the same cache file (see
+    `_lms_current_gameweek`). Exists for when there's no API key, or this
+    gameweek's fetched fixtures need correcting (a late postponement, a
+    team name the resolver missed)."""
+    from . import lms as lms_mod
+
+    number = payload.get("gameweek")
+    fixtures = payload.get("fixtures")
+    if not isinstance(number, int) or not fixtures:
+        raise ValueError("Provide a gameweek number and at least one fixture.")
+    gw = lms_mod.gameweek_from_dict({"gameweek": number, "fixtures": fixtures})
+    _write_lms_gameweek(gw, config.lms_gameweek_path)
+    return lms_payload(config)
+
+
+def save_lms_pick(payload: dict, config: WebConfig) -> dict:
+    from . import lms as lms_mod
+
+    entrant = str(payload.get("entrant") or "").strip()
+    team = str(payload.get("team") or "").strip()
+    opponent = str(payload.get("opponent") or "").strip()
+    gameweek = payload.get("gameweek")
+    if not entrant or not team or not opponent or gameweek is None:
+        raise ValueError("entrant, gameweek, team and opponent are all required.")
+    states = lms_mod.load_states(config.lms_state_path)
+    state = states.get(entrant, lms_mod.LMSState(entrant=entrant))
+    lms_mod.record_pick(state, int(gameweek), team, opponent, bool(payload.get("is_home")))
+    states[entrant] = state
+    lms_mod.save_states(states, config.lms_state_path)
+    return lms_payload(config)
+
+
+def save_lms_result(payload: dict, config: WebConfig) -> dict:
+    from . import lms as lms_mod
+
+    entrant = str(payload.get("entrant") or "").strip()
+    gameweek = payload.get("gameweek")
+    result = payload.get("result")
+    if not entrant or gameweek is None or not result:
+        raise ValueError("entrant, gameweek and result are all required.")
+    states = lms_mod.load_states(config.lms_state_path)
+    if entrant not in states:
+        raise ValueError(f"no Last Man Standing state recorded for {entrant}")
+    lms_mod.record_result(states[entrant], int(gameweek), result)
+    lms_mod.save_states(states, config.lms_state_path)
+    return lms_payload(config)
+
+
 def app_payload(config: WebConfig) -> dict:
     """One truthful payload for all UI phases; absent evidence remains absent."""
     payload, engine_result = _dashboard(config)
@@ -1583,6 +1864,7 @@ def app_payload(config: WebConfig) -> dict:
                 "note": "The quantitative core is frozen as PHASE1_MODEL_V1. Later layers are shown separately until prospective evidence promotes them.",
                 "transparency": model.to_dict(),
             },
+            "lms": lms_payload(config),
         }
     )
     return payload
@@ -1676,6 +1958,12 @@ class Super6RequestHandler(BaseHTTPRequestHandler):
                 self._send_json(HTTPStatus.OK, save_results(payload, self.config))
             elif path == "/api/cup-prediction":
                 self._send_json(HTTPStatus.OK, cup_prediction(payload, self.config))
+            elif path == "/api/lms/gameweek":
+                self._send_json(HTTPStatus.CREATED, save_lms_gameweek(payload, self.config))
+            elif path == "/api/lms/pick":
+                self._send_json(HTTPStatus.OK, save_lms_pick(payload, self.config))
+            elif path == "/api/lms/result":
+                self._send_json(HTTPStatus.OK, save_lms_result(payload, self.config))
             else:
                 self.send_error(HTTPStatus.NOT_FOUND)
         except (ValueError, KeyError, json.JSONDecodeError) as exc:

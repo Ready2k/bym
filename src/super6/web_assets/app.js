@@ -7,6 +7,7 @@ let pendingRound;
 let activityFilter = "ALL";
 let cupForecast;
 let ollamaModels = [];
+let lmsEntrant = "";
 
 // Football-Data crest IDs for the clubs in the supplied Super 6 round.
 // Unknown teams retain the accessible initials fallback inside teamBadge.
@@ -259,6 +260,107 @@ function cupView() {
   return `${pageHeader("One-off forecast", "Cup Match", "Choose any home and away side. This forecast is separate from your active Super 6 round.")}<section class="split-layout"><section class="form-card"><p class="eyebrow">Cup tie</p><h2>Predict a match</h2><p class="subtitle">Start typing to pick a team the model knows. A team outside the corpus returns no forecast rather than a misleading one.</p><form id="cup-form"><datalist id="known-teams">${teams}</datalist><label>Home team<input required name="home" maxlength="80" list="known-teams" placeholder="e.g. Stoke" value="${escapeHtml(prediction?.home_team || "")}"></label><label>Away team<input required name="away" maxlength="80" list="known-teams" placeholder="e.g. Oldham" value="${escapeHtml(prediction?.away_team || "")}"></label><label class="toggle-row"><span>Include League One, League Two &amp; National League</span><input type="checkbox" name="extended" ${result?.extended ? "checked" : ""}><i></i></label><p class="subtitle">The wider corpus changes the cross-division fallback, so it is no longer the frozen PHASE1_MODEL_V1. Use it for cup-tie sanity checks, never for Super 6 picks.</p><div class="form-actions"><button class="button" type="submit">Get cup prediction</button></div></form></section>${result ? cupResultCard(result) : ""}</section>`;
 }
 
+// Last Man Standing: a separate small game reusing the same fitted router
+// the Super 6 dashboard above just built, read as win/draw/loss instead of
+// an exact score. `appData.lms` is refreshed in place from each mutation's
+// response rather than reloading the whole app, since it does not touch
+// Super 6's round/engine state.
+function lmsStatusPill(alive) {
+  return `<span class="status-pill ${alive ? "approved" : "prohibited"}">${alive ? "ALIVE" : "ELIMINATED"}</span>`;
+}
+
+function lmsRecommendationRows(candidates, canPick) {
+  if (!candidates.length) return `<tr><td colspan="7">No eligible clubs left this gameweek — every fixture involves a club already used.</td></tr>`;
+  return candidates.slice(0, 10).map((c) => `<tr>
+    <td>${escapeHtml(c.team)}</td>
+    <td>${escapeHtml(c.team)} ${c.is_home ? "v" : "@"} ${escapeHtml(c.opponent)}</td>
+    <td>${percent(c.p_win)}</td>
+    <td>${percent(c.p_draw)}</td>
+    <td>${percent(c.p_loss)}</td>
+    <td><span class="confidence ${c.confidence.toLowerCase()}">${c.confidence}</span></td>
+    <td>${canPick ? `<button class="button secondary-button" data-lms-pick data-team="${escapeHtml(c.team)}" data-opponent="${escapeHtml(c.opponent)}" data-home="${c.is_home}">Pick</button>` : ""}</td>
+  </tr>`).join("");
+}
+
+function lmsHistoryRows(entrants) {
+  const names = Object.keys(entrants).sort();
+  if (!names.length) return `<tr><td colspan="4">No entrants recorded yet — enter a name above and record a pick.</td></tr>`;
+  return names.map((name) => {
+    const e = entrants[name];
+    const last = e.history[e.history.length - 1];
+    const provenance = last?.source ? ` (${last.source.toLowerCase()})` : "";
+    return `<tr><td>${escapeHtml(name)}</td><td>${lmsStatusPill(e.alive)}</td><td>${e.used_clubs.length}</td><td>${last ? `GW${last.gameweek} ${escapeHtml(last.team)} — ${last.result}${provenance}` : "—"}</td></tr>`;
+  }).join("");
+}
+
+function lmsAutoSettleBanner(autoSettle) {
+  if (!autoSettle) return "";
+  if (autoSettle.settled?.length) {
+    const items = autoSettle.settled.map(([name, gw, result]) => `${escapeHtml(name)} GW${gw} ${result}`).join(", ");
+    return `<div class="callout"><strong>Auto-settled</strong><span>Fetched from football-data.org just now: ${items}.</span></div>`;
+  }
+  if (autoSettle.ran) return "";
+  return `<div class="callout muted"><strong>Manual mode</strong><span>${escapeHtml(autoSettle.note || "Automatic settlement is unavailable.")} Results entered below are logged as self-reported so other entrants can see they weren't independently verified.</span></div>`;
+}
+
+function lmsFixturesSourceBanner(fixturesSource) {
+  if (!fixturesSource || fixturesSource.mode === "auto") return "";
+  return `<div class="callout muted"><strong>Fixtures</strong><span>${escapeHtml(fixturesSource.note || "Using manually entered fixtures.")}</span></div>`;
+}
+
+function lmsView() {
+  const lms = appData.lms || { gameweek: null, entrants: {}, recommendations: {}, unknown_teams: [], auto_settle: null, fixtures_source: null };
+  const gw = lms.gameweek;
+  const entrants = lms.entrants || {};
+  if (!lmsEntrant) lmsEntrant = Object.keys(entrants)[0] || "";
+  const state = entrants[lmsEntrant];
+  const candidates = (lmsEntrant && lms.recommendations[lmsEntrant]) || lms.recommendations.__all__ || [];
+  const pendingPick = gw && state?.history.find((h) => h.gameweek === gw.number);
+  const eliminated = state && !state.alive;
+
+  const entrantSection = `<section class="form-card"><p class="eyebrow">Entrant</p><label>Name<input id="lms-entrant-input" list="lms-entrants" maxlength="60" value="${escapeHtml(lmsEntrant)}" placeholder="Your name"></label><datalist id="lms-entrants">${Object.keys(entrants).sort().map((n) => `<option value="${escapeHtml(n)}">`).join("")}</datalist>${state ? `<p>${lmsStatusPill(state.alive)} · ${state.used_clubs.length} club${state.used_clubs.length === 1 ? "" : "s"} used${state.used_clubs.length ? `: ${escapeHtml(state.used_clubs.join(", "))}` : ""}</p>` : `<p class="subtitle">New entrant — no picks recorded yet.</p>`}</section>`;
+
+  let pickSection;
+  if (!gw) {
+    pickSection = emptyState(
+      "No gameweek fixtures yet",
+      lms.fixtures_source?.note || "Fixtures are fetched automatically from football-data.org — this should fill in on the next refresh."
+    );
+  } else if (eliminated) {
+    pickSection = `<div class="danger-card"><h3>${escapeHtml(lmsEntrant)} is eliminated</h3><p>No more picks can be recorded for this entrant.</p></div>`;
+  } else if (pendingPick) {
+    const settled = pendingPick.result !== "PENDING";
+    const manualFallback = !settled && !lms.auto_settle?.ran
+      ? `<span class="button-row" style="margin-top:.6rem">${["WIN", "DRAW", "LOSS"].map((r) => `<button class="button secondary-button" data-lms-result="${r}">${r}</button>`).join("")}</span><p class="subtitle" style="margin-top:.4rem">Manual override — logged as self-reported, not verified.</p>`
+      : !settled ? `<p class="subtitle" style="margin-top:.4rem">Waiting for full time. This settles itself automatically once football-data.org has the result.</p>` : "";
+    pickSection = `<div class="callout muted"><strong>Gameweek ${gw.number}</strong><span>${escapeHtml(pendingPick.team)} ${pendingPick.is_home ? "v" : "@"} ${escapeHtml(pendingPick.opponent)} — ${pendingPick.result}${pendingPick.source ? ` (${pendingPick.source.toLowerCase()})` : ""}${manualFallback}</span></div>`;
+  } else {
+    pickSection = `<div class="stat-table-card"><table><thead><tr><th>Team</th><th>Fixture</th><th>P(Win)</th><th>P(Draw)</th><th>P(Loss)</th><th>Conf</th><th></th></tr></thead><tbody>${lmsRecommendationRows(candidates, !!lmsEntrant)}</tbody></table></div>${lmsEntrant ? "" : `<p class="subtitle">Enter an entrant name above to record a pick.</p>`}`;
+  }
+
+  const unknownNote = gw && lms.unknown_teams.length ? `<p class="subtitle">Not in the training corpus, using league-average strength: ${escapeHtml(lms.unknown_teams.join(", "))}.</p>` : "";
+
+  const setupSummary = lms.fixtures_source?.mode === "auto"
+    ? `Override gameweek ${gw.number} fixtures`
+    : gw ? `Edit gameweek ${gw.number} fixtures` : "Add this gameweek's fixtures manually";
+  const setupNote = lms.fixtures_source?.mode === "auto"
+    ? `<p class="subtitle">Fetched automatically — any change here is temporary and gets replaced by the next successful fetch.</p>`
+    : "";
+  const setupSection = `<details class="disclosure"><summary>${setupSummary}</summary><form id="lms-gameweek-form" class="form-card">${setupNote}<label>Gameweek number<input required name="gameweek" type="number" min="1" value="${gw ? gw.number : ""}"></label><label>Fixtures — one per line, "Home vs Away"<textarea required name="fixtures" rows="10" placeholder="Arsenal vs Everton">${gw ? gw.fixtures.map((f) => `${f.home} vs ${f.away}`).join("\n") : ""}</textarea></label><div class="form-actions"><button class="button" type="submit">Save gameweek fixtures</button></div></form></details>`;
+
+  const historySection = `<section class="section-heading"><div><p class="eyebrow">Entrants</p><h2>Survival status</h2></div></section><div class="stat-table-card"><table><thead><tr><th>Entrant</th><th>Status</th><th>Clubs used</th><th>Last result</th></tr></thead><tbody>${lmsHistoryRows(entrants)}</tbody></table></div>`;
+
+  return `${pageHeader("Last Man Standing", "Survivor picks", "Pick one club per gameweek. Win to survive — a draw eliminates too, same as a loss. A club can only be picked once for the whole competition.")}
+    ${entrantSection}
+    ${lmsFixturesSourceBanner(lms.fixtures_source)}
+    ${gw ? lmsAutoSettleBanner(lms.auto_settle) : ""}
+    <section class="section-heading"><div><p class="eyebrow">${gw ? `Gameweek ${gw.number}` : "Gameweek"}</p><h2>Ranked by chance of winning</h2></div></section>
+    ${pickSection}
+    ${unknownNote}
+    ${setupSection}
+    ${historySection}`;
+}
+
 // What you told us you entered, and when. The reconciler already records
 // all of this; without it on screen "entry drift" has nothing to drift from.
 function submissionRecord(round) {
@@ -500,7 +602,7 @@ function moreView() {
 function renderPage() {
   if (!appData) return;
   const page = (location.hash || "#home").slice(1).split("?")[0] || "home";
-  const views = { home: homeView, round: roundView, cup: cupView, league: leagueView, opponents: opponentsView, performance: performanceView, activity: activityView, model: modelView, sources: sourcesView, health: healthView, settings: settingsView, more: moreView };
+  const views = { home: homeView, round: roundView, cup: cupView, lms: lmsView, league: leagueView, opponents: opponentsView, performance: performanceView, activity: activityView, model: modelView, sources: sourcesView, health: healthView, settings: settingsView, more: moreView };
   $("#app").innerHTML = (views[page] || homeView)();
   document.querySelectorAll("[data-page-link]").forEach((link) => link.classList.toggle("active", link.dataset.pageLink === page));
   markScrollableRegions();
@@ -745,16 +847,22 @@ async function loadApp() {
 window.addEventListener("hashchange", renderPage);
 document.addEventListener("change", (event) => {
   const select = event.target.closest("[data-team-select]");
-  if (!select) return;
-  const target = select.form?.elements[select.dataset.target];
-  if (!target) return;
-  if (select.value === "__other__") {
-    target.hidden = false;
-    target.value = "";
-    target.focus();
-  } else {
-    target.value = select.value;
-    target.hidden = true;
+  if (select) {
+    const target = select.form?.elements[select.dataset.target];
+    if (!target) return;
+    if (select.value === "__other__") {
+      target.hidden = false;
+      target.value = "";
+      target.focus();
+    } else {
+      target.value = select.value;
+      target.hidden = true;
+    }
+    return;
+  }
+  if (event.target.id === "lms-entrant-input") {
+    lmsEntrant = event.target.value.trim();
+    renderPage();
   }
 });
 document.addEventListener("click", async (event) => {
@@ -835,6 +943,30 @@ document.addEventListener("click", async (event) => {
       await post("/api/rounds", pendingRound); $("#round-dialog").close(); toast("Round saved and forecast refreshed."); await loadApp(); location.hash = "#home";
     } catch (error) { toast(error.message); }
   }
+  const lmsPick = event.target.closest("[data-lms-pick]");
+  if (lmsPick) {
+    if (!lmsEntrant) { toast("Enter an entrant name first."); return; }
+    try {
+      appData.lms = await post("/api/lms/pick", {
+        entrant: lmsEntrant, gameweek: appData.lms.gameweek.number,
+        team: lmsPick.dataset.team, opponent: lmsPick.dataset.opponent,
+        is_home: lmsPick.dataset.home === "true",
+      });
+      toast(`${lmsPick.dataset.team} recorded as ${lmsEntrant}'s pick for gameweek ${appData.lms.gameweek.number}.`);
+      renderPage();
+    } catch (error) { toast(error.message); }
+  }
+  const lmsResult = event.target.closest("[data-lms-result]");
+  if (lmsResult) {
+    try {
+      appData.lms = await post("/api/lms/result", {
+        entrant: lmsEntrant, gameweek: appData.lms.gameweek.number,
+        result: lmsResult.dataset.lmsResult,
+      });
+      toast(`Recorded ${lmsResult.dataset.lmsResult} for ${lmsEntrant}.`);
+      renderPage();
+    } catch (error) { toast(error.message); }
+  }
 });
 
 document.addEventListener("submit", async (event) => {
@@ -861,6 +993,15 @@ document.addEventListener("submit", async (event) => {
       const notifications = Object.keys(appData.settings.notifications).reduce((out, key) => ({ ...out, [key]: form.elements[`notification_${key}`].checked }), {});
       await post("/api/settings", { league_name: form.elements.league_name.value, player_name: form.elements.player_name.value, notifications, notification_delivery: { in_app: form.elements.delivery_in_app.checked, email: form.elements.delivery_email.checked }, notification_email: form.elements.notification_email.value, budget: { target_monthly: form.elements.target_monthly.value, hard_ceiling: form.elements.hard_ceiling.value }, season_rounds_total: form.elements.season_rounds_total.value, knowledge_extractor: { enabled: form.elements.extractor_enabled.checked, base_url: form.elements.extractor_base_url.value, model: form.elements.extractor_model.value, mode: form.elements.extractor_mode.value } });
       toast("Settings saved."); await loadApp();
+    } else if (form.id === "lms-gameweek-form") {
+      const fixtures = form.elements.fixtures.value.split("\n").map((line) => line.trim()).filter(Boolean).map((line) => {
+        const [home, away] = line.split(/\s+vs\s+/i);
+        if (!home || !away) throw new Error(`Could not parse fixture "${line}" — use "Home vs Away".`);
+        return { home: home.trim(), away: away.trim() };
+      });
+      appData.lms = await post("/api/lms/gameweek", { gameweek: Number(form.elements.gameweek.value), fixtures });
+      toast("Gameweek fixtures saved.");
+      renderPage();
     }
   } catch (error) { toast(error.message); }
 });

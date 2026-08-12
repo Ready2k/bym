@@ -162,6 +162,68 @@ rather than a one-off report:
 - `super6 shadow-report` — metrics on the knowledge agent's `SHADOW`-mode
   extractions (§8), since nothing yet consumes them into the model.
 
+**Last Man Standing** (`src/super6/lms.py`) — a separate, smaller game
+reusing the same fitted Dixon-Coles router: pick one club per gameweek,
+survive only if it wins, never reuse a club. Not part of the §1-53 spec —
+its own module, its own state file (`data/lms_state.json`), no exact
+scores or EV involved.
+
+- `super6 lms-recommend --seasons 2019 2025 --data data --entrant <name>`
+  — every club still eligible this gameweek, ranked by P(win) (from the
+  same score matrix Super 6 uses, just read as home/draw/away instead of
+  an exact score). Fetches the current Premier League gameweek from
+  football-data.org automatically (needs `FOOTBALL_DATA_ORG_KEY`) — no
+  fixture list to type in. `--entrant` pulls the used-club list from that
+  entrant's saved state so used clubs are excluded automatically; `--used`
+  excludes extra clubs ad hoc without a state file.
+- `super6 lms-fixtures --seasons 2019 2025 --data data [--gameweek <file>]`
+  — fetches and saves the current gameweek on its own, e.g. for `lms-settle`
+  to read later. Without a key (or as a manual override — a late
+  postponement, a team name the resolver missed), a gameweek file can still
+  be hand-written:
+  ```json
+  {
+    "gameweek": 1,
+    "fixtures": [
+      {"home": "Arsenal", "away": "Everton"},
+      {"home": "Fulham", "away": "Brighton", "odds": [2.1, 3.4, 3.2]}
+    ]
+  }
+  ```
+  — however many fixtures the Premier League actually plays that week, not
+  Super 6's fixed six; `odds` is optional per fixture, same [H, D, A]
+  convention as a Super 6 round. Pass it to `lms-recommend`/`lms-settle`
+  with `--gameweek <file>` to use it instead of the live fetch.
+- `super6 lms-pick --entrant <name> --gameweek <n> --team <club> --opponent <club> [--home]`
+  — records a pick. Refuses a club already used or a second pick logged for
+  the same gameweek.
+- `super6 lms-settle --gameweek <file> [--fd-season 2026]` — fetches full-time
+  results from football-data.org (needs `FOOTBALL_DATA_ORG_KEY`, same source
+  `super6 score` uses) and settles every PENDING pick that's finished. This
+  is the trusted path: in a multi-entrant competition, an entrant reporting
+  their own elimination is a conflict of interest an automatic feed doesn't
+  have.
+- `super6 lms-result --entrant <name> --gameweek <n> --result WIN|DRAW|LOSS`
+  — settles a pick **by hand**. Fallback only, for a fixture `lms-settle`
+  can't resolve (no key configured, or outside football-data.org's
+  coverage) — the saved record is tagged `MANUAL` either way, visible in
+  `lms-status` and the UI, so a self-reported result is never
+  indistinguishable from a verified one.
+- `super6 lms-status [--entrant <name>]` — survival status and pick history,
+  each entry tagged `(auto)` or `(manual)`; omit `--entrant` to list
+  everyone recorded.
+
+It also has its own tab in the local dashboard (`super6 serve`, see below) —
+the current gameweek's fixtures are fetched and ranked automatically on
+every page load, type an entrant name, see clubs ranked by P(win) with a
+**Pick** button. Every load also tries `lms-settle`'s result fetch; a
+pending pick only ever shows manual WIN/DRAW/LOSS buttons when no
+`FOOTBALL_DATA_ORG_KEY` is configured, and using them is logged as
+self-reported. Without a key the fixtures editor becomes the primary way
+in, same as the CLI's hand-written gameweek file. Same state files as the
+CLI (`data/lms_gameweek.json`, `data/lms_state.json` by default), so either
+interface can be used interchangeably.
+
 ## Layout
 
 ```

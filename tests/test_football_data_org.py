@@ -121,3 +121,52 @@ def test_registry_gate(tmp_path):
 def test_empty_payload():
     assert fdo.parse_matches({}) == []
     assert fdo.parse_matches({"matches": []}) == []
+
+
+def test_current_matchday_is_the_next_scheduled_fixture():
+    matches = fdo.parse_matches(PAYLOAD)
+    assert fdo.current_matchday(matches) == 1
+
+
+def test_current_matchday_skips_a_matchday_stuck_on_a_postponement():
+    payload = {
+        "matches": [
+            {
+                "id": 1, "status": "FINISHED", "matchday": 1,
+                "utcDate": "2026-08-21T19:00:00Z",
+                "homeTeam": {"name": "A"}, "awayTeam": {"name": "B"},
+                "score": {"fullTime": {"home": 1, "away": 0}},
+            },
+            {
+                "id": 2, "status": "POSTPONED", "matchday": 1,
+                "utcDate": "2026-08-22T14:00:00Z",
+                "homeTeam": {"name": "C"}, "awayTeam": {"name": "D"},
+                "score": {"fullTime": {"home": None, "away": None}},
+            },
+            {
+                "id": 3, "status": "SCHEDULED", "matchday": 2,
+                "utcDate": "2026-08-29T14:00:00Z",
+                "homeTeam": {"name": "E"}, "awayTeam": {"name": "F"},
+                "score": {"fullTime": {"home": None, "away": None}},
+            },
+        ]
+    }
+    matches = fdo.parse_matches(payload)
+    assert fdo.current_matchday(matches) == 2
+
+
+def test_current_matchday_none_when_nothing_scheduled():
+    payload = {"matches": [{
+        "id": 1, "status": "FINISHED", "matchday": 1,
+        "utcDate": "2026-08-21T19:00:00Z",
+        "homeTeam": {"name": "A"}, "awayTeam": {"name": "B"},
+        "score": {"fullTime": {"home": 1, "away": 0}},
+    }]}
+    matches = fdo.parse_matches(payload)
+    assert fdo.current_matchday(matches) is None
+
+
+def test_fixtures_for_matchday_filters_and_orders_by_kickoff():
+    matches = fdo.parse_matches(PAYLOAD)
+    day = fdo.fixtures_for_matchday(matches, 1)
+    assert [m.match_id for m in day] == ["537000", "537001", "537002"]
