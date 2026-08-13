@@ -204,3 +204,29 @@ def test_settlement_still_runs_off_the_shared_fetch(tmp_path, router, monkeypatc
     # The entrant block handed to the UI reflects the settlement that just
     # happened, not the state as it was read at the top of the request.
     assert payload["entrants"]["James"]["history"][0]["result"] == "WIN"
+
+
+def test_an_entrant_who_booked_this_gameweek_is_planned_from_the_next(
+    tmp_path, router
+):
+    """The offline path serves a single gameweek, so an entrant who has
+    already booked it has nothing left to plan — and must be told that
+    rather than handed a pick for a deadline they have passed."""
+    config = config_with(
+        tmp_path, GAMEWEEK,
+        {"James": {"entrant": "James", "alive": True, "used_clubs": ["Strong"],
+                   "history": [{"gameweek": 3, "team": "Strong",
+                                "opponent": "Weak", "is_home": True,
+                                "result": "PENDING", "source": None}]},
+         "Kate": {"entrant": "Kate", "alive": True, "used_clubs": [],
+                  "history": []}},
+    )
+    payload = lms_payload(config, router=router, known_teams=set(TEAMS))
+
+    # James booked GW3, the only gameweek on offer: no picks, no candidates.
+    assert payload["plans"]["James"]["picks"] == []
+    assert payload["recommendations"]["James"] == []
+
+    # Kate has not, so she is still planned normally off the same matrices.
+    assert payload["plans"]["Kate"]["picks"]
+    assert payload["recommendations"]["Kate"]

@@ -754,6 +754,28 @@ def get_state(entrant: str, path: Path = DEFAULT_STATE_PATH) -> LMSState:
     return load_states(path).get(entrant, LMSState(entrant=entrant))
 
 
+def open_gameweek_indices(
+    gameweeks: Sequence[Gameweek], state: LMSState | None
+) -> list[int]:
+    """Positions in `gameweeks` this entrant has not yet committed a pick for.
+
+    The used-club list alone is not enough to place an entrant in the
+    horizon. Someone who has booked GW1 has spent a club *and* spent the
+    week: planning still from GW1 tells them to pick a club for a deadline
+    that has passed, and — worse — solves the remaining weeks as though
+    the club it suggests for GW1 were unavailable later, which understates
+    every week after it.
+
+    Indices rather than gameweeks, so a caller holding score matrices
+    computed per gameweek (the dashboard does) can slice them in step
+    instead of recomputing.
+    """
+    if state is None:
+        return list(range(len(gameweeks)))
+    committed = {int(entry["gameweek"]) for entry in state.history if "gameweek" in entry}
+    return [i for i, gw in enumerate(gameweeks) if gw.number not in committed]
+
+
 def record_pick(
     state: LMSState, gameweek: int, team: str, opponent: str, is_home: bool
 ) -> LMSState:

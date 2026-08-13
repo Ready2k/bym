@@ -1318,6 +1318,26 @@ def cmd_lms_plan(args) -> int:
             return 0
         used |= set(state.used_clubs)
 
+        # A booked gameweek is spent, not just its club. Planning from it
+        # would name a pick for a deadline already gone, and would solve
+        # the weeks after it as though that club were still to be spent.
+        open_idx = lms.open_gameweek_indices(gameweeks, state)
+        skipped = [gw.number for i, gw in enumerate(gameweeks) if i not in set(open_idx)]
+        if skipped:
+            print(
+                f"GW{', GW'.join(str(n) for n in skipped)} already booked by "
+                f"{args.entrant} — planning from GW"
+                f"{gameweeks[open_idx[0]].number if open_idx else '—'} onward.\n"
+            )
+        gameweeks = [gameweeks[i] for i in open_idx]
+        if not gameweeks:
+            print(
+                f"{args.entrant} has a pick booked for every gameweek in the "
+                "horizon. Nothing left to plan — widen it with --horizon, or "
+                "wait for the next fixture list."
+            )
+            return 0
+
     plan = lms.plan_horizon(router, gameweeks, used, FROZEN_PHASE1_V1)
     print(lms.format_plan(plan, used))
 

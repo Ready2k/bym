@@ -636,3 +636,75 @@ def test_greedy_running_out_of_clubs_scores_zero_not_a_short_horizon():
     assert p.greedy_survival_p == 0.0
     assert p.survival_p == pytest.approx(0.60 * 0.80)
     assert "no legal club for GW2" in format_plan(p)
+
+
+# --- A booked gameweek is spent, not just its club ----------------------
+#
+# used_clubs alone cannot place an entrant in the horizon. Someone who has
+# booked GW1 has spent the week as well as the club, and planning still
+# from GW1 told them to pick for a deadline that had passed — while
+# solving GW2+ as though the club it suggested for GW1 were unavailable
+# later, which understated every week after it.
+
+def _weeks(*numbers):
+    return [Gameweek(n, ()) for n in numbers]
+
+
+def test_a_booked_gameweek_drops_out_of_the_horizon():
+    from bym.lms import open_gameweek_indices
+
+    state = LMSState(entrant="James", history=[{"gameweek": 1, "team": "Man United"}])
+    assert open_gameweek_indices(_weeks(1, 2, 3, 4), state) == [1, 2, 3]
+
+
+def test_an_entrant_with_no_history_keeps_the_whole_horizon():
+    from bym.lms import open_gameweek_indices
+
+    assert open_gameweek_indices(_weeks(1, 2, 3), LMSState(entrant="New")) == [0, 1, 2]
+    assert open_gameweek_indices(_weeks(1, 2, 3), None) == [0, 1, 2]
+
+
+def test_a_gap_in_booked_weeks_is_respected_not_assumed_leading():
+    """Bookings are not necessarily a prefix — a hand-edited state file is
+    the documented fallback when a result cannot be fetched."""
+    from bym.lms import open_gameweek_indices
+
+    state = LMSState(
+        entrant="James",
+        history=[{"gameweek": 1, "team": "A"}, {"gameweek": 3, "team": "B"}],
+    )
+    assert open_gameweek_indices(_weeks(1, 2, 3, 4), state) == [1, 3]
+
+
+def test_every_week_booked_leaves_nothing_to_plan():
+    from bym.lms import open_gameweek_indices
+
+    state = LMSState(
+        entrant="James",
+        history=[{"gameweek": n, "team": str(n)} for n in (1, 2)],
+    )
+    assert open_gameweek_indices(_weeks(1, 2), state) == []
+
+
+def test_planning_from_the_open_week_scores_only_the_weeks_left(params):
+    """The survival figure must cover the weeks the entrant can still
+    pick. Including a booked week both names a pick they cannot make and
+    reserves its club against the weeks that follow."""
+    weeks = [
+        Gameweek(1, (GameweekFixture("Strong", "Weak"),)),
+        Gameweek(2, (GameweekFixture("Strong", "Middling A"),
+                     GameweekFixture("Middling B", "Weak"))),
+    ]
+    state = LMSState(
+        entrant="James",
+        used_clubs=["Middling A"],
+        history=[{"gameweek": 1, "team": "Middling A"}],
+    )
+    from bym.lms import open_gameweek_indices
+
+    open_idx = open_gameweek_indices(weeks, state)
+    plan = plan_horizon(params, [weeks[i] for i in open_idx], set(state.used_clubs))
+
+    assert [p.gameweek for p in plan.picks] == [2]
+    assert plan.this_week.gameweek == 2
+    assert "Middling A" not in [p.candidate.team for p in plan.picks]

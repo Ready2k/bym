@@ -1683,16 +1683,28 @@ def lms_payload(config: WebConfig, router=None, known_teams: set[str] | None = N
 
     outlooks = [lms_mod.fixture_outlooks(router, week) for week in gameweeks]
 
-    def for_used(used: set[str]) -> tuple[list[dict], dict]:
-        candidates = lms_mod.rank_candidates(outlooks[0], used)
-        plan = lms_mod.plan_horizon(router, gameweeks, used, outlooks=outlooks)
+    def for_used(used: set[str], state=None) -> tuple[list[dict], dict]:
+        # Slice gameweeks and their score matrices together: a gameweek
+        # this entrant has already booked is spent, and planning from it
+        # both names a pick for a passed deadline and understates every
+        # week after it. `outlooks` is shared across entrants, so the two
+        # lists must be indexed by the same positions.
+        open_idx = lms_mod.open_gameweek_indices(gameweeks, state)
+        weeks = [gameweeks[i] for i in open_idx]
+        week_outlooks = [outlooks[i] for i in open_idx]
+        if not weeks:
+            return [], _lms_plan_dict(lms_mod.plan_horizon(router, [], used))
+        candidates = lms_mod.rank_candidates(week_outlooks[0], used)
+        plan = lms_mod.plan_horizon(router, weeks, used, outlooks=week_outlooks)
         return [_lms_candidate_dict(c) for c in candidates], _lms_plan_dict(plan)
 
     recommendations, plans = {}, {}
     recommendations["__all__"], plans["__all__"] = for_used(set())
     for name, state in states.items():
         if state.alive:
-            recommendations[name], plans[name] = for_used(set(state.used_clubs))
+            recommendations[name], plans[name] = for_used(
+                set(state.used_clubs), state
+            )
 
     return {
         "gameweek": {
