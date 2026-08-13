@@ -24,7 +24,13 @@ from .api import service
 from .config import DEFAULT_LMS, FROZEN_PHASE1_V1
 from .data.football_data import load_matches
 from .engine import run_engine
-from .round import Round, load_round, round_from_dict, round_to_dict
+from .round import (
+    Round,
+    load_round,
+    resolve_round_teams,
+    round_from_dict,
+    round_to_dict,
+)
 from .sources.registry import load_registry
 
 
@@ -679,6 +685,23 @@ def cup_prediction(payload: dict, config: WebConfig) -> dict:
 def create_round(payload: dict, config: WebConfig) -> dict:
     """Validate and persist a manually configured round outside Sky's boundary."""
     rnd = round_from_dict(payload)
+    # Resolve on the way in, not on every read. This is where a club name
+    # enters the system — the "Other" option in the fixture form accepts
+    # free text, and Sky writes "Manchester City" where the corpus says
+    # "Man City". Canonicalising here means the file on disk is already
+    # right for every later reader, including ones that never resolve.
+    try:
+        matches = load_matches(
+            config.data_path,
+            list(range(config.seasons[0], config.seasons[1] + 1)),
+            config.divisions,
+            fetch=False,
+        )
+        rnd, _ = resolve_round_teams(rnd, _known_teams(matches))
+    except (FileNotFoundError, ValueError) as exc:
+        # A round must still be saveable when the corpus is absent — the
+        # UI's own unmodellable banner covers what this would have caught.
+        logging.getLogger(__name__).warning("team resolution skipped: %s", exc)
     path = config.round_path
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(round_to_dict(rnd), indent=2) + "\n")

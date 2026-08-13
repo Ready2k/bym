@@ -112,12 +112,27 @@ def test_a_genuinely_unknown_team_is_kept_verbatim():
     assert renamed == []
 
 
-def test_predict_and_engine_resolve_through_the_same_helper():
-    """These two commands disagreeing about one round file is the bug this
-    helper exists to prevent, so neither may grow its own copy."""
+def test_every_forecasting_reader_resolves_through_the_same_helper():
+    """Two readers disagreeing about one round file is the bug this helper
+    exists to prevent, so none may grow its own copy — or skip it. Each
+    entry below reaches the model with names taken from a round file:
+    predict and record forecast directly, run_engine backs engine-run and
+    the dashboard, run_due_jobs is the unattended watcher, and create_round
+    is where a name enters the system at all.
+
+    A new round-file reader that forecasts belongs in this list. If one is
+    genuinely name-independent — keyed on season:round_number with
+    index-based picks, as the UI's submission and override paths are —
+    it does not, but check that before assuming it."""
     import inspect
 
-    from bym import cli, engine
+    from bym import cli, engine, web, worker
 
-    assert "resolve_round_teams" in inspect.getsource(cli.cmd_predict)
-    assert "resolve_round_teams" in inspect.getsource(engine.run_engine)
+    for func in (
+        cli.cmd_predict,
+        cli.cmd_record,
+        engine.run_engine,
+        worker.run_due_jobs,
+        web.create_round,
+    ):
+        assert "resolve_round_teams" in inspect.getsource(func), func.__qualname__

@@ -253,6 +253,7 @@ def cmd_watch(args) -> int:
 
     matches = load_matches(Path(args.data), _season_range(args), tuple(args.divisions))
     router = _fit_router(matches, FROZEN_PHASE1_V1.xi, FROZEN_PHASE1_V1)
+    known_teams = set(matches["home_team"]) | set(matches["away_team"])
 
     with scheduler.connect(Path(args.db)) as conn:
         jobs = scheduler.schedule_all_layers(
@@ -277,7 +278,8 @@ def cmd_watch(args) -> int:
         try:
             while True:
                 outcomes = worker.run_due_jobs(
-                    conn, api_key, lambda: router, **_layer_credentials()
+                    conn, api_key, lambda: router,
+                    known_teams=known_teams, **_layer_credentials()
                 )
                 for o in outcomes:
                     print(
@@ -310,10 +312,12 @@ def cmd_tick(args) -> int:
         return 1
     matches = load_matches(Path(args.data), _season_range(args), tuple(args.divisions))
     router = _fit_router(matches, FROZEN_PHASE1_V1.xi, FROZEN_PHASE1_V1)
+    known_teams = set(matches["home_team"]) | set(matches["away_team"])
 
     with scheduler.connect(Path(args.db)) as conn:
         outcomes = worker.run_due_jobs(
-            conn, api_key, lambda: router, **_layer_credentials()
+            conn, api_key, lambda: router,
+            known_teams=known_teams, **_layer_credentials()
         )
     if not outcomes:
         print("No jobs due.")
@@ -972,16 +976,37 @@ def cmd_record(args) -> int:
         save_ledger,
     )
     from .recommend import recommend_round
-    from .round import load_round
+    from .round import load_round, resolve_round_teams
 
     rnd = load_round(Path(args.round))
     if getattr(args, "fetch_odds", False):
         rnd, _ = _acquire_odds(rnd, args)
     ledger_path = Path(args.ledger)
     ledger = load_ledger(ledger_path)
-    fixtures = [(f.home, f.away) for f in rnd.fixtures]
 
     matches = load_matches(Path(args.data), _season_range(args), tuple(args.divisions))
+
+    # Before the fixture list is built, not after: the ledger stores the
+    # club name alongside the pick, and it is the record the model is
+    # later judged on. An unresolved name here writes a pick made for a
+    # league-average stand-in into permanent evidence, under a name that
+    # will not match the corpus at reconciliation.
+    known = set(matches["home_team"]) | set(matches["away_team"])
+    rnd, renamed = resolve_round_teams(rnd, known)
+    for typed, canonical in renamed:
+        print(f"note: read '{typed}' as '{canonical}'", file=sys.stderr)
+    for f in rnd.fixtures:
+        for team in (f.home, f.away):
+            if team not in known:
+                print(
+                    f"WARNING: '{team}' not in training data — its pick comes "
+                    "from league-average strength (§29.4) and is being "
+                    "recorded as evidence. Check the spelling matches "
+                    "Football-Data.co.uk names.",
+                    file=sys.stderr,
+                )
+    fixtures = [(f.home, f.away) for f in rnd.fixtures]
+
     router = _fit_router(matches, FROZEN_PHASE1_V1.xi, FROZEN_PHASE1_V1)
     rec = recommend_round(router, rnd, FROZEN_PHASE1_V1)
 

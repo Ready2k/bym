@@ -28,7 +28,7 @@ from . import cadence, divergence, events, movement, scheduler
 from .config import DEFAULT_MOVEMENT, FROZEN_PHASE1_V1, ModelConfig, MovementConfig
 from .model.matrix import score_matrix
 from .recommend import FixtureRecommendation, recommend_fixture
-from .round import Round, load_round
+from .round import Round, load_round, resolve_round_teams
 from .sources import pipeline
 from .sources.odds_api import FREE_TIER_MONTHLY_CREDITS, credits_used_this_month
 
@@ -457,6 +457,7 @@ def run_due_jobs(
     extractor=None,
     extractor_mode: str = "shadow",
     season: int = 2026,
+    known_teams: set[str] | None = None,
     **poll_kwargs,
 ) -> list[PollOutcome]:
     """Claim and run every due job, dispatching by job type and
@@ -477,6 +478,14 @@ def run_due_jobs(
             continue
         try:
             rnd = load_round(Path(job.round_path))
+            # The scheduler stored a path, so the file is re-read on every
+            # poll and its names have never been through resolution. This
+            # runs unattended, so an unresolved club would reforecast from
+            # a league-average stand-in indefinitely, with nobody reading
+            # a warning. Applied for every job type, not just the poll:
+            # availability and knowledge key on the club name too.
+            if known_teams is not None:
+                rnd, _ = resolve_round_teams(rnd, known_teams)
 
             if job.job_type == scheduler.JobType.POLL_AVAILABILITY.value:
                 outcome = _run_availability_job(

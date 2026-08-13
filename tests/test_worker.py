@@ -334,3 +334,77 @@ def test_an_extractor_with_no_ollama_config_is_treated_as_responsive():
 
     assert extractor_is_responsive(None) is True
     assert extractor_is_responsive(object()) is True
+
+
+UNRESOLVED_ROUND_JSON = ROUND_JSON.replace(
+    '{"home": "Strong", "away": "Weak"}', '{"home": "Strong FC", "away": "weak"}'
+)
+
+
+def test_scheduled_polling_resolves_club_names(monkeypatch, tmp_path, router):
+    """The scheduler stores a path, so the round file is re-read on every
+    poll with names that have never been resolved. This loop runs
+    unattended — an unresolved club would reforecast from a league-average
+    stand-in indefinitely, with nobody there to read a warning."""
+    seen: list[tuple[str, str]] = []
+
+    real_poll = worker.poll_round
+
+    def spy(rnd, *a, **kw):
+        seen.extend((f.home, f.away) for f in rnd.fixtures)
+        return real_poll(rnd, *a, **kw)
+
+    monkeypatch.setattr(worker, "poll_round", spy)
+    monkeypatch.setattr(
+        pipeline.odds_api, "fetch_odds", lambda division, key, **kw: feed(TIGHT)
+    )
+    monkeypatch.setattr(worker, "budget_constrained", lambda *a, **k: False)
+
+    round_path = tmp_path / "round.json"
+    round_path.write_text(UNRESOLVED_ROUND_JSON)
+
+    with scheduler.connect(tmp_path / "sched.db") as conn:
+        scheduler.schedule_round(conn, 1, str(round_path), DEADLINE, first_run_at=NOW)
+        worker.run_due_jobs(
+            conn, "fake-key", lambda: router, now=NOW,
+            event_log=tmp_path / "events.jsonl",
+            consensus_path=tmp_path / "c.csv",
+            odds_snapshot_path=tmp_path / "o.csv",
+            divisions=("E0",),
+            known_teams={"Strong", "Weak", "Middling A", "Middling B"},
+        )
+
+    assert seen, "poll_round was never reached"
+    assert ("Strong", "Weak") == seen[0]
+    assert "Strong FC" not in [team for pair in seen for team in pair]
+
+
+def test_polling_without_known_teams_is_left_untouched(monkeypatch, tmp_path, router):
+    """Callers that cannot supply a corpus still get the old behaviour
+    rather than a crash — resolution is additive."""
+    seen: list[tuple[str, str]] = []
+    real_poll = worker.poll_round
+
+    def spy(rnd, *a, **kw):
+        seen.extend((f.home, f.away) for f in rnd.fixtures)
+        return real_poll(rnd, *a, **kw)
+
+    monkeypatch.setattr(worker, "poll_round", spy)
+    monkeypatch.setattr(
+        pipeline.odds_api, "fetch_odds", lambda division, key, **kw: feed(TIGHT)
+    )
+    monkeypatch.setattr(worker, "budget_constrained", lambda *a, **k: False)
+
+    round_path = tmp_path / "round.json"
+    round_path.write_text(UNRESOLVED_ROUND_JSON)
+
+    with scheduler.connect(tmp_path / "sched.db") as conn:
+        scheduler.schedule_round(conn, 1, str(round_path), DEADLINE, first_run_at=NOW)
+        worker.run_due_jobs(
+            conn, "fake-key", lambda: router, now=NOW,
+            event_log=tmp_path / "events.jsonl",
+            consensus_path=tmp_path / "c.csv",
+            odds_snapshot_path=tmp_path / "o.csv",
+            divisions=("E0",),
+        )
+    assert ("Strong FC", "weak") == seen[0]

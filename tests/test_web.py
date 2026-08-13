@@ -784,3 +784,33 @@ def test_quota_exhaustion_is_warned_about_before_it_bites():
     healthy = SourceHealth(source_id="tavily", usage_status="APPROVED",
                            quota_used=491, quota_limit=1000, quota_period="month")
     assert healthy.quota_limit - healthy.quota_used > healthy.quota_limit * 0.2
+
+
+def test_create_round_canonicalises_club_names(tmp_path):
+    """The fixture form's "Other" option takes free text, and Sky writes
+    "Manchester City" where the corpus says "Man City". Resolving on the
+    way in means the file on disk is already right for every later reader,
+    including the ones that never resolve."""
+    config = WebConfig(
+        round_path=tmp_path / "active.json",
+        data_path=Path("data"),
+        seasons=(2024, 2024),
+    )
+    raw = payload()
+    raw["fixtures"][0] = {"home": "Manchester City", "away": "Nottingham Forest"}
+    created = create_round(raw, config)
+
+    on_disk = load_round(Path(created["round_path"]))
+    assert on_disk.fixtures[0].home == "Man City"
+    assert on_disk.fixtures[0].away == "Nott'm Forest"
+
+
+def test_create_round_still_saves_without_a_corpus(tmp_path):
+    """Resolution is a convenience, not a precondition. A round must stay
+    saveable when the corpus is absent — the UI's unmodellable banner
+    already covers what this would have caught."""
+    config = WebConfig(
+        round_path=tmp_path / "active.json", data_path=tmp_path / "nothing-here"
+    )
+    created = create_round(payload(), config)
+    assert Path(created["round_path"]).exists()
