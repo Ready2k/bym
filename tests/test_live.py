@@ -1,4 +1,4 @@
-"""Live integration tests — skipped unless SUPER6_LIVE_TESTS=1.
+"""Live integration tests — skipped unless BYM_LIVE_TESTS=1.
 
 An ordinary `pytest` run must make no network calls whatsoever. These
 exist so live verification is repeatable, not so it happens by accident.
@@ -8,16 +8,16 @@ import os
 
 import pytest
 
-LIVE = os.environ.get("SUPER6_LIVE_TESTS") == "1"
+LIVE = os.environ.get("BYM_LIVE_TESTS") == "1"
 
 pytestmark = pytest.mark.skipif(
-    not LIVE, reason="live tests require SUPER6_LIVE_TESTS=1"
+    not LIVE, reason="live tests require BYM_LIVE_TESTS=1"
 )
 
 
 def test_ollama_reachable():
-    from super6.knowledge.config import from_env
-    from super6.knowledge.ollama import check_health
+    from bym.knowledge.config import from_env
+    from bym.knowledge.ollama import check_health
 
     config = from_env()
     health = check_health(config)
@@ -25,8 +25,8 @@ def test_ollama_reachable():
 
 
 def test_ollama_model_installed():
-    from super6.knowledge.config import from_env
-    from super6.knowledge.ollama import check_health
+    from bym.knowledge.config import from_env
+    from bym.knowledge.ollama import check_health
 
     config = from_env()
     health = check_health(config)
@@ -36,9 +36,9 @@ def test_ollama_model_installed():
 def test_ollama_structured_extraction():
     from datetime import datetime, timezone
 
-    from super6.knowledge.config import ExtractorConfig, from_env
-    from super6.knowledge.models import EvidenceDocument, content_hash
-    from super6.knowledge.ollama import OllamaClaimExtractor
+    from bym.knowledge.config import ExtractorConfig, from_env
+    from bym.knowledge.models import EvidenceDocument, content_hash
+    from bym.knowledge.ollama import OllamaClaimExtractor
 
     config = from_env()
     if config.kind != "ollama":
@@ -76,8 +76,8 @@ def test_ollama_structured_extraction():
     ],
 )
 def test_source_live_verification(source_id, env_var):
-    from super6 import verify
-    from super6.sources.registry import load_registry
+    from bym import verify
+    from bym.sources.registry import load_registry
 
     if load_registry().get(source_id, None) is None:
         pytest.skip(f"{source_id} not registered")

@@ -39,7 +39,7 @@ def test_web_asset_javascript_suite():
 def test_app_js_parses():
     """A syntax error in app.js is a blank page, and nothing else catches it."""
     result = subprocess.run(
-        ["node", "--check", str(ROOT / "src" / "super6" / "web_assets" / "app.js")],
+        ["node", "--check", str(ROOT / "src" / "bym" / "web_assets" / "app.js")],
         capture_output=True, text=True, timeout=30,
     )
     assert result.returncode == 0, result.stderr

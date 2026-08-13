@@ -1,4 +1,4 @@
-# Super 6 Always-On Prediction Agent
+# Beat Your Mates — Always-On Prediction Agent
 
 Implementation of [SPEC.md](SPEC.md). Phase 1A (§23), the deliberately
 boring quantitative core the spec mandates before anything fancier is
@@ -21,7 +21,7 @@ Download the free Football-Data.co.uk corpus (§18 — Premier League `E0` and
 Championship `E1`):
 
 ```bash
-super6 fetch --seasons 2019 2025 --data data
+bym fetch --seasons 2019 2025 --data data
 ```
 
 Enter a round manually (§9.1 — Sky's fixture selection and deadline are
@@ -30,7 +30,7 @@ config, not derived data). Each file in `rounds/` is one real round, named
 fixtures + deadline, then:
 
 ```bash
-super6 predict --round rounds/2026_27_round_01.json --seasons 2021 2025 --data data
+bym predict --round rounds/2026_27_round_01.json --seasons 2021 2025 --data data
 ```
 
 Output is the §20 pre-round report: six picks with RESULT / SCORE / EV /
@@ -51,7 +51,7 @@ entered picks in Super 6. It is a stdlib `http.server` app, not
 FastAPI/Next.js — §26's optional web-framework choice was never taken up.
 
 ```bash
-super6 serve --round rounds/2026_27_round_01.json --seasons 2019 2025 --data data
+bym serve --round rounds/2026_27_round_01.json --seasons 2019 2025 --data data
 ```
 
 Then open [http://127.0.0.1:8000](http://127.0.0.1:8000). The server is
@@ -60,13 +60,13 @@ local-only by default. It never submits predictions to Sky.
 To keep the local UI running outside a terminal, use:
 
 ```bash
-./scripts/super6-service start
-./scripts/super6-service status
-./scripts/super6-service stop
+./scripts/bym-service start
+./scripts/bym-service status
+./scripts/bym-service stop
 ```
 
 `restart` and `logs` are also available. The script uses `.venv` when it is
-present; set `SUPER6_PORT`, `SUPER6_DB`, or `SUPER6_SUBMISSIONS` to override
+present; set `BYM_PORT`, `BYM_DB`, or `BYM_SUBMISSIONS` to override
 its local defaults.
 
 Walk-forward backtest against the §16/§28 baselines — MARKET-AVAILABLE
@@ -77,92 +77,92 @@ gold standard), pure Poisson, and Dixon-Coles pooled vs per-division. See
 test**) and [results/](results) for frozen historical results:
 
 ```bash
-super6 backtest --seasons 2019 2024 --test-season 2024 --data data
+bym backtest --seasons 2019 2024 --test-season 2024 --data data
 ```
 
 Select the recency-decay hyperparameter ξ by out-of-sample validation
 (§29.2 — never by MLE):
 
 ```bash
-super6 tune-xi --seasons 2019 2024 --validation-season 2024 --data data
+bym tune-xi --seasons 2019 2024 --validation-season 2024 --data data
 ```
 
 ## Other commands
 
-`super6 <command> --help` gives the full flag list for any of these; the
+`bym <command> --help` gives the full flag list for any of these; the
 common `--data`/`--seasons`/`--divisions` flags mean the same thing they do
 above.
 
 **Always-on operation** — `worker.py`'s §9 loop, driven by the scheduler
 rather than a one-off report:
 
-- `super6 watch --round rounds/2026_27_round_01.json --seasons 2019 2025 --data data`
+- `bym watch --round rounds/2026_27_round_01.json --seasons 2019 2025 --data data`
   — schedules odds/availability polling for a round per the §9 cadence.
   `--loop` runs it now instead of waiting for cron/systemd; `--with-knowledge`
   also schedules routine knowledge research (costs Tavily credits).
-- `super6 tick --seasons 2019 2025 --data data` — runs one scheduler pass;
+- `bym tick --seasons 2019 2025 --data data` — runs one scheduler pass;
   what cron/systemd actually calls.
-- `super6 jobs` — lists scheduled polling jobs and their next-run times.
-- `super6 engine-run --round rounds/2026_27_round_01.json --seasons 2019 2025 --data data`
+- `bym jobs` — lists scheduled polling jobs and their next-run times.
+- `bym engine-run --round rounds/2026_27_round_01.json --seasons 2019 2025 --data data`
   — one full four-layer engine pass (forecast/market/team/knowledge) for a
   round, independent of the scheduler. `--json out.json` writes the
   `RoundSummary` API contract to a file.
-- `super6 health` — engine + Ollama health check (schema version, pending
+- `bym health` — engine + Ollama health check (schema version, pending
   jobs, extractor mode, per-source status).
-- `super6 activity` — the §53 chronological activity feed. `--type` filters
+- `bym activity` — the §53 chronological activity feed. `--type` filters
   by event type; `--all` includes routine snapshots, not just material
   changes.
 
 **Sources & credits** — §18.1 registry and metering:
 
-- `super6 sources list` / `super6 sources approve <source_id>` — inspect or
+- `bym sources list` / `bym sources approve <source_id>` — inspect or
   promote entries in `config/source_registry.json`.
-- `super6 quota` — API credit usage across all metered sources.
-- `super6 verify-live` — live-checks each external source (not a cached
+- `bym quota` — API credit usage across all metered sources.
+- `bym verify-live` — live-checks each external source (not a cached
   read), for confirming credentials and connectivity actually work.
-- `super6 coverage --season 2025` — probes API-Football's fixture coverage
+- `bym coverage --season 2025` — probes API-Football's fixture coverage
   per league/season before relying on it.
-- `super6 research status|sample|harvest|prevalence|freeze` — the standalone
+- `bym research status|sample|harvest|prevalence|freeze` — the standalone
   `AVAILABILITY_ORACLE_RESEARCH_V1` harness (`research/`) that measures
   whether availability data would be worth wiring into λ; separate from the
   live model, gated by its own request cap and pacing flags.
 
 **Submission & scoring** — §46 state machine and §19 prospective ledger:
 
-- `super6 submission status|mark-reviewed|mark-entered --round <file>` — the
+- `bym submission status|mark-reviewed|mark-entered --round <file>` — the
   local record of whether you reviewed/entered picks in Sky. The agent
   itself never submits anything (see above).
-- `super6 record --round <file> --seasons 2019 2025 --data data` — records
+- `bym record --round <file> --seasons 2019 2025 --data data` — records
   prospective picks for a round before its deadline, for the §19 arm
   comparison. `--submitted` logs the six scores you actually entered.
-- `super6 score --round <file>` — scores a recorded round once results are
+- `bym score --round <file>` — scores a recorded round once results are
   known; fetches results from football-data.org via `--round-file` if
   `--results` isn't given directly.
-- `super6 ledger` — the running prospective comparison across arms behind
+- `bym ledger` — the running prospective comparison across arms behind
   [results/prospective_2026_27.md](results/prospective_2026_27.md).
 
 **Model diagnostics**:
 
-- `super6 forecast --home <team> --away <team> --seasons 2019 2025 --data data`
+- `bym forecast --home <team> --away <team> --seasons 2019 2025 --data data`
   — forecasts one ad-hoc fixture as a sanity check. `--odds H D A` blends in
   a market price the way the real engine would; `--extended` widens the
   corpus to League One/Two and the National League for cup ties, which
   means it is no longer `PHASE1_MODEL_V1`.
-- `super6 tune-market --seasons 2019 2024 --validation-season 2024 --data data`
+- `bym tune-market --seasons 2019 2024 --validation-season 2024 --data data`
   — selects the §32 market-blend weight w by validation, the same way
   `tune-xi` selects ξ.
-- `super6 final-test --seasons 2019 2025 --test-season 2025 --data data --i-understand-this-is-single-use`
+- `bym final-test --seasons 2019 2025 --test-season 2025 --data data --i-understand-this-is-single-use`
   — the single-shot frozen-model run against the untouched holdout season.
   Gated behind the acknowledgement flag because the holdout is spent the
   moment it runs.
-- `super6 readiness` — how close the data-blocked backlog items
+- `bym readiness` — how close the data-blocked backlog items
   ([docs/next_steps.md](docs/next_steps.md)) are to having enough evidence
   for an ablation: claim-outcome sample size and round-characteristic
   coverage.
-- `super6 shadow-report` — metrics on the knowledge agent's `SHADOW`-mode
+- `bym shadow-report` — metrics on the knowledge agent's `SHADOW`-mode
   extractions (§8), since nothing yet consumes them into the model.
 
-**Last Man Standing** (`src/super6/lms.py`) — a separate, smaller game
+**Last Man Standing** (`src/bym/lms.py`) — a separate, smaller game
 reusing the same fitted Dixon-Coles router: pick one club per gameweek,
 survive only if it wins, never reuse a club. Not part of the §1-53 spec —
 its own module, its own state file (`data/lms_state.json`), no exact
@@ -174,7 +174,7 @@ later gameweek needs more. Picking week by week spends the best clubs
 first and leaves coin-flips for the weeks that have no alternative, which
 is why `lms-plan` — not `lms-recommend` — is the command to start from.
 
-- `super6 lms-plan --seasons 2019 2025 --data data --entrant <name>`
+- `bym lms-plan --seasons 2019 2025 --data data --entrant <name>`
   — assigns one club to each of the next `--horizon` gameweeks (4 by
   default) so that the probability of surviving **all** of them is as high
   as it can be, and prints what taking the weekly favourite would have
@@ -189,7 +189,7 @@ is why `lms-plan` — not `lms-recommend` — is the command to start from.
   the unshrunk ones, so the plan is chosen cautiously and scored honestly.
   One request covers the whole horizon, so planning ahead costs no extra
   API quota.
-- `super6 lms-recommend --seasons 2019 2025 --data data --entrant <name>`
+- `bym lms-recommend --seasons 2019 2025 --data data --entrant <name>`
   — every club still eligible this gameweek, ranked by P(win) (from the
   same score matrix Super 6 uses, just read as home/draw/away instead of
   an exact score). This is the menu, not the recommendation — see
@@ -219,7 +219,7 @@ is why `lms-plan` — not `lms-recommend` — is the command to start from.
   fused into a single score — the exchange rate between "survive longer"
   and "survive alone" depends on pot size and rollover rules the model
   knows nothing about.
-- `super6 lms-fixtures --seasons 2019 2025 --data data [--gameweek <file>]`
+- `bym lms-fixtures --seasons 2019 2025 --data data [--gameweek <file>]`
   — fetches and saves the current gameweek on its own, e.g. for `lms-settle`
   to read later. Without a key (or as a manual override — a late
   postponement, a team name the resolver missed), a gameweek file can still
@@ -240,28 +240,28 @@ is why `lms-plan` — not `lms-recommend` — is the command to start from.
   accepts it too, but only as a fallback when the fetch fails: one
   gameweek is not a horizon, so the "plan" degenerates to the weekly
   favourite and says so.
-- `super6 lms-pick --entrant <name> --gameweek <n> --team <club> --opponent <club> [--home]`
+- `bym lms-pick --entrant <name> --gameweek <n> --team <club> --opponent <club> [--home]`
   — records a pick. Refuses a club already used or a second pick logged for
   the same gameweek.
-- `super6 lms-settle [--fd-season 2026]` — fetches full-time results from
-  football-data.org (needs `FOOTBALL_DATA_ORG_KEY`, same source `super6
+- `bym lms-settle [--fd-season 2026]` — fetches full-time results from
+  football-data.org (needs `FOOTBALL_DATA_ORG_KEY`, same source `bym
   score` uses) and settles every PENDING pick that's finished. This is the
   trusted path: in a multi-entrant competition, an entrant reporting their
   own elimination is a conflict of interest an automatic feed doesn't
   have. It works off the saved picks rather than a gameweek file, so a
   pick still settles after the competition has moved on to a later
   gameweek — which is the normal case for anything played on a Monday.
-- `super6 lms-result --entrant <name> --gameweek <n> --result WIN|DRAW|LOSS`
+- `bym lms-result --entrant <name> --gameweek <n> --result WIN|DRAW|LOSS`
   — settles a pick **by hand**. Fallback only, for a fixture `lms-settle`
   can't resolve (no key configured, or outside football-data.org's
   coverage) — the saved record is tagged `MANUAL` either way, visible in
   `lms-status` and the UI, so a self-reported result is never
   indistinguishable from a verified one.
-- `super6 lms-status [--entrant <name>]` — survival status and pick history,
+- `bym lms-status [--entrant <name>]` — survival status and pick history,
   each entry tagged `(auto)` or `(manual)`; omit `--entrant` to list
   everyone recorded.
 
-It also has its own tab in the local dashboard (`super6 serve`, see below) —
+It also has its own tab in the local dashboard (`bym serve`, see below) —
 the next few gameweeks' fixtures are fetched and planned automatically on
 every page load: type an entrant name, see the recommended pick with the
 plan behind it and what the weekly favourite would have cost, then the
@@ -276,12 +276,12 @@ interface can be used interchangeably.
 ## Layout
 
 ```
-src/super6/
+src/bym/
 ├── config.py            tunable defaults — config, not magic numbers (§30, §31)
 ├── scoring.py           Super 6 points rules + fixture status (§2, §2.2)
 ├── round.py             manual round entry (§9.1)
 ├── recommend.py         §20 report, EV picks, Phase 1A confidence
-├── engine.py            four-layer report: forecast/market/team/knowledge (`super6 engine-run`)
+├── engine.py            four-layer report: forecast/market/team/knowledge (`bym engine-run`)
 ├── cadence.py           §9 poll/reforecast ladder as a pure function
 ├── scheduler.py         restart-safe job scheduling (SQLite-persisted, §26)
 ├── worker.py            always-on orchestration: odds/availability/knowledge polling
@@ -295,7 +295,7 @@ src/super6/
 ├── notifications.py     in-app + opt-in SMTP email delivery (§54.1)
 ├── events.py             activity-feed / alert severity model (§21, §53-54)
 ├── transparency.py      read-only explainability payloads for the UI (§56)
-├── verify.py            `super6 verify-live` — per-source live checks
+├── verify.py            `bym verify-live` — per-source live checks
 ├── league.py             opponent history, league table, single-round strategy sim (§11-13)
 ├── opponent_intelligence.py  favourite bias, team bias, influence weight, predicted picks, chase/defend (§11)
 ├── strategy.py           single-round candidate generation + CORRELATE (DEFEND) candidate
@@ -304,7 +304,7 @@ src/super6/
 ├── claim_outcomes.py     recorded team-news claims paired with realised results (§8 step 1)
 ├── db.py                 SQLite schema (jobs, availability, evidence, claims, …)
 ├── secrets.py            credential loading, hostname-only in logs/provenance
-├── web.py + web_assets/  local decision UI (`super6 serve`, stdlib http.server)
+├── web.py + web_assets/  local decision UI (`bym serve`, stdlib http.server)
 ├── data/football_data.py  Football-Data.co.uk ingestion + cache (§18)
 ├── sources/
 │   ├── registry.py      §18.1 source policy — gates every outbound query
@@ -485,7 +485,7 @@ actually unblock each of these — not just that they're missing — see
   impact model earns its place under §28. The training data for one is
   now accruing — `claim_outcomes.py` pairs each recorded claim with the
   result of the fixture it was about — but no model is fitted, and none
-  should be until there is a defensible sample (`super6 readiness`).
+  should be until there is a defensible sample (`bym readiness`).
 - **Full §13.2 Round Opportunity Model characteristic-matching**
   (favourite strength, home/away balance, competitiveness, goal totals) —
   `season_simulation.sample_synthetic_round` draws fixtures from the
@@ -493,7 +493,7 @@ actually unblock each of these — not just that they're missing — see
   characteristics beyond "a competition the model knows"; a documented
   follow-on gated by §28, not assumed to matter until shown to. What the
   matching would aim at is now measured and accumulating
-  (`round_characteristics.py`, `super6 readiness`); the sampler itself
+  (`round_characteristics.py`, `bym readiness`); the sampler itself
   waits on enough rounds for an ablation to have any power.
 - **100 Club annotation** (§12.1) — no source of national-entrant pick
   data exists to estimate scoreline rarity from.

@@ -162,7 +162,7 @@ def scoreline_heatmap(recommendation: FixtureRecommendation) -> ScorelineHeatmap
     """Expose every real selectable scoreline and its Super 6 EV.
 
     The finite matrix is already tail-controlled and renormalised by
-    :func:`super6.model.matrix.score_matrix`; this adapter never folds omitted
+    :func:`bym.model.matrix.score_matrix`; this adapter never folds omitted
     tail probability into an arbitrary final scoreline.
     """
 

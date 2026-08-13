@@ -5,11 +5,11 @@ from pathlib import Path
 
 import pytest
 
-from super6 import db, engine, verify
-from super6.knowledge.config import ExtractorConfig
-from super6.model import dixon_coles
-from super6.round import Fixture, Round
-from super6.sources import registry as reg
+from bym import db, engine, verify
+from bym.knowledge.config import ExtractorConfig
+from bym.model import dixon_coles
+from bym.round import Fixture, Round
+from bym.sources import registry as reg
 
 from test_dixon_coles import synthetic_matches
 
@@ -91,7 +91,7 @@ def test_engine_does_not_leak_known_teams_into_the_knowledge_worker(
     """`known_teams` is a forecast concern. `run_engine` forwards its spare
     kwargs to the research pass as HTTP request options, so a corpus set
     arriving there would end up on an outbound request."""
-    from super6.knowledge import worker as knowledge_worker
+    from bym.knowledge import worker as knowledge_worker
 
     seen = []
 
@@ -148,7 +148,7 @@ def test_knowledge_defaults_to_shadow(conn, router):
 
 
 def test_engine_degrades_when_market_acquisition_fails(conn, router, monkeypatch):
-    from super6.sources import pipeline
+    from bym.sources import pipeline
 
     def boom(*a, **k):
         raise RuntimeError("odds API down")
@@ -161,7 +161,7 @@ def test_engine_degrades_when_market_acquisition_fails(conn, router, monkeypatch
 
 def test_engine_uses_the_frozen_config(conn, router):
     """The engine must not drift from PHASE1_MODEL_V1."""
-    from super6.config import FROZEN_PHASE1_V1
+    from bym.config import FROZEN_PHASE1_V1
 
     assert FROZEN_PHASE1_V1.xi == 0.003
     assert FROZEN_PHASE1_V1.market_blend_weight == 0.5
@@ -223,7 +223,7 @@ def test_engine_populates_market_divergence_from_the_unblended_model(conn, route
     at w=0.5, so measuring against that would partly compare the market
     with itself and understate the disagreement.
     """
-    from super6.round import Fixture, Round
+    from bym.round import Fixture, Round
 
     priced = Round(
         round_number=14,
@@ -239,7 +239,7 @@ def test_engine_populates_market_divergence_from_the_unblended_model(conn, route
     assert all(s.market_divergence in {"LOW", "MEDIUM", "HIGH"} for s in states)
 
     # Same comparison against the blended matrix would be a smaller number.
-    from super6 import divergence as divergence_mod
+    from bym import divergence as divergence_mod
 
     fixture = result.recommendation.fixtures[0]
     blended = divergence_mod.assess(fixture.matrix, *_implied(), 0.0, 1)
@@ -248,7 +248,7 @@ def test_engine_populates_market_divergence_from_the_unblended_model(conn, route
 
 
 def _implied():
-    from super6.model.market import implied_result_probs
+    from bym.model.market import implied_result_probs
 
     return implied_result_probs(2.0, 3.4, 3.6)
 
@@ -272,7 +272,7 @@ def test_engine_reports_market_movement_against_the_previous_poll(conn, router, 
     the read model. This pins the wiring, not the movement maths."""
     import pandas as pd
 
-    from super6.round import Fixture, Round
+    from bym.round import Fixture, Round
 
     home, away = "Strong", "Weak"
     snapshot = tmp_path / "consensus.csv"
@@ -307,7 +307,7 @@ def test_engine_reports_market_movement_against_the_previous_poll(conn, router, 
 
 def _corpus_round(*, odds_on_unknown):
     """Round where 'Nowhere FC' is outside any corpus we hand the engine."""
-    from super6.round import Fixture, Round
+    from bym.round import Fixture, Round
 
     return Round(
         round_number=14,
@@ -323,7 +323,7 @@ def _corpus_round(*, odds_on_unknown):
 def test_priced_fixture_outside_the_corpus_falls_back_to_the_market(conn, router):
     """A cup tie against an unknown team is forecast from the market rather
     than from the league-average prior, and is never called PHASE1_MODEL_V1."""
-    from super6.model.market import implied_result_probs
+    from bym.model.market import implied_result_probs
 
     result = engine.run_engine(
         conn, _corpus_round(odds_on_unknown=True), router, now=NOW,
@@ -391,7 +391,7 @@ def test_a_page_load_never_triggers_knowledge_research(tmp_path):
     already do it on a cadence."""
     import inspect
 
-    from super6 import web
+    from bym import web
 
     source = inspect.getsource(web._dashboard)
     assert "run_knowledge=False" in source, (
@@ -408,7 +408,7 @@ def test_the_engine_says_research_is_scheduled_rather_than_disabled():
     switched it on is worse than saying nothing."""
     import inspect
 
-    from super6 import engine
+    from bym import engine
 
     source = inspect.getsource(engine.run_engine)
     assert "runs on the scheduled" in source

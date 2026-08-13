@@ -2,8 +2,8 @@
 
 from datetime import datetime, timedelta, timezone
 
-from super6 import events as ev
-from super6 import reminders
+from bym import events as ev
+from bym import reminders
 
 DEADLINE = datetime(2026, 8, 15, 14, 0, tzinfo=timezone.utc)
 ROUND = 14

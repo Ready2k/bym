@@ -1,4 +1,4 @@
-from super6.availability.players import PlayerRef, resolve_player
+from bym.availability.players import PlayerRef, resolve_player
 
 SQUAD = [
     PlayerRef("p1", "Cole Palmer"),

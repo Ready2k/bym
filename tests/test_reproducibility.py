@@ -11,7 +11,7 @@ import sys
 
 import pandas as pd
 
-from super6.model import dixon_coles, priors
+from bym.model import dixon_coles, priors
 
 from test_dixon_coles import synthetic_matches
 from test_priors import two_season_two_division
@@ -50,7 +50,7 @@ def test_arrivals_deterministic_across_hash_seeds():
     code = (
         "import sys; sys.path.insert(0, 'tests');"
         "from test_priors import two_season_two_division;"
-        "from super6.model import priors;"
+        "from bym.model import priors;"
         "print(list(priors.arrivals(two_season_two_division(), 'E1', 2024).items()))"
     )
     outputs = set()

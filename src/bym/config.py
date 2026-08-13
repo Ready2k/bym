@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 @dataclass(frozen=True)
 class ModelConfig:
     # §29.2 exponential time-decay, per day. 0.0 = no decay. The grid is
-    # searched by outer walk-forward validation (`super6 tune-xi`), not fit
+    # searched by outer walk-forward validation (`bym tune-xi`), not fit
     # by MLE. 0.003 (~231-day half-life) selected on the 2024/25 validation
     # season: log loss plateaus across 0.002-0.005, points peak at
     # 0.002-0.003; this is the stable midpoint, not a grid-search idol.
@@ -37,7 +37,7 @@ class ModelConfig:
     lambda_ceiling: float = 6.0
 
     # §32 market blend weight (Option B result-constrained reweighting).
-    # None = no blending; the grid is searched by `super6 tune-market` on
+    # None = no blending; the grid is searched by `bym tune-market` on
     # the validation season, endpoints included so pure-model and
     # pure-market-result are both baselines (§28 "market blend vs market
     # alone"). 0.5 selected on 2024/25: interior peak beating both
@@ -160,7 +160,7 @@ class DataConfig:
     divisions: tuple[str, ...] = ("E0", "E1")
 
     # Lower divisions, available from the same free source. Used ONLY for
-    # ad-hoc `super6 forecast --extended` sanity checks involving teams
+    # ad-hoc `bym forecast --extended` sanity checks involving teams
     # outside the Super 6 corpus (cup ties, friendlies). Any forecast
     # using these is explicitly NOT PHASE1_MODEL_V1 and is labelled so.
     extended_divisions: tuple[str, ...] = ("E0", "E1", "E2", "E3", "EC")

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from super6 import prediction_history, round_characteristics as rc
+from bym import prediction_history, round_characteristics as rc
 
 
 def fixture(home, away, home_p=None, draw_p=None, away_p=None):
@@ -183,15 +183,15 @@ def test_nothing_here_changes_how_synthetic_rounds_are_drawn():
     """§28: measuring the target must not silently become adopting it."""
     import inspect
 
-    from super6 import season_simulation
+    from bym import season_simulation
 
     source = inspect.getsource(season_simulation.sample_synthetic_round)
     assert "round_characteristics" not in source
 
 
 def test_readiness_command_reports_both_counters(tmp_path, capsys):
-    """`super6 readiness` is the surface that makes "not yet" a number."""
-    from super6.cli import main
+    """`bym readiness` is the surface that makes "not yet" a number."""
+    from bym.cli import main
 
     prediction_path = tmp_path / "history.json"
     prediction_history.record_snapshot(2026, 1, round_fixtures(), path=prediction_path)
@@ -213,7 +213,7 @@ def test_readiness_flags_missing_state_rather_than_reporting_a_bare_zero(tmp_pat
     """A zero because a file is missing must not look like a zero because
     nothing has happened yet — `db.connect` would even create the database
     it could not find, making the wrong answer look authoritative."""
-    from super6.cli import main
+    from bym.cli import main
 
     prediction_path = tmp_path / "history.json"
     prediction_history.record_snapshot(2026, 1, round_fixtures(), path=prediction_path)

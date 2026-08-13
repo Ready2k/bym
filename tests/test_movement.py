@@ -3,9 +3,9 @@ from datetime import datetime, timedelta, timezone
 import pandas as pd
 import pytest
 
-from super6 import movement
-from super6.config import DEFAULT_MOVEMENT
-from super6.sources.consensus import Consensus
+from bym import movement
+from bym.config import DEFAULT_MOVEMENT
+from bym.sources.consensus import Consensus
 
 NOW = datetime(2026, 8, 15, 13, 0, tzinfo=timezone.utc)
 

@@ -343,7 +343,7 @@ def run_engine(
         knowledge_summary["enabled"] = True
         notes.append(
             "knowledge: extractor configured; research runs on the scheduled "
-            "cadence (`super6 tick` / the always-on worker), not on page load"
+            "cadence (`bym tick` / the always-on worker), not on page load"
         )
 
     # ---- submission state (§46) ----------------------------------------

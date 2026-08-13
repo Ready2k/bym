@@ -5,12 +5,12 @@ from datetime import datetime, timezone
 
 import pytest
 
-from super6 import db
-from super6.api import contracts, service
-from super6.model import dixon_coles
-from super6.recommend import recommend_round
-from super6.round import Fixture, Round
-from super6.sources.consensus import Consensus
+from bym import db
+from bym.api import contracts, service
+from bym.model import dixon_coles
+from bym.recommend import recommend_round
+from bym.round import Fixture, Round
+from bym.sources.consensus import Consensus
 
 from test_dixon_coles import synthetic_matches
 
@@ -129,7 +129,7 @@ def test_availability_state_declares_no_quantitative_impact(conn):
 
 
 def test_knowledge_events_carry_both_source_identities():
-    from super6 import events as ev
+    from bym import events as ev
 
     event = ev.make_event(
         ev.EventType.CLAIM_DISCOVERED,
@@ -155,7 +155,7 @@ def test_knowledge_events_carry_both_source_identities():
 def test_system_health_contract(conn, tmp_path):
     """Built from an isolated registry: coupling this to the real one
     made the test depend on which sources happen to be approved today."""
-    from super6.sources.registry import load_registry, save_registry
+    from bym.sources.registry import load_registry, save_registry
 
     registry_path = tmp_path / "registry.json"
     save_registry(load_registry(registry_path), registry_path)
@@ -173,7 +173,7 @@ def test_system_health_contract(conn, tmp_path):
 
 
 def test_system_health_has_no_warnings_when_all_approved(conn, tmp_path):
-    from super6.sources.registry import SourceRecord
+    from bym.sources.registry import SourceRecord
 
     approved = {
         "the_odds_api": SourceRecord(
@@ -216,7 +216,7 @@ def test_system_health_reports_no_scheduled_check_when_nothing_is_scheduled(conn
 def test_system_health_surfaces_the_next_scheduled_check(conn):
     from datetime import datetime, timedelta, timezone
 
-    from super6 import scheduler
+    from bym import scheduler
 
     deadline = datetime(2026, 8, 15, 14, 0, tzinfo=timezone.utc)
     scheduler.schedule_all_layers(

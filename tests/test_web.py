@@ -6,8 +6,8 @@ from pathlib import Path
 
 import pytest
 
-from super6.round import load_round, round_from_dict, round_to_dict
-from super6.web import (
+from bym.round import load_round, round_from_dict, round_to_dict
+from bym.web import (
     WebConfig,
     available_ollama_models,
     create_round,
@@ -22,8 +22,8 @@ from super6.web import (
     save_settings,
     web_extractor_config,
 )
-from super6 import prediction_history
-from super6.prospective import load_ledger
+from bym import prediction_history
+from bym.prospective import load_ledger
 
 
 def payload() -> dict:
@@ -99,7 +99,7 @@ def configured_round(tmp_path):
         ui_state_path=tmp_path / "ui_state.json",
         opponent_history_path=tmp_path / "opponent_history.json",
         prediction_history_path=tmp_path / "prediction_history.json",
-        database_path=tmp_path / "super6.db",
+        database_path=tmp_path / "bym.db",
         event_log_path=tmp_path / "events" / "activity.jsonl",
         ledger_path=tmp_path / "ledger.csv",
         arm_registry_path=tmp_path / "arms.json",
@@ -183,7 +183,7 @@ def test_golden_goal_guess_and_actual_are_saved_and_validated(tmp_path):
 def test_league_payload_ranks_by_golden_goal_after_a_points_and_exact_tie(tmp_path):
     """End-to-end through the web layer: two rivals tied on points and
     exact scores must be separated by Golden Goal closeness, not split."""
-    from super6.web import _league_payload
+    from bym.web import _league_payload
 
     config = configured_round(tmp_path)
     tied = ["2-0", "1-1", "2-1", "1-2", "3-0", "1-2"]
@@ -208,8 +208,8 @@ def test_league_table_resets_each_season_but_opponent_profiles_keep_history(tmp_
     round's own season. Opponent behavioural profiles are a different
     story — they keep learning from every season ever recorded, since more
     evidence only makes favourite bias / conservatism etc. more reliable."""
-    from super6.league import record_opponent_round
-    from super6.web import _league_payload, save_ui_state
+    from bym.league import record_opponent_round
+    from bym.web import _league_payload, save_ui_state
 
     config = configured_round(tmp_path)
     scores = [(2, 0), (1, 1), (2, 1), (1, 2), (3, 0), (1, 2)]
@@ -337,7 +337,7 @@ def test_manual_entry_freezes_prospective_arms_and_results_score_them(tmp_path):
 
 def test_dashboard_marks_a_round_fixture_outside_the_corpus_as_unmodellable(tmp_path):
     """The live payload — not just the contract — has to carry the verdict."""
-    from super6.web import dashboard_payload
+    from bym.web import dashboard_payload
 
     round_payload = payload()
     round_payload["fixtures"][0] = {"home": "Arsenal", "away": "Oldham"}
@@ -405,8 +405,8 @@ def test_opponent_bias_and_predicted_picks_are_wired_into_the_league_view(tmp_pa
     actually calls."""
     from types import SimpleNamespace
 
-    from super6.web import _fixture_favoured_result, _opponent_bias_payload, _predicted_picks_payload
-    from super6.league import OpponentRound
+    from bym.web import _fixture_favoured_result, _opponent_bias_payload, _predicted_picks_payload
+    from bym.league import OpponentRound
 
     prediction_path = tmp_path / "prediction_history.json"
     prediction_history.record_snapshot(
@@ -457,7 +457,7 @@ def test_opponent_bias_and_predicted_picks_are_wired_into_the_league_view(tmp_pa
 
 
 def test_predicted_picks_is_empty_without_a_recommendation_or_history(tmp_path):
-    from super6.web import _predicted_picks_payload
+    from bym.web import _predicted_picks_payload
 
     config = WebConfig(prediction_history_path=tmp_path / "prediction_history.json")
     assert _predicted_picks_payload(None, [], (), config) == {}
@@ -471,12 +471,12 @@ def test_season_strategy_payload_wires_season_state_and_mode(tmp_path):
     real corpus, which season_simulation.py's own tests already cover."""
     from datetime import datetime
 
-    from super6.config import FROZEN_PHASE1_V1
-    from super6.league import LeagueStanding, OpponentRound
-    from super6.model import dixon_coles
-    from super6.recommend import recommend_round
-    from super6.round import Fixture, Round
-    from super6.web import _opponent_bias_payload, _season_strategy_payload
+    from bym.config import FROZEN_PHASE1_V1
+    from bym.league import LeagueStanding, OpponentRound
+    from bym.model import dixon_coles
+    from bym.recommend import recommend_round
+    from bym.round import Fixture, Round
+    from bym.web import _opponent_bias_payload, _season_strategy_payload
 
     from test_dixon_coles import synthetic_matches
 
@@ -512,10 +512,10 @@ def test_season_strategy_payload_wires_season_state_and_mode(tmp_path):
 
 
 def test_season_strategy_payload_is_empty_without_a_recommendation(tmp_path):
-    from super6.web import _season_strategy_payload
+    from bym.web import _season_strategy_payload
 
     config = WebConfig(prediction_history_path=tmp_path / "prediction_history.json")
-    from super6.round import Fixture, Round
+    from bym.round import Fixture, Round
     from datetime import datetime
 
     rnd = Round(round_number=1, deadline_at=datetime(2026, 10, 18, 14, 0), fixtures=(Fixture("A", "B"),) * 1)
@@ -526,7 +526,7 @@ def test_promoted_teams_come_from_division_membership_in_the_real_corpus():
     """§11's promoted half must be derivable without any model output —
     `priors.arrivals` reads which division a team played in last season
     versus this one, nothing else."""
-    from super6.web import WebConfig, _promoted_teams
+    from bym.web import WebConfig, _promoted_teams
 
     promoted = _promoted_teams(WebConfig())
     # 2025/26's promotions into the Premier League, from the corpus alone.
@@ -535,7 +535,7 @@ def test_promoted_teams_come_from_division_membership_in_the_real_corpus():
 
 
 def test_promoted_teams_are_empty_rather_than_fatal_without_a_corpus(tmp_path):
-    from super6.web import WebConfig, _promoted_teams
+    from bym.web import WebConfig, _promoted_teams
 
     assert _promoted_teams(WebConfig(data_path=tmp_path)) == ()
 
@@ -556,8 +556,8 @@ def test_team_identity_bias_reaches_the_league_payload(tmp_path):
     """§11 big-club bias, end to end through the same helper
     `_league_payload` calls — reputation from the stored odds snapshot,
     never from the model's own team strength."""
-    from super6.web import WebConfig, _opponent_bias_payload
-    from super6.league import OpponentRound
+    from bym.web import WebConfig, _opponent_bias_payload
+    from bym.league import OpponentRound
 
     prediction_path = tmp_path / "prediction_history.json"
     # Three fixtures price Man City well above the mean home team, three
@@ -596,7 +596,7 @@ def test_serve_warns_when_cwd_relative_state_is_missing(tmp_path):
     """A UI started from the wrong directory silently becomes a different
     deployment — worst of all a source registry falling back to defaults
     where every source is REVIEW_REQUIRED, gating off odds and research."""
-    from super6.web import WebConfig, missing_state_warnings
+    from bym.web import WebConfig, missing_state_warnings
 
     absent = WebConfig(
         registry_path=tmp_path / "config" / "source_registry.json",
@@ -615,25 +615,25 @@ def test_serve_warns_when_cwd_relative_state_is_missing(tmp_path):
 
 
 def test_the_service_script_pins_the_working_directory():
-    """`scripts/super6-service` passes absolute paths for its four flags but
+    """`scripts/bym-service` passes absolute paths for its four flags but
     the server reads six more that are cwd-relative, so the directory must
     be pinned rather than inherited from wherever it was invoked."""
-    script = Path("scripts/super6-service").read_text()
+    script = Path("scripts/bym-service").read_text()
     body = script.split("start()", 1)[0]
     assert 'cd "$ROOT_DIR"' in body, "service script must cd to the project root before launching"
 
 
 def test_the_service_script_uses_the_same_state_files_as_the_cli():
-    """A separate super6-ui.db/-submissions pair meant the UI wrote one
+    """A separate bym-ui.db/-submissions pair meant the UI wrote one
     deployment's state while every CLI command read another's — and since
     both files existed, nothing warned."""
-    lines = Path("scripts/super6-service").read_text().splitlines()
+    lines = Path("scripts/bym-service").read_text().splitlines()
     # Comments still name the old files to explain why they went; only the
     # assignments matter here.
     code = "\n".join(line for line in lines if not line.lstrip().startswith("#"))
-    assert "super6-ui.db" not in code
-    assert "super6-ui-submissions.json" not in code
-    assert "$ROOT_DIR/data/super6.db" in code
+    assert "bym-ui.db" not in code
+    assert "bym-ui-submissions.json" not in code
+    assert "$ROOT_DIR/data/bym.db" in code
     assert "$ROOT_DIR/data/submissions.json" in code
 
 
@@ -650,8 +650,8 @@ def test_a_strategy_decision_is_persisted_for_19_linkage(tmp_path):
     because none was ever persisted. `_record_strategy_decision` is the
     wiring that fixes that — driven here directly, since faking a whole
     RoundRecommendation would test the fake, not the linkage."""
-    from super6 import strategy_history
-    from super6.web import _record_strategy_decision
+    from bym import strategy_history
+    from bym.web import _record_strategy_decision
 
     config = strategy_config(tmp_path)
     rnd = load_round(config.round_path)
@@ -693,8 +693,8 @@ def test_a_strategy_decision_is_persisted_for_19_linkage(tmp_path):
 
 def test_recording_the_same_decision_twice_does_not_grow_the_record(tmp_path):
     """_league_payload runs on every page load; a refresh is not a decision."""
-    from super6 import strategy_history
-    from super6.web import _record_strategy_decision
+    from bym import strategy_history
+    from bym.web import _record_strategy_decision
 
     config = strategy_config(tmp_path)
     rnd = load_round(config.round_path)
@@ -709,8 +709,8 @@ def test_recording_the_same_decision_twice_does_not_grow_the_record(tmp_path):
 
 def test_a_failed_decision_record_never_breaks_the_page(tmp_path):
     """The store is an audit trail, not a dependency of the recommendation."""
-    from super6 import strategy_history
-    from super6.web import _record_strategy_decision
+    from bym import strategy_history
+    from bym.web import _record_strategy_decision
 
     base = configured_round(tmp_path)
     unwritable = WebConfig(
@@ -728,8 +728,8 @@ def test_a_failed_decision_record_never_breaks_the_page(tmp_path):
 
 def test_no_recommendation_records_no_decision(tmp_path):
     """Nothing was decided, so nothing is claimed to have been."""
-    from super6 import strategy_history
-    from super6.web import _league_payload
+    from bym import strategy_history
+    from bym.web import _league_payload
 
     config = strategy_config(tmp_path)
     import_opponent(
@@ -741,7 +741,7 @@ def test_no_recommendation_records_no_decision(tmp_path):
 
 
 def test_manual_research_is_refused_when_the_extractor_is_off(tmp_path):
-    from super6.web import research_now
+    from bym.web import research_now
 
     config = strategy_config(tmp_path)
     with pytest.raises(ValueError, match="extractor is off"):
@@ -751,7 +751,7 @@ def test_manual_research_is_refused_when_the_extractor_is_off(tmp_path):
 def test_manual_research_is_refused_when_the_budget_is_nearly_gone(tmp_path, monkeypatch):
     """Spending the last credits on a manual click is how you arrive at the
     deadline blind — the scheduled sweeps have already degraded by then."""
-    from super6 import web, worker
+    from bym import web, worker
 
     config = strategy_config(tmp_path)
     save_settings(
@@ -773,8 +773,8 @@ def test_manual_research_is_refused_when_the_budget_is_nearly_gone(tmp_path, mon
 def test_quota_exhaustion_is_warned_about_before_it_bites():
     """A quota running out is the failure you notice last, because the
     symptom is things quietly not happening."""
-    from super6.api.contracts import SourceHealth
-    from super6.api.service import SystemHealth
+    from bym.api.contracts import SourceHealth
+    from bym.api.service import SystemHealth
 
     # The warning logic is exercised through build_system_health elsewhere;
     # here we pin the thresholds it uses.

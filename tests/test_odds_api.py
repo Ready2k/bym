@@ -10,8 +10,8 @@ from datetime import datetime, timezone
 
 import pytest
 
-from super6.sources import odds_api
-from super6.sources import registry as reg
+from bym.sources import odds_api
+from bym.sources import registry as reg
 
 SAMPLE = [
     {

@@ -2,8 +2,8 @@
   "version": "0.0.1",
   "configurations": [
     {
-      "name": "super6-ui",
-      "runtimeExecutable": ".venv/bin/super6",
+      "name": "bym-ui",
+      "runtimeExecutable": ".venv/bin/bym",
       "runtimeArgs": ["serve", "--round", "rounds/2026_27_round_01.json", "--seasons", "2019", "2025", "--data", "data", "--port", "8010"],
       "port": 8010
     }

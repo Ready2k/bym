@@ -1,7 +1,7 @@
 # WCAG Accessibility Audit
 
 Date: 2026-08-09
-Target: the local decision UI (`super6 serve`), all 12 pages
+Target: the local decision UI (`bym serve`), all 12 pages
 Tooling: axe-core 4.10.2 run in-page against the live server, at desktop
 (1280px) and mobile (375px) widths, plus a manual static review
 Standard: WCAG 2.1 A/AA, as axe tags them (`wcag2a`, `wcag2aa`, `wcag21aa`)

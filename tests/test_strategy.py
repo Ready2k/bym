@@ -4,12 +4,12 @@ from datetime import datetime
 
 import pytest
 
-from super6 import strategy
-from super6.config import FROZEN_PHASE1_V1
-from super6.league import LeagueStanding, OpponentRound, recommend_strategy
-from super6.model import dixon_coles
-from super6.recommend import recommend_round
-from super6.round import Fixture, Round
+from bym import strategy
+from bym.config import FROZEN_PHASE1_V1
+from bym.league import LeagueStanding, OpponentRound, recommend_strategy
+from bym.model import dixon_coles
+from bym.recommend import recommend_round
+from bym.round import Fixture, Round
 
 from test_dixon_coles import synthetic_matches
 
@@ -114,7 +114,7 @@ def test_a_gain_inside_sampling_noise_is_not_treated_as_an_improvement():
     """Deviating costs certain expected points. Buying that with a gap the
     simulation cannot resolve would be a guaranteed loss for a fictional
     gain, so the baseline must win ties and near-ties."""
-    from super6.league import StrategyEvaluation
+    from bym.league import StrategyEvaluation
 
     floor = strategy.noise_floor(2000)
     assert 0.005 < floor < 0.03  # ~1.1pp at 2,000 draws

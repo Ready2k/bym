@@ -133,18 +133,18 @@ failing poll logs `POLL_FAILED`, records the error, and reschedules rather
 than killing the loop. Polling retires itself once the deadline passes.
 
 ```bash
-super6 watch --round rounds/round_01.json --seasons 2021 2026 --data data --loop
+bym watch --round rounds/round_01.json --seasons 2021 2026 --data data --loop
 ```
 
 ```bash
-super6 jobs
+bym jobs
 ```
 
 ```bash
-super6 activity
+bym activity
 ```
 
-For unattended operation, run `super6 tick` from cron or systemd instead
+For unattended operation, run `bym tick` from cron or systemd instead
 of `--loop`; state lives in the database either way.
 
 ## Acceptance criteria

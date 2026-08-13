@@ -10,14 +10,14 @@ from pathlib import Path
 
 import pytest
 
-from super6 import db
-from super6.availability import worker as avail_worker
-from super6.availability.model import ClaimStatus, EventType, LineupKind
-from super6.availability import store
-from super6.round import Fixture, Round
-from super6.sources import api_football, capabilities
-from super6.sources import quota as quota_mod
-from super6.sources import registry as reg
+from bym import db
+from bym.availability import worker as avail_worker
+from bym.availability.model import ClaimStatus, EventType, LineupKind
+from bym.availability import store
+from bym.round import Fixture, Round
+from bym.sources import api_football, capabilities
+from bym.sources import quota as quota_mod
+from bym.sources import registry as reg
 
 NOW = datetime(2026, 8, 15, 13, 0, tzinfo=timezone.utc)
 KICKOFF = datetime(2026, 8, 15, 14, 0, tzinfo=timezone.utc)

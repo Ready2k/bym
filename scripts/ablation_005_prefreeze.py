@@ -9,10 +9,10 @@ from pathlib import Path
 
 import pandas as pd
 
-from super6.backtest.walk_forward import run_model
-from super6.config import DEFAULT_MODEL
-from super6.data.football_data import load_matches
-from super6.model import priors
+from bym.backtest.walk_forward import run_model
+from bym.config import DEFAULT_MODEL
+from bym.data.football_data import load_matches
+from bym.model import priors
 
 TEST_SEASON = 2024
 W = 0.5

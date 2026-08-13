@@ -6,7 +6,7 @@ import json
 
 import pytest
 
-from super6 import prediction_history, strategy_history as sh
+from bym import prediction_history, strategy_history as sh
 
 
 def record(path, **overrides):
@@ -213,7 +213,7 @@ def test_participant_order_is_stable_across_processes():
     import sys
 
     program = (
-        "from super6.strategy_history import opponent_snapshot;"
+        "from bym.strategy_history import opponent_snapshot;"
         "print(opponent_snapshot(['Steve','Dave','dave','ANN','ann'],"
         " field_complete=True)['participant_names'])"
     )

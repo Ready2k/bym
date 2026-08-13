@@ -6,13 +6,13 @@ from datetime import datetime
 
 import pytest
 
-from super6 import opponent_intelligence as oi
-from super6 import prediction_history, season_simulation as ss
-from super6 import strategy
-from super6.league import LeagueStanding, OpponentRound, StrategyCandidate, opponent_profiles
-from super6.model import dixon_coles
-from super6.recommend import recommend_round
-from super6.round import Fixture, Round
+from bym import opponent_intelligence as oi
+from bym import prediction_history, season_simulation as ss
+from bym import strategy
+from bym.league import LeagueStanding, OpponentRound, StrategyCandidate, opponent_profiles
+from bym.model import dixon_coles
+from bym.recommend import recommend_round
+from bym.round import Fixture, Round
 
 from test_dixon_coles import synthetic_matches
 
@@ -44,7 +44,7 @@ def router(params):
 
 @pytest.fixture(scope="module")
 def recommendation(router):
-    from super6.config import FROZEN_PHASE1_V1
+    from bym.config import FROZEN_PHASE1_V1
 
     return recommend_round(router, ROUND, FROZEN_PHASE1_V1)
 
@@ -89,7 +89,7 @@ def test_season_state_rejects_negative_rounds_remaining():
 
 
 def test_sample_synthetic_round_is_forecastable_and_reproducible(matches, router):
-    from super6.config import FROZEN_PHASE1_V1
+    from bym.config import FROZEN_PHASE1_V1
 
     a = ss.sample_synthetic_round(matches, router, FROZEN_PHASE1_V1, seed=1, slot=0)
     b = ss.sample_synthetic_round(matches, router, FROZEN_PHASE1_V1, seed=1, slot=0)
@@ -188,7 +188,7 @@ def test_simulate_remaining_season_falls_back_to_predicted_picks_when_not_submit
 
 
 def test_simulate_remaining_season_includes_synthetic_future_rounds(recommendation, matches, router):
-    from super6.config import FROZEN_PHASE1_V1
+    from bym.config import FROZEN_PHASE1_V1
 
     max_ev = tuple((f.pick_home, f.pick_away) for f in recommendation.fixtures)
     standings = (_standing("You", rank=1), _standing("Dave", rank=2))
@@ -277,7 +277,7 @@ def test_recommend_season_strategy_stays_normal_when_gain_is_inside_noise():
 
 
 def test_build_correlate_candidate_picks_the_fields_most_likely_score(recommendation):
-    from super6.league import OpponentProfile
+    from bym.league import OpponentProfile
 
     history = (
         OpponentRound("Dave", 2026, 1, ((3, 0), (3, 0), (1, 1), (1, 1), (3, 0), (0, 3)), "t"),

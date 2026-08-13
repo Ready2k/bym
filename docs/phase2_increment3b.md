@@ -5,7 +5,7 @@ Registered as `REVIEW_REQUIRED`; nothing queries it until you register an
 account, accept the terms, and run:
 
 ```bash
-super6 sources approve api_football
+bym sources approve api_football
 ```
 
 Then export the key and detect coverage:
@@ -15,7 +15,7 @@ export API_FOOTBALL_KEY=your_key_here
 ```
 
 ```bash
-super6 coverage --season 2026
+bym coverage --season 2026
 ```
 
 ## Coverage is detected, never assumed

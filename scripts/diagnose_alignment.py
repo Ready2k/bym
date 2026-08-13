@@ -6,8 +6,8 @@ from pathlib import Path
 
 import pandas as pd
 
-from super6.backtest.walk_forward import run_favourite_baseline, run_frozen_model
-from super6.data.football_data import load_matches
+from bym.backtest.walk_forward import run_favourite_baseline, run_frozen_model
+from bym.data.football_data import load_matches
 
 TEST_SEASON = 2025
 matches = load_matches(Path("data"), list(range(2019, TEST_SEASON + 1)))

@@ -2,13 +2,13 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from super6.availability.model import (
+from bym.availability.model import (
     AvailabilityEvent,
     ClaimStatus,
     EventType,
     Reliability,
 )
-from super6.availability.reconcile import absentees, resolve_state
+from bym.availability.reconcile import absentees, resolve_state
 
 BASE = datetime(2026, 8, 15, 10, 0, tzinfo=timezone.utc)
 

@@ -1,7 +1,7 @@
 import pandas as pd
 import pytest
 
-from super6.backtest.metrics import evaluate
+from bym.backtest.metrics import evaluate
 
 
 def test_evaluate_known_values():

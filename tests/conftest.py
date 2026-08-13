@@ -5,7 +5,7 @@ socket layer, so "no test makes a network call" is a guarantee rather than
 a convention someone remembers to honour. A missing mock now fails loudly
 here instead of quietly contacting a real API — or quietly costing credits.
 
-Live tests opt back in with SUPER6_LIVE_TESTS=1.
+Live tests opt back in with BYM_LIVE_TESTS=1.
 """
 
 import os
@@ -17,7 +17,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-LIVE = os.environ.get("SUPER6_LIVE_TESTS") == "1"
+LIVE = os.environ.get("BYM_LIVE_TESTS") == "1"
 
 _real_socket = socket.socket
 _real_create_connection = socket.create_connection
@@ -30,7 +30,7 @@ class NetworkAccessAttempted(RuntimeError):
 def _blocked(*args, **kwargs):
     raise NetworkAccessAttempted(
         "A test attempted a real network connection. Ordinary tests must "
-        "mock every external call; run live checks with SUPER6_LIVE_TESTS=1."
+        "mock every external call; run live checks with BYM_LIVE_TESTS=1."
     )
 
 

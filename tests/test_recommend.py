@@ -3,10 +3,10 @@ from datetime import datetime
 import pandas as pd
 import pytest
 
-from super6.config import DEFAULT_MODEL
-from super6.model import dixon_coles
-from super6.recommend import confidence_v1, format_report, recommend_round
-from super6.round import Fixture, Round
+from bym.config import DEFAULT_MODEL
+from bym.model import dixon_coles
+from bym.recommend import confidence_v1, format_report, recommend_round
+from bym.round import Fixture, Round
 
 from test_dixon_coles import synthetic_matches
 
@@ -69,8 +69,8 @@ def test_odds_blend_shifts_toward_market():
     to generate — and that advances a shared RNG, so it varied with test
     ordering. The midpoint identity holds for any fit.
     """
-    from super6.model.market import implied_result_probs
-    from super6.recommend import recommend_fixture
+    from bym.model.market import implied_result_probs
+    from bym.recommend import recommend_fixture
 
     params = dixon_coles.fit(synthetic_matches(), xi=0.0)
     odds = (1.05, 12.0, 30.0)

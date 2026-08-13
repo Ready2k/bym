@@ -1,6 +1,6 @@
 import pytest
 
-from super6.sources import teams
+from bym.sources import teams
 
 KNOWN = {"Man City", "Man United", "Arsenal", "Tottenham", "Nott'm Forest",
          "Wolves", "Sheffield United", "Sheffield Weds", "Bournemouth"}

@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from super6.data.football_data import parse_season_csv
+from bym.data.football_data import parse_season_csv
 
 CSV = """Div,Date,HomeTeam,AwayTeam,FTHG,FTAG,B365H,B365D,B365A,B365CH,B365CD,B365CA
 E0,16/08/2024,Arsenal,Everton,2,0,1.50,4.20,7.00,1.45,4.40,7.50
@@ -40,7 +40,7 @@ def test_the_corpus_carries_handicap_and_totals_odds_all_along():
     never read the columns."""
     from pathlib import Path
 
-    from super6.data.football_data import load_matches
+    from bym.data.football_data import load_matches
 
     matches = load_matches(Path("data"), [2024], ("E0",), fetch=False)
     for column in ("ah_line", "odds_ah_h", "odds_ah_a", "odds_over25", "odds_under25"):
@@ -54,7 +54,7 @@ def test_the_corpus_carries_handicap_and_totals_odds_all_along():
 def test_handicap_lines_are_the_quarter_grid_the_market_actually_quotes():
     from pathlib import Path
 
-    from super6.data.football_data import load_matches
+    from bym.data.football_data import load_matches
 
     lines = load_matches(Path("data"), [2024], ("E0",), fetch=False)["ah_line"].dropna()
     assert ((lines * 4) % 1 == 0).all(), "lines should fall on the quarter grid"

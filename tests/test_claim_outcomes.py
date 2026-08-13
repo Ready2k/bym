@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import pytest
 
-from super6 import claim_outcomes as co
-from super6 import db, prediction_history
-from super6.knowledge import store
-from super6.knowledge.models import CandidateClaim, ClaimType, EvidenceDocument
+from bym import claim_outcomes as co
+from bym import db, prediction_history
+from bym.knowledge import store
+from bym.knowledge.models import CandidateClaim, ClaimType, EvidenceDocument
 
 
 @pytest.fixture
@@ -176,7 +176,7 @@ def test_readiness_still_demands_backtesting_once_there_is_enough():
 
 def test_this_module_never_becomes_the_impact_model():
     """§22/§28: pairing data must not quietly turn into adjusting forecasts."""
-    from super6.availability import impact
+    from bym.availability import impact
 
     assert impact.QUANTITATIVE_IMPACT_MODEL_ENABLED is False
     source = __import__("inspect").getsource(co)

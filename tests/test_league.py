@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from super6 import league
+from bym import league
 
 
 PICKS_A = ((2, 1), (1, 1), (0, 1), (2, 0), (1, 0), (1, 2))

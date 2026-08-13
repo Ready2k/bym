@@ -2,10 +2,10 @@
 
 import pytest
 
-from super6.scoring import FixtureStatus
-from super6.sources import football_data_org as fdo
-from super6.sources import registry as reg
-from super6.sources.teams import resolve
+from bym.scoring import FixtureStatus
+from bym.sources import football_data_org as fdo
+from bym.sources import registry as reg
+from bym.sources.teams import resolve
 
 # Shape taken from a real live response (2026-08-08).
 PAYLOAD = {

@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from super6.round import load_round
+from bym.round import load_round
 
 VALID = {
     "round_number": 14,

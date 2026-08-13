@@ -2,7 +2,7 @@ import numpy as np
 import pytest
 from scipy.stats import poisson
 
-from super6.model.matrix import score_matrix
+from bym.model.matrix import score_matrix
 
 
 def test_matrix_sums_to_one():

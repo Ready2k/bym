@@ -13,9 +13,9 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from super6.round import Fixture, Round
-from super6.sources import pipeline
-from super6.sources.odds_api import BookmakerOdds, EventOdds
+from bym.round import Fixture, Round
+from bym.sources import pipeline
+from bym.sources.odds_api import BookmakerOdds, EventOdds
 
 NOW = datetime(2026, 8, 15, 12, 30, tzinfo=timezone.utc)
 

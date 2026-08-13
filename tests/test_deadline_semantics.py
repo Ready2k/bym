@@ -9,8 +9,8 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from super6.research import deadline
-from super6.research.deadline import Knowability
+from bym.research import deadline
+from bym.research.deadline import Knowability
 
 UTC = timezone.utc
 
@@ -124,17 +124,17 @@ def test_description_names_the_oracle_fixtures():
     # import research. The CLI is deliberately excluded — it is a
     # top-level entry point that orchestrates both, not part of the core.
 FORECAST_CORE = (
-    "src/super6/engine.py",
-    "src/super6/recommend.py",
-    "src/super6/worker.py",
-    "src/super6/config.py",
-    "src/super6/model/dixon_coles.py",
-    "src/super6/model/matrix.py",
-    "src/super6/model/market.py",
-    "src/super6/model/golden_goal.py",
-    "src/super6/backtest/walk_forward.py",
-    "src/super6/api/service.py",
-    "src/super6/api/contracts.py",
+    "src/bym/engine.py",
+    "src/bym/recommend.py",
+    "src/bym/worker.py",
+    "src/bym/config.py",
+    "src/bym/model/dixon_coles.py",
+    "src/bym/model/matrix.py",
+    "src/bym/model/market.py",
+    "src/bym/model/golden_goal.py",
+    "src/bym/backtest/walk_forward.py",
+    "src/bym/api/service.py",
+    "src/bym/api/contracts.py",
 )
 
 
@@ -154,7 +154,7 @@ def test_forecast_core_never_imports_research():
             "from .research" in text
             or "from ..research" in text
             or "import research" in text
-            or "super6.research" in text
+            or "bym.research" in text
         ):
             offenders.append(relative)
     assert not offenders, f"forecast core importing research: {offenders}"
@@ -162,8 +162,8 @@ def test_forecast_core_never_imports_research():
 
 def test_research_may_import_the_frozen_core():
     """The permitted direction — asserted so nobody 'fixes' it later."""
-    from super6.config import FROZEN_PHASE1_V1
-    from super6.research import deadline
+    from bym.config import FROZEN_PHASE1_V1
+    from bym.research import deadline
 
     assert FROZEN_PHASE1_V1.xi == 0.003
     assert deadline.LINEUP_LEAD_MINUTES == 20

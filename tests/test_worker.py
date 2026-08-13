@@ -13,12 +13,12 @@ from pathlib import Path
 
 import pytest
 
-from super6 import cadence, events, movement, scheduler, worker
-from super6.model import dixon_coles
-from super6.round import Fixture, Round
-from super6.sources import pipeline
-from super6.sources.consensus import build_consensus
-from super6.sources.odds_api import BookmakerOdds, EventOdds
+from bym import cadence, events, movement, scheduler, worker
+from bym.model import dixon_coles
+from bym.round import Fixture, Round
+from bym.sources import pipeline
+from bym.sources.consensus import build_consensus
+from bym.sources.odds_api import BookmakerOdds, EventOdds
 
 from test_dixon_coles import synthetic_matches
 
@@ -320,7 +320,7 @@ def test_a_sweep_is_skipped_rather_than_paid_for_when_the_model_is_silent(monkey
     go before the model is ever asked to read anything."""
     import inspect
 
-    from super6 import worker
+    from bym import worker
 
     source = inspect.getsource(worker._run_knowledge_job)
     assert "extractor_is_responsive" in source
@@ -330,7 +330,7 @@ def test_a_sweep_is_skipped_rather_than_paid_for_when_the_model_is_silent(monkey
 
 def test_an_extractor_with_no_ollama_config_is_treated_as_responsive():
     """The null extractor costs nothing and has nothing to probe."""
-    from super6.worker import extractor_is_responsive
+    from bym.worker import extractor_is_responsive
 
     assert extractor_is_responsive(None) is True
     assert extractor_is_responsive(object()) is True

@@ -36,7 +36,7 @@ DEFAULT_ROUND = Path("rounds/2026_27_round_01.json")
 class WebConfig:
     round_path: Path = DEFAULT_ROUND
     data_path: Path = Path("data")
-    database_path: Path = Path("data/super6.db")
+    database_path: Path = Path("data/bym.db")
     submissions_path: Path = Path("data/submissions.json")
     registry_path: Path = Path("config/source_registry.json")
     event_log_path: Path = Path("data/events/activity.jsonl")
@@ -340,7 +340,7 @@ def _emit_deadline_reminders(rnd: Round, submission_state: str, config: WebConfi
     """Record any newly crossed deadline threshold for this round.
 
     Fires on page load, which alone only helps someone already looking —
-    `super6 watch` covers the rest. Each threshold is emitted once, guarded
+    `bym watch` covers the rest. Each threshold is emitted once, guarded
     by what is already in the append-only log, so refreshing does not
     manufacture reminders.
     """
@@ -607,7 +607,7 @@ def _cup_corpus(config: WebConfig, extended: bool) -> tuple[tuple[str, ...], lis
         ]
         if not available:
             raise ValueError(
-                "The extended corpus is not downloaded. Run: super6 fetch "
+                "The extended corpus is not downloaded. Run: bym fetch "
                 f"--seasons {seasons[0]} {seasons[-1]} --divisions "
                 + " ".join(divisions)
             )
@@ -1237,7 +1237,7 @@ def _promoted_teams(config: WebConfig) -> tuple[str, ...]:
     "This season" means the most recent season present in the corpus, so
     between a season's promotions and its first fetched fixtures this
     answers for the season just gone. That resolves itself with no code
-    change once `super6 fetch` pulls the new season down; until then the
+    change once `bym fetch` pulls the new season down; until then the
     lag is the honest answer rather than a guess at who went up.
     """
     from .model.priors import arrivals
@@ -1932,7 +1932,7 @@ def app_payload(config: WebConfig) -> dict:
     return payload
 
 
-class Super6RequestHandler(BaseHTTPRequestHandler):
+class BymRequestHandler(BaseHTTPRequestHandler):
     config: WebConfig
 
     def log_message(self, format: str, *args) -> None:  # noqa: A003
@@ -2046,7 +2046,7 @@ def missing_state_warnings(config: WebConfig) -> list[str]:
     source registry that falls back to built-in defaults where every
     source is REVIEW_REQUIRED, gating off odds and research without ever
     saying so. Cheap to warn about, expensive to diagnose from the
-    symptoms (see `scripts/super6-service`, which pins the directory).
+    symptoms (see `scripts/bym-service`, which pins the directory).
     """
     checked = (
         ("source registry", config.registry_path),
@@ -2062,9 +2062,9 @@ def missing_state_warnings(config: WebConfig) -> list[str]:
 
 def serve(config: WebConfig, host: str = "127.0.0.1", port: int = 8000) -> None:
     """Run the local UI. Press Ctrl-C to stop it."""
-    handler = type("ConfiguredSuper6Handler", (Super6RequestHandler,), {"config": config})
+    handler = type("ConfiguredBymHandler", (BymRequestHandler,), {"config": config})
     server = ThreadingHTTPServer((host, port), handler)
-    print(f"Super 6 UI running at http://{host}:{port}")
+    print(f"Beat Your Mates UI running at http://{host}:{port}")
     print(f"Round: {config.round_path}")
     warnings = missing_state_warnings(config)
     if warnings:
@@ -2075,11 +2075,11 @@ def serve(config: WebConfig, host: str = "127.0.0.1", port: int = 8000) -> None:
             "  ! These are read relative to the working directory. A missing "
             "registry\n  !   means every source falls back to REVIEW_REQUIRED "
             "— odds and research\n  !   will be gated off. Run from the project "
-            "root, or use scripts/super6-service.\n"
+            "root, or use scripts/bym-service.\n"
         )
     try:
         server.serve_forever()
     except KeyboardInterrupt:
-        print("\nSuper 6 UI stopped.")
+        print("\nBeat Your Mates UI stopped.")
     finally:
         server.server_close()

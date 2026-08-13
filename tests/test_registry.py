@@ -1,6 +1,6 @@
 import pytest
 
-from super6.sources import registry as reg
+from bym.sources import registry as reg
 
 
 @pytest.fixture
@@ -82,7 +82,7 @@ def test_an_evaluated_but_unadopted_source_is_registered_and_still_gated(tmp_pat
     """A key sits in secrets/ for Big Balls Sports Data as a cross-reference.
     The registry entry exists so its presence is explained rather than
     rediscovered — but §18.1 must still refuse to let anything query it."""
-    from super6.sources.registry import (
+    from bym.sources.registry import (
         SourceNotApprovedError, UsageStatus, assert_approved, load_registry,
     )
 
@@ -103,7 +103,7 @@ def test_an_evaluated_but_unadopted_source_is_registered_and_still_gated(tmp_pat
 def test_the_evaluation_findings_survive_in_the_registry(tmp_path):
     """The point of the entry is that nobody probes this source a fourth
     time, so the findings have to be in it, not only in a results doc."""
-    from super6.sources.registry import load_registry
+    from bym.sources.registry import load_registry
 
     notes = load_registry(tmp_path / "absent.json")["big_balls_sports_data"].notes
     for fact in ("Championship", "xG", "2026-08-10"):

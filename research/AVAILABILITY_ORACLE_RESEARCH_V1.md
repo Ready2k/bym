@@ -41,7 +41,7 @@ A second limitation, stated up front: a historical API response proves a
 lineup or injury **existed**, not **when it became public**.
 API-Football supplies no historical `published_at` for either. So even
 the same-kick-off fixtures are `PRESUMED_KNOWABLE`, never proven. The
-enforcement lives in `super6.research.deadline` with 13 regression tests.
+enforcement lives in `bym.research.deadline` with 13 regression tests.
 
 ## Design
 

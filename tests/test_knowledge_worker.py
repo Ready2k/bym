@@ -4,17 +4,17 @@ from datetime import datetime, timezone
 
 import pytest
 
-from super6 import db, events as ev
-from super6.availability import store as avail_store
-from super6.knowledge import queries, store, worker
-from super6.knowledge.models import (
+from bym import db, events as ev
+from bym.availability import store as avail_store
+from bym.knowledge import queries, store, worker
+from bym.knowledge.models import (
     CandidateClaim,
     ClaimType,
     EvidenceDocument,
     classify_authority,
 )
-from super6.sources import registry as reg
-from super6.sources import tavily
+from bym.sources import registry as reg
+from bym.sources import tavily
 
 NOW = datetime(2026, 8, 15, 12, 0, tzinfo=timezone.utc)
 
@@ -345,7 +345,7 @@ def test_rejected_claims_are_recorded_with_reasons(conn, wired):
 
 
 def test_default_extractor_emits_nothing(conn, wired):
-    from super6.knowledge.extractor import NullExtractor
+    from bym.knowledge.extractor import NullExtractor
 
     result = worker.research(
         conn, "Chelsea", "Newcastle", PLANS, "key", NullExtractor(), now=NOW

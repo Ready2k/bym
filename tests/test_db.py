@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 
 import pytest
 
-from super6 import db
+from bym import db
 
 
 def test_foreign_keys_enforced(tmp_path):

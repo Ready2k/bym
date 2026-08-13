@@ -8,7 +8,7 @@ whose terms were never checked — is exactly the kind of thing that looks
 harmless in a diff.
 
 Promotion REVIEW_REQUIRED -> APPROVED is a deliberate human act
-(`super6 sources approve`), never automatic, and is refused outright for
+(`bym sources approve`), never automatic, and is refused outright for
 PROHIBITED sources.
 
 The four statuses say different things about *who owes what*:
@@ -296,7 +296,7 @@ def assert_approved(
         raise SourceNotApprovedError(
             f"Source '{source_id}' is {record.usage_status}, not APPROVED. "
             f"Review its terms ({record.terms_url}) and promote it with "
-            f"`super6 sources approve {source_id}` before querying it."
+            f"`bym sources approve {source_id}` before querying it."
         )
     return record
 

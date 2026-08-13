@@ -1,8 +1,8 @@
 import numpy as np
 import pytest
 
-from super6.model.market import blend_matrix, implied_result_probs
-from super6.model.matrix import score_matrix
+from bym.model.market import blend_matrix, implied_result_probs
+from bym.model.matrix import score_matrix
 
 
 def test_implied_probs_remove_margin():
@@ -56,7 +56,7 @@ def test_invalid_weight_rejected():
 
 
 def test_shin_probabilities_sum_to_one():
-    from super6.model import market
+    from bym.model import market
 
     for odds in [(1.45, 4.5, 7.5), (2.1, 3.5, 3.4), (3.1, 3.4, 2.3), (1.2, 7.0, 15.0)]:
         assert sum(market.implied_result_probs_shin(*odds)) == pytest.approx(1.0, abs=1e-9)
@@ -65,7 +65,7 @@ def test_shin_probabilities_sum_to_one():
 def test_shin_moves_weight_toward_the_favourite():
     """The favourite-longshot correction is the whole point: proportional
     devigging removes margin evenly, which overstates the longshot."""
-    from super6.model import market
+    from bym.model import market
 
     odds = (1.35, 5.25, 8.5)
     proportional = market.implied_result_probs(*odds)
@@ -77,7 +77,7 @@ def test_shin_moves_weight_toward_the_favourite():
 def test_shin_z_is_zero_for_a_book_with_no_margin():
     """z=0 must recover the proportional method exactly, so the candidate is
     never worse-defined than the incumbent it would replace."""
-    from super6.model import market
+    from bym.model import market
 
     fair = (3.0, 3.0, 3.0)
     assert market.shin_z(*fair) == 0.0
@@ -85,14 +85,14 @@ def test_shin_z_is_zero_for_a_book_with_no_margin():
 
 
 def test_shin_z_lands_in_the_plausible_insider_range():
-    from super6.model import market
+    from bym.model import market
 
     z = market.shin_z(1.45, 4.5, 7.5)
     assert 0.0 < z < 0.10
 
 
 def test_devig_lookup_rejects_an_unknown_method():
-    from super6.model import market
+    from bym.model import market
 
     assert market.devig("proportional") is market.implied_result_probs
     assert market.devig("shin") is market.implied_result_probs_shin
@@ -105,8 +105,8 @@ def test_devig_lookup_rejects_an_unknown_method():
 
 
 def base_matrix():
-    from super6.config import FROZEN_PHASE1_V1
-    from super6.model.matrix import score_matrix
+    from bym.config import FROZEN_PHASE1_V1
+    from bym.model.matrix import score_matrix
 
     return score_matrix(1.6, 1.1, -0.05, FROZEN_PHASE1_V1)
 
@@ -118,7 +118,7 @@ def implied(matrix, win, lose):
 
 
 def test_a_half_handicap_line_never_pushes():
-    from super6.model import market
+    from bym.model import market
 
     win, lose = market.handicap_weights(-0.5, 6)
     assert float((1 - win - lose).sum()) == 0.0
@@ -126,7 +126,7 @@ def test_a_half_handicap_line_never_pushes():
 
 def test_a_whole_handicap_line_pushes_exactly_the_scorelines_it_ties():
     """Line -1.0 returns the stake when the home team wins by exactly one."""
-    from super6.model import market
+    from bym.model import market
 
     win, lose = market.handicap_weights(-1.0, 6)
     push = 1 - win - lose
@@ -137,7 +137,7 @@ def test_a_whole_handicap_line_pushes_exactly_the_scorelines_it_ties():
 def test_a_quarter_line_is_half_a_bet_on_each_neighbour():
     """53% of the corpus's lines are quarters — rounding them to the nearest
     half would be a silent quarter-goal lie on the most common case."""
-    from super6.model import market
+    from bym.model import market
 
     win, lose = market.handicap_weights(-0.75, 6)
     # Home winning by exactly one: the -1.0 half pushes, the -0.5 half wins.
@@ -149,7 +149,7 @@ def test_a_quarter_line_is_half_a_bet_on_each_neighbour():
 
 
 def test_a_totals_line_splits_on_goal_count_not_result():
-    from super6.model import market
+    from bym.model import market
 
     win, lose = market.totals_weights(2.5, 6)
     assert win[3, 0] == 1.0 and win[0, 3] == 1.0  # 3 goals either way is over
@@ -162,7 +162,7 @@ def test_the_constraint_hits_its_target_exactly_on_every_line_type(line):
     """The naive "scale each side to the target share" is correct only when
     nothing pushes: a quarter line's pushed half still carries win weight
     when the ratio is measured again, and the constraint lands short."""
-    from super6.model import market
+    from bym.model import market
 
     matrix = base_matrix()
     win, lose = market.handicap_weights(line, matrix.max_goals)
@@ -171,7 +171,7 @@ def test_the_constraint_hits_its_target_exactly_on_every_line_type(line):
 
 
 def test_the_constraint_conserves_probability_mass():
-    from super6.model import market
+    from bym.model import market
 
     matrix = base_matrix()
     for line in (-0.75, -1.0, 0.25):
@@ -184,7 +184,7 @@ def test_the_constraint_conserves_probability_mass():
 def test_a_zero_weight_leaves_the_forecast_untouched():
     import numpy as np
 
-    from super6.model import market
+    from bym.model import market
 
     matrix = base_matrix()
     win, lose = market.totals_weights(2.5, matrix.max_goals)
@@ -193,7 +193,7 @@ def test_a_zero_weight_leaves_the_forecast_untouched():
 
 
 def test_a_partial_weight_lands_between_model_and_market():
-    from super6.model import market
+    from bym.model import market
 
     matrix = base_matrix()
     win, lose = market.totals_weights(2.5, matrix.max_goals)
@@ -207,7 +207,7 @@ def test_a_market_with_nothing_to_redistribute_is_declined():
     no information, and inventing some would be worse than ignoring it."""
     import numpy as np
 
-    from super6.model import market
+    from bym.model import market
 
     matrix = base_matrix()
     win, lose = market.handicap_weights(-50.0, matrix.max_goals)
@@ -216,7 +216,7 @@ def test_a_market_with_nothing_to_redistribute_is_declined():
 
 
 def test_two_way_devig_removes_the_margin():
-    from super6.model import market
+    from bym.model import market
 
     home, away = market.implied_two_way(1.91, 1.99)
     assert home + away == pytest.approx(1.0)

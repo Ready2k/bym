@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from super6.backtest.walk_forward import run_favourite_baseline, run_model
+from bym.backtest.walk_forward import run_favourite_baseline, run_model
 
 from test_dixon_coles import synthetic_matches
 
@@ -82,8 +82,8 @@ def test_predictions_carry_the_columns_conf_calibration_needs(matches, test_mask
     which silently assigns a different, stricter-looking set of fixtures to
     each band and makes the bands look broken when they are not.
     """
-    from super6.config import DEFAULT_MODEL
-    from super6.recommend import confidence_v1
+    from bym.config import DEFAULT_MODEL
+    from bym.recommend import confidence_v1
 
     preds = run_model(matches, test_mask, xi=0.0, per_division=True).predictions
     for column in ("p_result", "p_score", "confidence"):

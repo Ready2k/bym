@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from super6.model import shots
+from bym.model import shots
 
 
 def corpus(n=400, seed=0):
@@ -82,7 +82,7 @@ def test_the_real_corpus_supports_the_proxy_for_both_divisions():
     whole corpus."""
     from pathlib import Path
 
-    from super6.data.football_data import load_matches
+    from bym.data.football_data import load_matches
 
     for division in ("E0", "E1"):
         matches = load_matches(Path("data"), [2023], (division,), fetch=False)

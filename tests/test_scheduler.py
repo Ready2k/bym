@@ -2,7 +2,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from super6 import scheduler
+from bym import scheduler
 
 NOW = datetime(2026, 8, 15, 10, 0, tzinfo=timezone.utc)
 DEADLINE = datetime(2026, 8, 15, 14, 0, tzinfo=timezone.utc)

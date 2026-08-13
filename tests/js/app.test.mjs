@@ -126,7 +126,7 @@ test("a user override is shown even when the model cannot forecast", () => {
 test("monitoring is only claimed when a job is actually scheduled", () => {
   const idle = loadApp(appData());
   assert.ok(idle.monitorCard().includes("Monitoring not scheduled"));
-  assert.ok(idle.monitorCard().includes("super6 watch"));
+  assert.ok(idle.monitorCard().includes("bym watch"));
 
   const active = loadApp(appData({
     health: { scheduler_jobs_pending: 2, next_scheduled_check: "2026-08-15T10:00:00+00:00",

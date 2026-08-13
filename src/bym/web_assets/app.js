@@ -177,7 +177,7 @@ function monitorCard() {
   const nextCheck = health?.next_scheduled_check;
   const refreshed = `Forecast refreshed ${displayDate(round.meta.generated_at)}`;
   if (!pending) {
-    return `<div class="monitor-card idle"><span class="monitor-dot idle"></span><span>Monitoring not scheduled</span><small>${refreshed}. This page refreshes only when you load it — run <code>super6 watch</code> for automatic polling.</small></div>`;
+    return `<div class="monitor-card idle"><span class="monitor-dot idle"></span><span>Monitoring not scheduled</span><small>${refreshed}. This page refreshes only when you load it — run <code>bym watch</code> for automatic polling.</small></div>`;
   }
   const when = nextCheck ? ` · next check ${displayDate(nextCheck)}` : "";
   return `<div class="monitor-card"><span class="monitor-dot"></span><span>Monitoring active</span><small>${refreshed}${escapeHtml(when)}</small></div>`;
@@ -598,7 +598,7 @@ function sourceCard(source) {
     : (source.usage_status === "EVALUATED" ? "terms not reviewed — not needed, nothing queries it"
                                            : "terms not reviewed yet");
   const action = source.usage_status === "REVIEW_REQUIRED"
-    ? `<code class="source-action">super6 sources approve ${escapeHtml(source.source_id)}</code>`
+    ? `<code class="source-action">bym sources approve ${escapeHtml(source.source_id)}</code>`
     : "";
   return `<article class="source-card"><div><span class="status-pill ${pill}">${escapeHtml(titleCase(source.usage_status))}</span><h2>${escapeHtml(source.source_name)}</h2><p>${escapeHtml(source.acquisition_method)} · ${checked}</p></div><p>${escapeHtml(source.notes)}</p><small>Purpose: ${escapeHtml((source.purpose || []).join(", ") || "None — nothing queries this source")}</small>${action}${source.terms_url ? `<a href="${escapeHtml(source.terms_url)}" target="_blank" rel="noreferrer">View terms</a>` : ""}</article>`;
 }

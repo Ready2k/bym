@@ -365,7 +365,7 @@ def build_system_health(
         if source.usage_status == "REVIEW_REQUIRED":
             warnings.append(
                 f"{source.source_id} is REVIEW_REQUIRED — review its terms, "
-                f"then run `super6 sources approve {source.source_id}`"
+                f"then run `bym sources approve {source.source_id}`"
             )
         # §25: a quota running out is the failure you notice last, because
         # the symptom is things quietly not happening. Say it while there

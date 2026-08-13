@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from super6.model import dixon_coles, priors
+from bym.model import dixon_coles, priors
 
 from test_dixon_coles import synthetic_matches
 

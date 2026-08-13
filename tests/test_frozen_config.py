@@ -1,6 +1,6 @@
 """The frozen Phase 1 arm must not drift when Phase 2+ edits defaults."""
 
-from super6.config import DEFAULT_MODEL, FROZEN_PHASE1_V1, ModelConfig
+from bym.config import DEFAULT_MODEL, FROZEN_PHASE1_V1, ModelConfig
 
 
 def test_frozen_config_matches_manifest():
@@ -34,8 +34,8 @@ def test_ablation_007_candidates_stay_out_of_the_production_path():
     argument away from becoming a live modelling change nobody decided on."""
     import inspect
 
-    from super6.backtest.walk_forward import run_model
-    from super6.model import elo, market
+    from bym.backtest.walk_forward import run_model
+    from bym.model import elo, market
 
     # The frozen arm carries no knowledge of either candidate.
     assert not hasattr(FROZEN_PHASE1_V1, "devig")

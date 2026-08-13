@@ -2,13 +2,13 @@
 
 import pytest
 
-from super6.knowledge.clustering import (
+from bym.knowledge.clustering import (
     assign_clusters,
     corroboration,
     same_story,
     title_similarity,
 )
-from super6.knowledge.models import EvidenceDocument, canonical_url
+from bym.knowledge.models import EvidenceDocument, canonical_url
 
 
 def doc(url, title, published="2026-08-15T11:00:00+00:00", byline="", authority="OTHER_MEDIA"):

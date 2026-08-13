@@ -1,7 +1,7 @@
 import pandas as pd
 import pytest
 
-from super6 import prospective as pr
+from bym import prospective as pr
 
 FIXTURES = [
     ("Arsenal", "Everton"),

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Manage the local Super 6 decision UI without relying on a terminal window.
-# Optional environment overrides: SUPER6_PORT, SUPER6_DB, SUPER6_SUBMISSIONS,
-# SUPER6_ROUND, SUPER6_DATA, SUPER6_SEASONS.
+# Manage the local Beat Your Mates decision UI without relying on a terminal window.
+# Optional environment overrides: BYM_PORT, BYM_DB, BYM_SUBMISSIONS,
+# BYM_ROUND, BYM_DATA, BYM_SEASONS.
 
 set -euo pipefail
 
@@ -17,19 +17,19 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # off odds and research.
 cd "$ROOT_DIR"
 RUNTIME_DIR="$ROOT_DIR/.run"
-PID_FILE="$RUNTIME_DIR/super6-ui.pid"
-LOG_FILE="$RUNTIME_DIR/super6-ui.log"
-PORT="${SUPER6_PORT:-8000}"
-ROUND_FILE="${SUPER6_ROUND:-$ROOT_DIR/rounds/2026_27_round_01.json}"
-DATA_DIR="${SUPER6_DATA:-$ROOT_DIR/data}"
-# Same files the CLI defaults to. A separate super6-ui.db / -submissions
-# pair used to live here, which meant `super6 readiness` and every other
+PID_FILE="$RUNTIME_DIR/bym-ui.pid"
+LOG_FILE="$RUNTIME_DIR/bym-ui.log"
+PORT="${BYM_PORT:-8000}"
+ROUND_FILE="${BYM_ROUND:-$ROOT_DIR/rounds/2026_27_round_01.json}"
+DATA_DIR="${BYM_DATA:-$ROOT_DIR/data}"
+# Same files the CLI defaults to. A separate bym-ui.db / -submissions
+# pair used to live here, which meant `bym readiness` and every other
 # command read one deployment's state while the UI wrote another's — and
 # because both files existed, nothing warned. One deployment, one set of
-# files; override per-instance with SUPER6_DB/SUPER6_SUBMISSIONS.
-DATABASE="${SUPER6_DB:-$ROOT_DIR/data/super6.db}"
-SUBMISSIONS="${SUPER6_SUBMISSIONS:-$ROOT_DIR/data/submissions.json}"
-SEASONS="${SUPER6_SEASONS:-2019 2025}"
+# files; override per-instance with BYM_DB/BYM_SUBMISSIONS.
+DATABASE="${BYM_DB:-$ROOT_DIR/data/bym.db}"
+SUBMISSIONS="${BYM_SUBMISSIONS:-$ROOT_DIR/data/submissions.json}"
+SEASONS="${BYM_SEASONS:-2019 2025}"
 
 if [[ -x "$ROOT_DIR/.venv/bin/python" ]]; then
   PYTHON="$ROOT_DIR/.venv/bin/python"
@@ -57,15 +57,15 @@ clear_stale_pid() {
 start() {
   clear_stale_pid
   if pid_is_running; then
-    echo "Super 6 UI is already running (PID $(<"$PID_FILE")) at http://127.0.0.1:$PORT"
+    echo "Beat Your Mates UI is already running (PID $(<"$PID_FILE")) at http://127.0.0.1:$PORT"
     return
   fi
   if lsof -tiTCP:"$PORT" -sTCP:LISTEN >/dev/null 2>&1; then
-    echo "Port $PORT is already in use. Stop that service or set SUPER6_PORT." >&2
+    echo "Port $PORT is already in use. Stop that service or set BYM_PORT." >&2
     return 1
   fi
   mkdir -p "$RUNTIME_DIR"
-  nohup "$PYTHON" -u -m super6.cli serve \
+  nohup "$PYTHON" -u -m bym.cli serve \
     --round "$ROUND_FILE" \
     --data "$DATA_DIR" \
     --seasons $SEASONS \
@@ -77,16 +77,16 @@ start() {
   sleep 1
   if ! kill -0 "$pid" 2>/dev/null; then
     rm -f "$PID_FILE"
-    echo "Super 6 UI did not start. See $LOG_FILE" >&2
+    echo "Beat Your Mates UI did not start. See $LOG_FILE" >&2
     return 1
   fi
-  echo "Super 6 UI started (PID $pid): http://127.0.0.1:$PORT"
+  echo "Beat Your Mates UI started (PID $pid): http://127.0.0.1:$PORT"
 }
 
 stop() {
   clear_stale_pid
   if ! pid_is_running; then
-    echo "Super 6 UI is not running from this service script."
+    echo "Beat Your Mates UI is not running from this service script."
     return
   fi
   local pid
@@ -97,19 +97,19 @@ stop() {
     sleep 0.25
   done
   if kill -0 "$pid" 2>/dev/null; then
-    echo "Super 6 UI is still stopping (PID $pid)." >&2
+    echo "Beat Your Mates UI is still stopping (PID $pid)." >&2
     return 1
   fi
   rm -f "$PID_FILE"
-  echo "Super 6 UI stopped."
+  echo "Beat Your Mates UI stopped."
 }
 
 status() {
   clear_stale_pid
   if pid_is_running; then
-    echo "Super 6 UI is running (PID $(<"$PID_FILE")): http://127.0.0.1:$PORT"
+    echo "Beat Your Mates UI is running (PID $(<"$PID_FILE")): http://127.0.0.1:$PORT"
   else
-    echo "Super 6 UI is stopped."
+    echo "Beat Your Mates UI is stopped."
   fi
 }
 

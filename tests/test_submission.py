@@ -4,8 +4,8 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from super6 import submission
-from super6.submission import SubmissionState
+from bym import submission
+from bym.submission import SubmissionState
 
 NOW = datetime(2026, 8, 15, 12, 0, tzinfo=timezone.utc)
 DEADLINE = datetime(2026, 8, 15, 14, 0, tzinfo=timezone.utc)

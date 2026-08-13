@@ -1,4 +1,4 @@
-"""Super 6 Always-On Prediction Agent — Phase 1A prediction engine.
+"""Beat Your Mates — Phase 1A prediction engine.
 
 Implements SPEC.md §23 Phase 1A: historical results → weighted Dixon-Coles
 (§29-31) → score matrix → Super 6 EV (§2/§33) → six recommendations (§20)

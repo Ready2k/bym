@@ -2,9 +2,9 @@ import json
 
 import pytest
 
-from super6.config import DEFAULT_LMS, DEFAULT_MODEL, LMSConfig
-from super6.model import dixon_coles
-from super6.lms import (
+from bym.config import DEFAULT_LMS, DEFAULT_MODEL, LMSConfig
+from bym.model import dixon_coles
+from bym.lms import (
     FixtureOutlook,
     Gameweek,
     GameweekFixture,
@@ -450,7 +450,7 @@ def test_confidence_uses_lms_thresholds_not_super6s(params):
 
 
 def test_ranking_ties_break_deterministically():
-    from super6.lms import FixtureOutlook, rank_candidates
+    from bym.lms import FixtureOutlook, rank_candidates
 
     outlooks = [
         FixtureOutlook(GameweekFixture("Zebra", "Yak"), 0.5, 0.25, 0.25),
@@ -580,7 +580,7 @@ def test_pending_gameweeks_covers_picks_the_competition_has_moved_past():
     """Settlement must not be tied to whichever gameweek is current: once a
     gameweek's last fixture kicks off, the feed's current matchday moves
     on, and a pick keyed to it would stay PENDING forever."""
-    from super6.lms import pending_gameweeks
+    from bym.lms import pending_gameweeks
 
     james, sam = LMSState(entrant="James"), LMSState(entrant="Sam")
     record_pick(james, 3, "Man City", "Bournemouth", True)
@@ -598,7 +598,7 @@ def test_pending_gameweeks_covers_picks_the_competition_has_moved_past():
 
 
 def test_nothing_pending_when_every_pick_is_settled():
-    from super6.lms import pending_gameweeks
+    from bym.lms import pending_gameweeks
 
     state = LMSState(entrant="James")
     record_pick(state, 1, "Man City", "Bournemouth", True)

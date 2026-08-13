@@ -20,11 +20,11 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from super6.research import harvest as harvest_mod  # noqa: E402
-from super6.research import store as research_store  # noqa: E402
-from super6.secrets import get_key  # noqa: E402
-from super6.sources import api_football  # noqa: E402
-from super6.sources.quota import remaining  # noqa: E402
+from bym.research import harvest as harvest_mod  # noqa: E402
+from bym.research import store as research_store  # noqa: E402
+from bym.secrets import get_key  # noqa: E402
+from bym.sources import api_football  # noqa: E402
+from bym.sources.quota import remaining  # noqa: E402
 
 DB = Path("research/data/oracle_v1.db")
 # A little past midnight UTC, so a clock skew of a few seconds does not

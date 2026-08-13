@@ -14,10 +14,10 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from super6.backtest.walk_forward import run_model
-from super6.data.football_data import load_matches
-from super6.model import priors
-from super6.scoring import super6_points
+from bym.backtest.walk_forward import run_model
+from bym.data.football_data import load_matches
+from bym.model import priors
+from bym.scoring import super6_points
 
 TEST_SEASON = 2024
 W = 0.5

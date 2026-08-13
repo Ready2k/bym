@@ -32,7 +32,7 @@ An adapter existing is **not** "live".
 | Submission state (§46) | BUILT, TESTED OFFLINE, ACTIVE | drift detection after entry |
 | Availability intelligence | BUILT, TESTED OFFLINE | **no usable live feed** — see API-Football |
 | football-data.org adapter | **LIVE VERIFIED** | fixtures/results/status; §2.2 VOID source |
-| Result ingestion + VOID | **LIVE VERIFIED** | `super6 score --round-file` |
+| Result ingestion + VOID | **LIVE VERIFIED** | `bym score --round-file` |
 | Knowledge agent | BUILT, TESTED OFFLINE | **SHADOW** by default |
 | Ollama extractor | BUILT, TESTED OFFLINE, **LIVE VERIFIED** | `llama3.1:8b` on Desktop-HomePC.local; extraction confirmed |
 | API read-model contracts | BUILT, TESTED OFFLINE | frozen for the future UI |
@@ -43,12 +43,12 @@ An adapter existing is **not** "live".
 | Private-league tiebreak (§27 decision #7) | BUILT, TESTED OFFLINE, ACTIVE | points → exact scores → Golden Goal closeness, `league.league_standings` |
 | **xG (§7)** | **CLOSED — declined 2026-08-10** | free sources exhausted (4 probed, next_steps.md item 4); paid feed judged not worth ~£30/month. `model/shots.py` proxy built and rejected (ablation_009) |
 | **100 Club annotation (§12.1)** | **DEFERRED — not started** | no national-entrant data exists to estimate rarity from |
-| **Increment 5 player-impact model (evidence → λ)** | **DEFERRED — training data now accruing** | model itself not started and gated on `QUANTITATIVE_IMPACT_MODEL_ENABLED`; `claim_outcomes.py` pairs recorded claims with realised results so there is something to fit on later (`super6 readiness`) |
+| **Increment 5 player-impact model (evidence → λ)** | **DEFERRED — training data now accruing** | model itself not started and gated on `QUANTITATIVE_IMPACT_MODEL_ENABLED`; `claim_outcomes.py` pairs recorded claims with realised results so there is something to fit on later (`bym readiness`) |
 
 ## Local decision UI
 
 ```bash
-super6 serve --round rounds/2026_27_round_01.json --seasons 2019 2025 --data data
+bym serve --round rounds/2026_27_round_01.json --seasons 2019 2025 --data data
 ```
 
 A stdlib-`http.server` single-page app (`web.py`, `web_assets/`), not
@@ -158,7 +158,7 @@ narrowed with `opponent_intelligence.py`:
     how synthetic rounds are drawn — a test asserts
     `sample_synthetic_round` does not reference it — because adopting a
     matched sampler needs an ablation against the uniform draw, and at
-    1 observed round that ablation would have no power. `super6
+    1 observed round that ablation would have no power. `bym
     readiness` prints the counter.
   * `simulate_remaining_season` — combines the current round (real
     fixtures, candidate-specific) with a representative subset of future
@@ -324,7 +324,7 @@ export OLLAMA_MODEL=llama3.1:8b
 Health check:
 
 ```bash
-super6 health
+bym health
 ```
 
 Diagnoses DNS failure, connection refused, timeout, missing model and
@@ -340,7 +340,7 @@ retrieved, extracted, validated, stored with full provenance, and marked
 `promoted = 0` — they never enter reconciled availability state.
 
 ```bash
-super6 shadow-report
+bym shadow-report
 ```
 
 reports counts only: emitted, accepted, rejected, promoted, failed runs,
@@ -358,7 +358,7 @@ secrets, no article content — retention remains metadata plus a
 ## Live verification
 
 ```bash
-super6 verify-live
+bym verify-live
 ```
 
 Checks each source independently. **Approval is never bypassed**: a source
@@ -380,7 +380,7 @@ ollama            LIVE VERIFIED  (llama3.1:8b, 2 claims accepted end-to-end)
 Approval remains a manual act:
 
 ```bash
-super6 sources approve the_odds_api
+bym sources approve the_odds_api
 ```
 
 `sky_super6` is permanently `PROHIBITED` and `approve()` refuses it.
@@ -398,7 +398,7 @@ KNOWLEDGE_RESEARCH  opt-in (--with-knowledge); costs search credits
 ```
 
 ```bash
-super6 watch --round rounds/round_01.json --seasons 2021 2026 --data data --loop
+bym watch --round rounds/round_01.json --seasons 2021 2026 --data data --loop
 ```
 
 **Event-driven investigation.** A MAJOR market move with no availability
@@ -425,11 +425,11 @@ NOT_READY → READY → CHANGED_SINCE_REVIEW
 ```
 
 ```bash
-super6 submission mark-entered --round 1 --picks 2-0 1-0 2-1 1-2 3-0 1-2 --golden-goal 9
+bym submission mark-entered --round 1 --picks 2-0 1-0 2-1 1-2 3-0 1-2 --golden-goal 9
 ```
 
 ```bash
-super6 submission status --round 1
+bym submission status --round 1
 ```
 
 `CHANGED_AFTER_SUBMISSION` is the state the mechanism exists for, and its
@@ -440,7 +440,7 @@ no phrasing implies otherwise.
 ## Engine run
 
 ```bash
-super6 engine-run --round rounds/round_01.json --seasons 2021 2026 --data data
+bym engine-run --round rounds/round_01.json --seasons 2021 2026 --data data
 ```
 
 Produces a four-layer report — FORECAST INPUT, MARKET INTELLIGENCE,
@@ -459,7 +459,7 @@ the run, so a forecast is produced with no credentials at all.
 
 Network access is blocked at the socket layer for the entire ordinary
 suite, so "no test makes a network call" is enforced rather than trusted.
-Live tests opt back in with `SUPER6_LIVE_TESTS=1`.
+Live tests opt back in with `BYM_LIVE_TESTS=1`.
 
 ## Pre-UI blockers — resolved
 
@@ -483,5 +483,5 @@ the UI row above reads ACTIVE rather than deferred:
    `<season>_round_<NN>.json`, so nothing there reads as a template.
 
 §37+ UI work is under way against the frozen contracts in
-`super6/api/contracts.py` — see "Local decision UI" above for what's
+`bym/api/contracts.py` — see "Local decision UI" above for what's
 built and what's still missing.

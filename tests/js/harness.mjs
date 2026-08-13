@@ -16,7 +16,7 @@
 import { readFileSync } from "node:fs";
 import vm from "node:vm";
 
-const APP = new URL("../../src/super6/web_assets/app.js", import.meta.url);
+const APP = new URL("../../src/bym/web_assets/app.js", import.meta.url);
 
 // Functions under test. Listed explicitly so adding one to the UI does
 // not silently widen the surface these tests claim to cover.

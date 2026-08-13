@@ -33,13 +33,13 @@ The source ships as `REVIEW_REQUIRED`, so every fetch is refused until you
 have an account and have accepted the terms:
 
 ```bash
-super6 sources
+bym sources
 ```
 
 Once registered at the-odds-api.com with the terms accepted:
 
 ```bash
-super6 sources approve the_odds_api
+bym sources approve the_odds_api
 ```
 
 Then export the key and fetch:
@@ -49,13 +49,13 @@ export ODDS_API_KEY=your_key_here
 ```
 
 ```bash
-super6 predict --round rounds/round_01.json --seasons 2021 2026 --data data --fetch-odds
+bym predict --round rounds/round_01.json --seasons 2021 2026 --data data --fetch-odds
 ```
 
 Check spend at any time:
 
 ```bash
-super6 quota
+bym quota
 ```
 
 ## Credit budget

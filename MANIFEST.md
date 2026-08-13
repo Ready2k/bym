@@ -58,10 +58,10 @@ data up to and including 2024/25 only.
 
 ## Entry point
 
-`super6.backtest.walk_forward.run_frozen_model()` takes every
+`bym.backtest.walk_forward.run_frozen_model()` takes every
 hyperparameter from `config.DEFAULT_MODEL` and exposes no tuning knobs, so
 the frozen configuration cannot drift via arguments. The CLI wrapper
-`super6 final-test` additionally refuses to run without an explicit
+`bym final-test` additionally refuses to run without an explicit
 single-use acknowledgement flag.
 
 ## Provenance

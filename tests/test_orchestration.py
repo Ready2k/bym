@@ -5,12 +5,12 @@ from pathlib import Path
 
 import pytest
 
-from super6 import db, scheduler, worker
-from super6.availability import worker as availability_worker
-from super6.knowledge import worker as knowledge_worker
-from super6.model import dixon_coles
-from super6.sources import pipeline
-from super6.sources.odds_api import BookmakerOdds, EventOdds
+from bym import db, scheduler, worker
+from bym.availability import worker as availability_worker
+from bym.knowledge import worker as knowledge_worker
+from bym.model import dixon_coles
+from bym.sources import pipeline
+from bym.sources.odds_api import BookmakerOdds, EventOdds
 
 from test_dixon_coles import synthetic_matches
 
@@ -140,7 +140,7 @@ def test_availability_job_never_triggers_a_reforecast(conn, round_path, tmp_path
 
 
 def test_unexplained_major_move_is_flagged(conn, router, monkeypatch, tmp_path):
-    from super6.round import Fixture, Round
+    from bym.round import Fixture, Round
 
     monkeypatch.setattr(worker, "budget_constrained", lambda *a, **k: False)
     kwargs = dict(
@@ -163,9 +163,9 @@ def test_unexplained_major_move_is_flagged(conn, router, monkeypatch, tmp_path):
 def test_known_news_means_the_move_is_not_unexplained(
     conn, router, monkeypatch, tmp_path
 ):
-    from super6.availability import ingest
-    from super6.availability.model import ClaimStatus, EventType
-    from super6.round import Fixture, Round
+    from bym.availability import ingest
+    from bym.availability.model import ClaimStatus, EventType
+    from bym.round import Fixture, Round
 
     monkeypatch.setattr(worker, "budget_constrained", lambda *a, **k: False)
     kwargs = dict(

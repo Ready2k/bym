@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import pytest
 
-from super6 import opponent_intelligence as oi
-from super6 import prediction_history
-from super6.league import OpponentRound
+from bym import opponent_intelligence as oi
+from bym import prediction_history
+from bym.league import OpponentRound
 
 
 def opponent(participant, season, round_number, picks) -> OpponentRound:
@@ -131,7 +131,7 @@ def test_predict_pick_distribution_returns_empty_with_no_evidence_at_all():
 
 
 def test_predict_pick_distribution_shrinks_toward_league_average_for_thin_history(tmp_path):
-    from super6.league import opponent_profiles
+    from bym.league import opponent_profiles
 
     forecast_path = tmp_path / "history.json"
     record_round_forecast(forecast_path, 2026, 1, ["HOME"] * 6)
@@ -169,7 +169,7 @@ def test_predict_pick_distribution_reweights_toward_the_favoured_result(tmp_path
     history = tuple(
         opponent(f"Rival{i}", 2026, 1, ((2, 0),) * 3 + ((0, 2),) * 3) for i in range(30)
     )
-    from super6.league import opponent_profiles
+    from bym.league import opponent_profiles
 
     profile = opponent_profiles(history)[0]
     average = oi.league_average_profile(history)

@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from super6.model import golden_goal
+from bym.model import golden_goal
 
 
 def test_distribution_sums_to_one_with_no_goal_mass():

@@ -2,7 +2,7 @@
 
 ## v0.5 — Decision Experience Layer
 
-This section defines how a human interacts with the Super 6 Always-On Prediction Agent.
+This section defines how a human interacts with Beat Your Mates.
 
 It does **not** alter the functional architecture (§1–27) or mathematical pipeline (§28–36). It defines how those capabilities are presented, understood and controlled.
 
@@ -1454,7 +1454,7 @@ MEDIUM → HIGH
 Deadline:
 47 minutes
 
-Review in Super 6 Agent
+Review in Beat Your Mates
 ```
 
 ---

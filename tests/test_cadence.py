@@ -2,7 +2,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from super6 import cadence
+from bym import cadence
 
 DEADLINE = datetime(2026, 8, 15, 14, 0, tzinfo=timezone.utc)
 
@@ -77,7 +77,7 @@ def test_knowledge_research_is_six_sweeps_a_round_not_thirty_two():
     a 1,000/month tier — one round exhausting a month."""
     from datetime import datetime, timedelta, timezone
 
-    from super6 import cadence
+    from bym import cadence
 
     deadline = datetime(2026, 8, 15, 14, 0, tzinfo=timezone.utc)
 
@@ -96,7 +96,7 @@ def test_knowledge_research_is_six_sweeps_a_round_not_thirty_two():
 
 def test_a_round_of_research_fits_inside_the_monthly_tier():
     """Four to five rounds a month against Tavily's 1,000 free credits."""
-    from super6 import cadence
+    from bym import cadence
 
     per_round = 6 * cadence.KNOWLEDGE_CREDITS_PER_PASS
     assert per_round == 216
@@ -108,7 +108,7 @@ def test_knowledge_sweeps_are_weighted_toward_the_deadline():
     worth 36 credits, and a week out it is not."""
     from datetime import datetime, timedelta, timezone
 
-    from super6 import cadence
+    from bym import cadence
 
     deadline = datetime(2026, 8, 15, 14, 0, tzinfo=timezone.utc)
     far = cadence.knowledge_interval(deadline, deadline - timedelta(days=6))
@@ -121,7 +121,7 @@ def test_a_low_budget_widens_the_knowledge_cadence_rather_than_stopping():
     """Going silent is the failure you notice last."""
     from datetime import datetime, timedelta, timezone
 
-    from super6 import cadence
+    from bym import cadence
 
     deadline = datetime(2026, 8, 15, 14, 0, tzinfo=timezone.utc)
     now = deadline - timedelta(hours=5)
@@ -136,7 +136,7 @@ def test_the_odds_ladder_is_untouched():
     and whose credits are a different order of magnitude."""
     from datetime import timedelta
 
-    from super6 import cadence
+    from bym import cadence
 
     assert cadence.LADDER[0] == (timedelta(minutes=90), timedelta(minutes=12))
     assert cadence.BASE_INTERVAL == timedelta(days=1)

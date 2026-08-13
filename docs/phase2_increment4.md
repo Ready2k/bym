@@ -16,7 +16,7 @@ NEVER -> lambda / P(score) / w
 Registered as `REVIEW_REQUIRED`:
 
 ```bash
-super6 sources approve tavily
+bym sources approve tavily
 ```
 
 Search and Extract only. Tavily's Answer/Research layer is deliberately

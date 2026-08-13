@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from super6 import prediction_history
+from bym import prediction_history
 
 
 START = datetime(2026, 8, 8, 10, 0, tzinfo=timezone.utc)

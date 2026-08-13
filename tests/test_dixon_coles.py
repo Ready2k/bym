@@ -5,7 +5,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from super6.model import dixon_coles
+from bym.model import dixon_coles
 
 RNG = np.random.default_rng(42)
 TEAMS = ["Strong", "Middling A", "Middling B", "Weak"]

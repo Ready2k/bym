@@ -1,4 +1,4 @@
-from super6.scoring import result_of, super6_points
+from bym.scoring import result_of, super6_points
 
 
 def test_exact_score_is_five_points():

@@ -58,12 +58,12 @@ only accrues by playing rounds. What *was* buildable — and was built the
 same day — is step 1 of each: the measurement that makes the missing data
 start accumulating, rather than having to be reconstructed later from
 whatever survived. Both were pure prerequisites, adopting no model and
-adjusting no forecast, so §28 is untouched. `super6 readiness` prints
+adjusting no forecast, so §28 is untouched. `bym readiness` prints
 both counters, so "not yet" now has a number attached instead of being
 re-argued from memory:
 
 ```bash
-super6 readiness
+bym readiness
 ```
 
 ---
@@ -91,7 +91,7 @@ baseline to test it against; there is one now.
    `observed_profile` pools them into the target a matched sampler would
    reproduce. Derived from `prediction_history`, not stored separately,
    so every round already recorded is characterised retroactively and
-   every future round is characterised for free. `super6 readiness`
+   every future round is characterised for free. `bym readiness`
    prints the counter. What remains is elapsed rounds, nothing else.
 2. Build a stratified sampler (e.g. bucket historical fixtures by
    home-win-probability band or division mix, then sample within
@@ -127,7 +127,7 @@ parameter at all (`QUANTITATIVE_IMPACT_MODEL_ENABLED = False`,
    result of the fixture it was about, via the forecast that names that
    fixture. Both halves were already being recorded and neither was
    joined to the other, so no pairs existed to fit on; they now accrue
-   automatically. `super6 readiness` prints the counter. What remains is
+   automatically. `bym readiness` prints the counter. What remains is
    claims and results actually landing.
 2. Build versioning/backtesting infrastructure for the impact model
    itself, matching the rigor already applied to the goal-rate model

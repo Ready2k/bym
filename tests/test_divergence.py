@@ -1,7 +1,7 @@
 import pytest
 
-from super6 import divergence
-from super6.model.matrix import score_matrix
+from bym import divergence
+from bym.model.matrix import score_matrix
 
 
 def test_total_variation_bounds():
@@ -22,7 +22,7 @@ def test_model_vs_market_and_dispersion_are_separate():
 def test_uses_pre_calibration_model_probabilities():
     """Passing the raw matrix must measure genuine disagreement; a blended
     matrix would measure how hard w pulled instead."""
-    from super6.model.market import blend_matrix
+    from bym.model.market import blend_matrix
 
     raw = score_matrix(1.6, 1.2, rho=-0.05)
     market = (0.30, 0.25, 0.45)

@@ -1,4 +1,4 @@
-# Super 6 Always-On Prediction Agent
+# Beat Your Mates — Always-On Prediction Agent
 ## Full Specification v0.4.1 — Single Vision Document
 **§1-27: Functional Architecture Baseline (FROZEN, as of v0.3.2).** **§28-36: Mathematical & Algorithmic Pipeline (v0.4.1).** Originally developed as two documents; combined here into one so there is a single source of truth for the system. The architecture sections are not reopened by the math sections — §28-36 specify the mathematics inside boxes §1-27 already drew.
 ### 1. Primary Objective
@@ -1085,7 +1085,7 @@ These are logged per round and per season and evaluated against the Definition o
 # 26. Recommended Technical Stack
 Approved, with one adjustment from the original proposal (no subprocess split, and no plain cron):
 ```text
-super6-agent/
+bym-agent/
 │
 ├── api/
 │   FastAPI

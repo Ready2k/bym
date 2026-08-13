@@ -9,7 +9,7 @@ import os
 
 import pytest
 
-from super6 import cli, secrets
+from bym import cli, secrets
 
 KEYS = ("ODDS_API_KEY", "API_FOOTBALL_KEY", "TAVILY_API_KEY",
         "FOOTBALL_DATA_ORG_KEY")

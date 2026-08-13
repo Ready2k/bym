@@ -2,8 +2,8 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from super6.sources import consensus as con
-from super6.sources.odds_api import BookmakerOdds, EventOdds
+from bym.sources import consensus as con
+from bym.sources.odds_api import BookmakerOdds, EventOdds
 
 NOW = datetime(2026, 8, 15, 13, 0, tzinfo=timezone.utc)
 

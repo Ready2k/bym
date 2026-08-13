@@ -21,7 +21,7 @@ from .db import connect as _db_connect
 from .db import from_iso as _parse_iso
 from .db import to_iso
 
-DEFAULT_DB_PATH = Path("data/super6.db")
+DEFAULT_DB_PATH = Path("data/bym.db")
 
 
 class JobType(str, Enum):

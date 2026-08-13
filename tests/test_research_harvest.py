@@ -5,8 +5,8 @@ from datetime import datetime, timedelta, timezone
 import pytest
 import requests
 
-from super6.research import harvest, prevalence, sampling, store
-from super6.research.sampling import UniverseFixture
+from bym.research import harvest, prevalence, sampling, store
+from bym.research.sampling import UniverseFixture
 
 UTC = timezone.utc
 BASE = datetime(2022, 8, 6, 12, 0, tzinfo=UTC)

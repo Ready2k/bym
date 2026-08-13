@@ -83,7 +83,7 @@ def _approval_gate(
         verification.add(
             "registry approval",
             BLOCKED,
-            f"{record.usage_status} — run `super6 sources approve "
+            f"{record.usage_status} — run `bym sources approve "
             f"{source_id}` after accepting the terms",
         )
         return False

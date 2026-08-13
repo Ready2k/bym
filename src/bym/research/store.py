@@ -272,8 +272,8 @@ def freeze(
     )
 
     record = {
-        "frozen_at": __import__("super6.db", fromlist=["to_iso", "utcnow"]).to_iso(
-            __import__("super6.db", fromlist=["utcnow"]).utcnow()
+        "frozen_at": __import__("bym.db", fromlist=["to_iso", "utcnow"]).to_iso(
+            __import__("bym.db", fromlist=["utcnow"]).utcnow()
         ),
         "study": study,
         "seed": int(sample[0]["seed"]) if sample else 0,

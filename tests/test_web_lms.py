@@ -7,8 +7,8 @@ from dataclasses import dataclass
 
 import pytest
 
-from super6 import lms
-from super6.web import WebConfig, lms_payload
+from bym import lms
+from bym.web import WebConfig, lms_payload
 
 TEAMS = ("Strong", "Middling A", "Middling B", "Weak")
 
@@ -56,7 +56,7 @@ GAMEWEEK = {
 def no_api_key(monkeypatch):
     """Default to the offline path — these tests are about the payload, not
     about football-data.org. The one test that needs a feed patches it."""
-    monkeypatch.setattr("super6.secrets.get_key", lambda name: None)
+    monkeypatch.setattr("bym.secrets.get_key", lambda name: None)
 
 
 def test_payload_carries_a_plan_per_entrant(tmp_path, router):
@@ -139,7 +139,7 @@ def test_one_page_load_makes_one_premier_league_request(tmp_path, router, monkey
     """The fixture list and the results come from the same endpoint for the
     same season. Fetching it twice per page load spends a free tier that
     allows ten requests a minute across the whole system."""
-    from super6.sources import football_data_org as fdo
+    from bym.sources import football_data_org as fdo
 
     payload_json = {"matches": [
         {"id": 1, "status": "SCHEDULED", "matchday": 3,
@@ -157,7 +157,7 @@ def test_one_page_load_makes_one_premier_league_request(tmp_path, router, monkey
         fetched.append(division)
         return fdo.parse_matches(payload_json) if division == "E0" else []
 
-    monkeypatch.setattr("super6.secrets.get_key", lambda name: "key")
+    monkeypatch.setattr("bym.secrets.get_key", lambda name: "key")
     monkeypatch.setattr(fdo, "fetch_matches", fake_fetch)
 
     config = config_with(tmp_path, GAMEWEEK)
@@ -169,7 +169,7 @@ def test_one_page_load_makes_one_premier_league_request(tmp_path, router, monkey
 def test_settlement_still_runs_off_the_shared_fetch(tmp_path, router, monkeypatch):
     """Reusing the fixture fetch must not quietly disable auto-settlement —
     the whole point of it is that no entrant reports their own survival."""
-    from super6.sources import football_data_org as fdo
+    from bym.sources import football_data_org as fdo
 
     payload_json = {"matches": [
         {"id": 1, "status": "FINISHED", "matchday": 3,
@@ -181,7 +181,7 @@ def test_settlement_still_runs_off_the_shared_fetch(tmp_path, router, monkeypatc
          "homeTeam": {"name": "Middling A"}, "awayTeam": {"name": "Middling B"},
          "score": {"fullTime": {"home": None, "away": None}}},
     ]}
-    monkeypatch.setattr("super6.secrets.get_key", lambda name: "key")
+    monkeypatch.setattr("bym.secrets.get_key", lambda name: "key")
     monkeypatch.setattr(
         fdo, "fetch_matches",
         lambda division, season, api_key, **kw: (

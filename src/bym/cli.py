@@ -1,9 +1,9 @@
 """Command-line interface for the Phase 1A prediction engine.
 
-    super6 fetch    --seasons 2019 2025 --data data/
-    super6 predict  --round round.json --seasons 2021 2025 --data data/
-    super6 backtest --test-season 2024 --seasons 2018 2024 --data data/
-    super6 tune-xi  --validation-season 2024 --seasons 2018 2024 --data data/
+    bym fetch    --seasons 2019 2025 --data data/
+    bym predict  --round round.json --seasons 2021 2025 --data data/
+    bym backtest --test-season 2024 --seasons 2018 2024 --data data/
+    bym tune-xi  --validation-season 2024 --seasons 2018 2024 --data data/
 """
 
 from __future__ import annotations
@@ -255,7 +255,7 @@ def cmd_watch(args) -> int:
             f"first poll now, cadence {interval}."
         )
         if not args.loop:
-            print("Run with --loop to start polling, or invoke `super6 tick` "
+            print("Run with --loop to start polling, or invoke `bym tick` "
                   "from cron/systemd.")
             return 0
 
@@ -317,7 +317,7 @@ def cmd_jobs(args) -> int:
     with scheduler.connect(Path(args.db)) as conn:
         jobs = scheduler.list_jobs(conn)
     if not jobs:
-        print("No scheduled jobs. Use `super6 watch --round ...`.")
+        print("No scheduled jobs. Use `bym watch --round ...`.")
         return 0
     print(f"{'ID':>3} {'ROUND':>5} {'STATUS':<8} {'NEXT RUN':<26} ATTEMPTS")
     for j in jobs:
@@ -677,7 +677,7 @@ def cmd_research(args) -> int:
         with research_store.connect(db_path) as conn:
             size = research_store.sample_size(conn)
             if not size:
-                print("No sample drawn yet. Run: super6 research sample")
+                print("No sample drawn yet. Run: bym research sample")
                 return 0
             counts = research_store.progress(conn)
             total = sum(counts.values())
@@ -1105,7 +1105,7 @@ def cmd_ledger(args) -> int:
 
     ledger = load_ledger(Path(args.ledger))
     if ledger.empty:
-        print("No prospective picks recorded yet. Use `super6 record`.")
+        print("No prospective picks recorded yet. Use `bym record`.")
         return 0
     print(standings(ledger).to_string(index=False))
     return 0
@@ -1505,7 +1505,7 @@ def main(argv: list[str] | None = None) -> int:
 
     apply_to_environment()
 
-    parser = argparse.ArgumentParser(prog="super6")
+    parser = argparse.ArgumentParser(prog="bym")
     sub = parser.add_subparsers(dest="command", required=True)
 
     def common(p):
@@ -1621,7 +1621,7 @@ def main(argv: list[str] | None = None) -> int:
     p.set_defaults(func=cmd_activity)
 
     p = sub.add_parser("health", help="engine + Ollama health check")
-    p.add_argument("--db", default="data/super6.db")
+    p.add_argument("--db", default="data/bym.db")
     p.add_argument("--registry", default="config/source_registry.json")
     p.set_defaults(func=cmd_health)
 
@@ -1633,7 +1633,7 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("engine-run", help="full engine pass for a round")
     common(p)
     p.add_argument("--round", required=True)
-    p.add_argument("--db", default="data/super6.db")
+    p.add_argument("--db", default="data/bym.db")
     p.add_argument("--with-knowledge", action="store_true")
     p.add_argument("--json", help="write the RoundSummary contract to this path")
     p.set_defaults(func=cmd_engine_run)
@@ -1643,7 +1643,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     common(p)
     p.add_argument("--round", default="rounds/2026_27_round_01.json")
-    p.add_argument("--db", default="data/super6.db")
+    p.add_argument("--db", default="data/bym.db")
     p.add_argument("--submissions", default="data/submissions.json")
     p.add_argument("--registry", default="config/source_registry.json")
     p.add_argument("--lms-gameweek", default="data/lms_gameweek.json")
@@ -1675,13 +1675,13 @@ def main(argv: list[str] | None = None) -> int:
         help="season start-years, inclusive (e.g. 2019 2025)",
     )
     p.add_argument("--divisions", nargs="+", default=list(DEFAULT_DATA.divisions))
-    p.add_argument("--db", default="data/super6.db")
+    p.add_argument("--db", default="data/bym.db")
     p.add_argument("--ui-state", default="data/ui_state.json")
     p.add_argument("--prediction-history", default="data/prediction_history.json")
     p.set_defaults(func=cmd_readiness)
 
     p = sub.add_parser("shadow-report", help="shadow extraction metrics")
-    p.add_argument("--db", default="data/super6.db")
+    p.add_argument("--db", default="data/bym.db")
     p.set_defaults(func=cmd_shadow_report)
 
     p = sub.add_parser(
@@ -1725,7 +1725,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     p.add_argument("--season", type=int, default=2026)
     p.add_argument("--divisions", nargs="+", default=["E0", "E1"])
-    p.add_argument("--db", default="data/super6.db")
+    p.add_argument("--db", default="data/bym.db")
     p.set_defaults(func=cmd_coverage)
 
     p = sub.add_parser("score", help="score a recorded round once results are known")

@@ -4,10 +4,10 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from super6 import db, events as ev, movement
-from super6.availability import attribution, completeness, impact, ingest, store
-from super6.availability.lineups import compare_lineups
-from super6.availability.model import (
+from bym import db, events as ev, movement
+from bym.availability import attribution, completeness, impact, ingest, store
+from bym.availability.lineups import compare_lineups
+from bym.availability.model import (
     AvailabilityEvent,
     ClaimStatus,
     EventType,
@@ -16,8 +16,8 @@ from super6.availability.model import (
     LineupKind,
     Reliability,
 )
-from super6.availability.players import PlayerRef
-from super6.sources.consensus import Consensus
+from bym.availability.players import PlayerRef
+from bym.sources.consensus import Consensus
 
 NOW = datetime(2026, 8, 15, 12, 0, tzinfo=timezone.utc)
 SQUAD = [
@@ -29,7 +29,7 @@ SQUAD = [
 
 @pytest.fixture
 def conn(tmp_path):
-    with db.connect(tmp_path / "super6.db") as c:
+    with db.connect(tmp_path / "bym.db") as c:
         yield c
 
 
@@ -208,7 +208,7 @@ def test_forecast_path_has_no_availability_input():
     """
     import inspect
 
-    from super6.recommend import recommend_fixture
+    from bym.recommend import recommend_fixture
 
     params = set(inspect.signature(recommend_fixture).parameters)
     assert params == {
@@ -224,9 +224,9 @@ def test_market_only_fallback_cannot_smuggle_news_into_the_forecast():
     """
     import pandas as pd
 
-    from super6.config import FROZEN_PHASE1_V1
-    from super6.model.dixon_coles import DixonColesParams
-    from super6.recommend import recommend_fixture
+    from bym.config import FROZEN_PHASE1_V1
+    from bym.model.dixon_coles import DixonColesParams
+    from bym.recommend import recommend_fixture
 
     # Built directly rather than fitted: test_dixon_coles.synthetic_matches
     # advances a module-level RNG, so calling it here would silently change
@@ -248,7 +248,7 @@ def test_market_only_fallback_cannot_smuggle_news_into_the_forecast():
     assert labelled.p_result == plain.p_result
 
     # w=1.0 must reproduce the market's result probabilities exactly.
-    from super6.model.market import implied_result_probs
+    from bym.model.market import implied_result_probs
 
     market_only = recommend_fixture(
         fitted, "Strong", "Weak", FROZEN_PHASE1_V1, odds=odds, blend_weight=1.0
@@ -338,7 +338,7 @@ def test_completeness_stays_categorical():
 def test_read_model_carries_the_lineup_surprise_as_standing_fact(conn):
     """LINEUP_SURPRISE is raised as an event, but a fixture opened later
     would show nothing — the read model has to hold the fact too."""
-    from super6.api import service
+    from bym.api import service
 
     expected = lineup(
         LineupKind.EXPECTED,
@@ -361,7 +361,7 @@ def test_read_model_carries_the_lineup_surprise_as_standing_fact(conn):
 
 
 def test_no_lineup_surprise_when_the_confirmed_xi_matches(conn):
-    from super6.api import service
+    from bym.api import service
 
     players = ["Palmer", "Jackson", "Caicedo", "James", "Colwill"]
     ingest.ingest_lineup(conn, lineup(LineupKind.EXPECTED, players, confidence="HIGH"), now=NOW)
@@ -375,7 +375,7 @@ def test_no_lineup_surprise_when_the_confirmed_xi_matches(conn):
 
 def test_no_lineup_surprise_without_an_expected_lineup_to_compare(conn):
     """A confirmed XI alone is not a surprise — there is nothing to differ from."""
-    from super6.api import service
+    from bym.api import service
 
     ingest.ingest_lineup(
         conn, lineup(LineupKind.CONFIRMED, ["Palmer", "Jackson"], minutes=60), now=NOW

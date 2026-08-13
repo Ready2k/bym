@@ -6,9 +6,9 @@ import json
 
 import pytest
 
-from super6.config import FROZEN_PHASE1_V1
-from super6.recommend import FixtureRecommendation, RoundRecommendation
-from super6.transparency import (
+from bym.config import FROZEN_PHASE1_V1
+from bym.recommend import FixtureRecommendation, RoundRecommendation
+from bym.transparency import (
     SourceFreshness,
     fixture_transparency,
     golden_goal_distribution,
@@ -21,7 +21,7 @@ from super6.transparency import (
 
 def fixture_recommendation() -> FixtureRecommendation:
     """A direct fixture recommendation avoids a data-fit dependency here."""
-    from super6.model.matrix import score_matrix
+    from bym.model.matrix import score_matrix
 
     matrix = score_matrix(1.8, 1.1, rho=-0.06)
     home, away = matrix.best_pick()
@@ -87,7 +87,7 @@ def test_fixture_provenance_preserves_unknown_source_times_and_is_json_safe():
 
 
 def test_golden_goal_keeps_no_goal_mass_and_explains_minute_convention():
-    from super6.model import golden_goal
+    from bym.model import golden_goal
 
     fixture = fixture_recommendation()
     round_recommendation = RoundRecommendation(
