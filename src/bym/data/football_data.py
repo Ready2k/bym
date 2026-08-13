@@ -1,8 +1,10 @@
 """Football-Data.co.uk ingestion (SPEC.md §18).
 
 Free downloadable historical results + betting odds — the primary source
-for the initial training and backtesting corpus (§16). Downloads are cached
-on disk so re-runs never re-fetch (§18's refresh-limit discipline).
+for the initial training and backtesting corpus (§16). Completed seasons are
+cached on disk and never re-fetched (§18's refresh-limit discipline); the
+season currently being played is refreshed once its copy goes stale, because
+it is the one file that still changes.
 
 Canonical fixture frame columns:
     date (Timestamp), season (int, start year), division (str),
@@ -28,6 +30,7 @@ from __future__ import annotations
 import io
 import os
 import warnings
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pandas as pd
@@ -77,27 +80,95 @@ def looks_like_season_csv(text: str) -> bool:
     return all(column in fields for column in REQUIRED_COLUMNS)
 
 
+def season_in_progress(
+    start_year: int, now: datetime | None = None, cfg: DataConfig = DEFAULT_DATA
+) -> bool:
+    """Can this season still gain matches?
+
+    Completed seasons are immutable, which is what makes caching them
+    forever correct. The season being played is not, and treating it the
+    same way is how a model ends up fitted to the fixtures that happened
+    to exist the first time it ran.
+    """
+    now = now or datetime.now(timezone.utc)
+    return (now.year, now.month) < (start_year + 1, cfg.season_complete_from_month)
+
+
+def _cache_is_stale(
+    path: Path, start_year: int, now: datetime | None = None, cfg: DataConfig = DEFAULT_DATA
+) -> bool:
+    now = now or datetime.now(timezone.utc)
+    if not season_in_progress(start_year, now, cfg):
+        return False
+    age = now - datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc)
+    return age > timedelta(hours=cfg.season_max_age_hours)
+
+
 def fetch_season(
     start_year: int,
     division: str,
     dest_dir: Path,
     force: bool = False,
     cfg: DataConfig = DEFAULT_DATA,
+    now: datetime | None = None,
 ) -> Path:
     """Download one season CSV into dest_dir, returning the cached path.
 
+    A completed season is returned from cache untouched. A season still
+    being played is re-downloaded once its copy is older than
+    `cfg.season_max_age_hours`, so results from the current campaign
+    actually reach the model; if that refresh fails, the cached copy is
+    returned with a warning rather than taking down the run.
+
     Raises SeasonUnavailable if the source has no file for this season
     yet, and SeasonDownloadError if it returned something that is not a
-    season CSV. Neither leaves anything behind in dest_dir: a cached
-    file is only ever a body that passed validation, so a bad fetch
-    cannot poison every subsequent run.
+    season CSV — but only when there is no cached copy to fall back on.
+    Neither leaves anything behind in dest_dir: a cached file is only ever
+    a body that passed validation, so a bad fetch cannot poison every
+    subsequent run.
     """
     dest_dir.mkdir(parents=True, exist_ok=True)
     path = dest_dir / f"{start_year}_{division}.csv"
+    refreshing = False
     if path.exists() and not force:
-        return path
+        if not _cache_is_stale(path, start_year, now, cfg):
+            return path
+        # A stale in-progress season is refreshed on a best-effort basis:
+        # the file on disk is usable, so a failed refresh must degrade to
+        # it rather than take down a run that would otherwise have worked.
+        refreshing = True
 
     url = csv_url(start_year, division, cfg)
+    try:
+        body = _download_season(url, start_year, division, cfg)
+    except (SeasonUnavailable, SeasonDownloadError, requests.RequestException) as exc:
+        if not refreshing:
+            raise
+        # Keeping yesterday's copy of a season in progress is a far better
+        # outcome than failing the run, but it is not nothing: the model is
+        # now fitted to a corpus the caller believes is current.
+        warnings.warn(
+            f"could not refresh {division} {start_year}/{str(start_year + 1)[2:]} "
+            f"({exc}) — continuing on the cached copy from "
+            f"{datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc):%Y-%m-%d %H:%M UTC}",
+            stacklevel=2,
+        )
+        # Touched so a source that is down does not mean a request per run.
+        path.touch()
+        return path
+
+    # Write beside the target and rename, so an interrupted download
+    # cannot leave a half-file that later runs treat as cached.
+    tmp = path.with_name(f".{path.name}.partial")
+    tmp.write_bytes(body)
+    os.replace(tmp, path)
+    return path
+
+
+def _download_season(
+    url: str, start_year: int, division: str, cfg: DataConfig
+) -> bytes:
+    """Fetch and validate one season body. Returns it; never writes."""
     resp = requests.get(url, timeout=30)
 
     # Not raise_for_status(): that passes on every 3xx, and this source
@@ -122,13 +193,7 @@ def fetch_season(
             f"Football-Data CSV (no {'/'.join(REQUIRED_COLUMNS)} header). "
             f"Nothing was cached."
         )
-
-    # Write beside the target and rename, so an interrupted download
-    # cannot leave a half-file that later runs treat as cached.
-    tmp = path.with_name(f".{path.name}.partial")
-    tmp.write_bytes(body)
-    os.replace(tmp, path)
-    return path
+    return body
 
 
 def _pick_odds(
@@ -278,9 +343,13 @@ def load_matches(
     for year in seasons:
         for div in divisions:
             path = data_dir / f"{year}_{div}.csv"
-            if not path.exists():
-                if not fetch:
-                    raise FileNotFoundError(f"{path} missing and fetch=False")
+            if not path.exists() and not fetch:
+                raise FileNotFoundError(f"{path} missing and fetch=False")
+            # Called even when the file is already there: fetch_season
+            # returns immediately for a completed season or a fresh copy,
+            # and it is the only thing that knows the season being played
+            # has moved on since this cache was written.
+            if fetch:
                 try:
                     fetch_season(year, div, data_dir, cfg=cfg)
                 except SeasonUnavailable as exc:

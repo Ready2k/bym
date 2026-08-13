@@ -1,5 +1,8 @@
 from pathlib import Path
 
+import os
+from datetime import datetime, timedelta, timezone
+
 import pytest
 import requests
 
@@ -177,3 +180,127 @@ def test_nothing_available_at_all_is_an_error_not_an_empty_frame(
     with pytest.warns(UserWarning):
         with pytest.raises(SeasonUnavailable, match="no season data available"):
             load_matches(tmp_path, [2026], ("E0", "E1"))
+
+
+# --- The season being played is the one file that still changes ---------
+#
+# Caching a finished season forever is correct — it is immutable. Applying
+# the same rule to the current campaign pinned the model to whatever had
+# been published the first time it ran: every result from then on stayed
+# invisible, and the fit drifted further from the league every week with
+# nothing saying so.
+
+NOW = datetime(2026, 8, 13, 12, 0, tzinfo=timezone.utc)
+
+
+def _aged(path, hours):
+    stamp = (NOW - timedelta(hours=hours)).timestamp()
+    os.utime(path, (stamp, stamp))
+
+
+def test_a_finished_season_is_never_refetched(tmp_path, monkeypatch):
+    from bym.data.football_data import fetch_season
+
+    p = tmp_path / "2019_E0.csv"
+    p.write_text(CSV)
+    _aged(p, 24 * 365)
+
+    calls = []
+    _serve(monkeypatch, 200, CSV.encode())
+    from bym.data import football_data
+    real = football_data.requests.get
+    monkeypatch.setattr(football_data.requests, "get",
+                        lambda *a, **k: (calls.append(1), real(*a, **k))[1])
+
+    fetch_season(2019, "E0", tmp_path, now=NOW)
+    assert calls == [], "a completed season is immutable — refetching it is pure waste"
+
+
+def test_the_current_season_is_refetched_once_its_copy_goes_stale(
+    tmp_path, monkeypatch
+):
+    from bym.data.football_data import fetch_season
+
+    p = tmp_path / "2026_E0.csv"
+    p.write_text(CSV)
+    _aged(p, 30)
+
+    updated = CSV + "E0,18/08/2024,Leeds,Fulham,3,1,2.00,3.50,4.00,2.10,3.40,3.90\n"
+    _serve(monkeypatch, 200, updated.encode())
+    fetch_season(2026, "E0", tmp_path, now=NOW)
+    assert p.read_text() == updated, "new results must reach the corpus"
+
+
+def test_a_fresh_copy_of_the_current_season_is_left_alone(tmp_path, monkeypatch):
+    """Refreshing is once a day, not once a run — the dashboard reloads
+    this on every page view."""
+    from bym.data.football_data import fetch_season
+
+    p = tmp_path / "2026_E0.csv"
+    p.write_text(CSV)
+    _aged(p, 2)
+
+    _serve(monkeypatch, 500, b"boom")  # any request at all would raise
+    assert fetch_season(2026, "E0", tmp_path, now=NOW).read_text() == CSV
+
+
+def test_a_failed_refresh_keeps_the_cached_season_and_says_so(tmp_path, monkeypatch):
+    """A source that is down must not take out a run that would otherwise
+    have worked — but running on yesterday's corpus is not nothing, so it
+    is never silent."""
+    from bym.data.football_data import fetch_season
+
+    p = tmp_path / "2026_E0.csv"
+    p.write_text(CSV)
+    _aged(p, 30)
+
+    _serve(monkeypatch, 300, HTML_300)
+    with pytest.warns(UserWarning, match="could not refresh"):
+        out = fetch_season(2026, "E0", tmp_path, now=NOW)
+    assert out.read_text() == CSV, "the usable cached copy must survive"
+
+
+def test_a_failed_refresh_does_not_retry_every_single_run(tmp_path, monkeypatch):
+    from bym.data.football_data import fetch_season
+
+    p = tmp_path / "2026_E0.csv"
+    p.write_text(CSV)
+    _aged(p, 30)
+
+    calls = []
+    from bym.data import football_data
+    monkeypatch.setattr(
+        football_data.requests, "get",
+        lambda *a, **k: (calls.append(1), _FakeResponse(300, HTML_300))[1],
+    )
+    with pytest.warns(UserWarning):
+        fetch_season(2026, "E0", tmp_path, now=NOW)
+    fetch_season(2026, "E0", tmp_path, now=NOW)  # immediately after
+    assert len(calls) == 1, "a down source should not mean a request per run"
+
+
+def test_season_in_progress_knows_when_a_campaign_is_over():
+    from bym.data.football_data import season_in_progress
+
+    # 2026/27 runs Aug 2026 - May 2027.
+    assert season_in_progress(2026, datetime(2026, 8, 13, tzinfo=timezone.utc))
+    assert season_in_progress(2026, datetime(2027, 5, 20, tzinfo=timezone.utc))
+    assert not season_in_progress(2026, datetime(2027, 7, 1, tzinfo=timezone.utc))
+    assert not season_in_progress(2019, datetime(2026, 8, 13, tzinfo=timezone.utc))
+
+
+def test_load_matches_refreshes_the_running_season_it_already_has(
+    tmp_path, monkeypatch
+):
+    """The bug in one line: load_matches only fetched when the file was
+    missing, so an existing current-season file was never revisited."""
+    from bym.data.football_data import load_matches
+
+    p = tmp_path / "2026_E0.csv"
+    p.write_text(CSV)
+    _aged(p, 30)
+
+    updated = CSV + "E0,18/08/2024,Leeds,Fulham,3,1,2.00,3.50,4.00,2.10,3.40,3.90\n"
+    _serve(monkeypatch, 200, updated.encode())
+    matches = load_matches(tmp_path, [2026], ("E0",))
+    assert len(matches) == 3, "the new result should be in the frame"

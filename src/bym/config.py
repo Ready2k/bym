@@ -173,6 +173,20 @@ class DataConfig:
     # it is just how the file is laid out.
     derivative_odds_prefixes: tuple[str, ...] = ("B365", "P", "Avg", "Max", "BFE")
 
+    # §18's refresh-limit discipline is right for a finished season — those
+    # files never change, and re-downloading them is pure waste. It is
+    # wrong for the season being played: the cache would pin the model to
+    # whatever was published the first time it ran, so every result of the
+    # current campaign stays invisible and the fit drifts further from the
+    # league every week, silently. A season in progress is therefore
+    # refetched once its copy is older than this.
+    season_max_age_hours: float = 24.0
+    # A season starting in year Y is treated as still in progress until
+    # this month of Y+1. English football ends in late May; July is a
+    # deliberate margin, and being a month late costs one conditional
+    # request a day against a file that is not changing.
+    season_complete_from_month: int = 7
+
 
 DEFAULT_MODEL = ModelConfig()
 DEFAULT_DATA = DataConfig()

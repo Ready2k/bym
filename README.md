@@ -24,6 +24,13 @@ Championship `E1`):
 bym fetch --seasons 2019 2025 --data data
 ```
 
+Completed seasons are downloaded once and never re-fetched — they cannot
+change. The season currently being played is re-downloaded when its copy
+is more than a day old, so results from the campaign in progress reach the
+model without anyone remembering a flag. If that refresh fails the cached
+copy is used and a warning says how old it is. `--force` re-downloads
+regardless.
+
 Enter a round manually (§9.1 — Sky's fixture selection and deadline are
 config, not derived data). Copy `rounds/example_round.json` to
 `rounds/<season>_round_<NN>.json`, edit the six fixtures + deadline, then:
