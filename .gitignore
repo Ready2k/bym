@@ -19,3 +19,9 @@ config/*_quota.json
 
 #API Keys
 secrets/research/data/
+
+# Round files are this week's Sky fixture selection and deadline, not
+# code — they churn weekly and carry no history worth keeping. The one
+# tracked exception is the template a fresh clone copies to start.
+/rounds/*.json
+!/rounds/example_round.json

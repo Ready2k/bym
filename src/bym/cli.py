@@ -43,7 +43,7 @@ def cmd_predict(args) -> int:
     from .data.football_data import load_matches, team_divisions
     from .model import dixon_coles, priors
     from .recommend import format_report, recommend_round
-    from .round import load_round
+    from .round import load_round, resolve_round_teams
 
     rnd = load_round(Path(args.round))
     if getattr(args, "fetch_odds", False):
@@ -51,7 +51,13 @@ def cmd_predict(args) -> int:
         print()
     matches = load_matches(Path(args.data), _season_range(args), tuple(args.divisions))
 
+    # Same resolution engine-run does, through the same helper: a round
+    # file written with Sky's full club names must not produce a different
+    # recommendation here than it does there.
     known = set(matches["home_team"]) | set(matches["away_team"])
+    rnd, renamed = resolve_round_teams(rnd, known)
+    for typed, canonical in renamed:
+        print(f"note: read '{typed}' as '{canonical}'", file=sys.stderr)
     for f in rnd.fixtures:
         for team in (f.home, f.away):
             if team not in known:

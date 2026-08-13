@@ -24,7 +24,8 @@ Automated odds ingestion (§6/§18) replaces this manual step in Phase 2.
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
+from collections.abc import Iterable
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -50,6 +51,38 @@ class Round:
 
 def load_round(path: Path) -> Round:
     return round_from_dict(json.loads(path.read_text()))
+
+
+def resolve_round_teams(
+    rnd: Round, known_teams: Iterable[str]
+) -> tuple[Round, list[tuple[str, str]]]:
+    """Rewrite a round's club names to the corpus's canonical forms.
+
+    The round file holds whatever name the user typed — often Sky's full
+    club name ("Manchester City") — while the training corpus uses
+    football-data.co.uk's short forms ("Man City"). An unresolved name is
+    not a cosmetic problem: the fixture silently falls back to a
+    league-average stand-in, which can invert a recommendation outright.
+
+    Returns the rewritten round and the (typed, canonical) pairs that
+    changed, so callers can report what they did. Every entry point that
+    reads a round file should go through here — `predict` and `engine-run`
+    disagreeing about the same file is a bug, not a difference of opinion.
+    """
+    from .sources.teams import resolve
+
+    known = list(known_teams)
+    renamed: list[tuple[str, str]] = []
+    resolved_fixtures = []
+    for fixture in rnd.fixtures:
+        home = resolve(fixture.home, known) or fixture.home
+        away = resolve(fixture.away, known) or fixture.away
+        if home != fixture.home:
+            renamed.append((fixture.home, home))
+        if away != fixture.away:
+            renamed.append((fixture.away, away))
+        resolved_fixtures.append(replace(fixture, home=home, away=away))
+    return replace(rnd, fixtures=tuple(resolved_fixtures)), renamed
 
 
 def round_from_dict(raw: dict) -> Round:

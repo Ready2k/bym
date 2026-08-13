@@ -16,7 +16,7 @@ someone believing otherwise.
 from __future__ import annotations
 
 import sqlite3
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
@@ -32,9 +32,9 @@ from .config import FROZEN_PHASE1_V1
 from .db import utcnow
 from .knowledge.config import ExtractorConfig, ExtractorMode
 from .recommend import RoundRecommendation, recommend_round
-from .round import Round
+from .round import Round, resolve_round_teams
 from .sources import pipeline
-from .sources.teams import resolve as resolve_team_name
+
 
 def to_iso_safe(value: datetime) -> str:
     from .db import to_iso
@@ -174,20 +174,12 @@ def run_engine(
     # the model itself, market/availability matching) sees one consistent
     # name per club instead of flagging a perfectly known team as unmodellable.
     if known_teams is not None:
-        renamed = 0
-        resolved_fixtures = []
-        for fixture in rnd.fixtures:
-            resolved_home = resolve_team_name(fixture.home, known_teams) or fixture.home
-            resolved_away = resolve_team_name(fixture.away, known_teams) or fixture.away
-            if resolved_home != fixture.home or resolved_away != fixture.away:
-                renamed += 1
-            resolved_fixtures.append(replace(fixture, home=resolved_home, away=resolved_away))
+        rnd, renamed = resolve_round_teams(rnd, known_teams)
         if renamed:
             notes.append(
-                f"teams: resolved {renamed} fixture(s) to the corpus's "
+                f"teams: resolved {len(renamed)} name(s) to the corpus's "
                 "canonical club name"
             )
-        rnd = replace(rnd, fixtures=tuple(resolved_fixtures))
 
     # ---- market layer ---------------------------------------------------
     if odds_api_key:

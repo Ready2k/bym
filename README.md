@@ -25,9 +25,8 @@ bym fetch --seasons 2019 2025 --data data
 ```
 
 Enter a round manually (§9.1 — Sky's fixture selection and deadline are
-config, not derived data). Each file in `rounds/` is one real round, named
-`<season>_round_<NN>.json`. Copy the most recent one, edit the six
-fixtures + deadline, then:
+config, not derived data). Copy `rounds/example_round.json` to
+`rounds/<season>_round_<NN>.json`, edit the six fixtures + deadline, then:
 
 ```bash
 bym predict --round rounds/2026_27_round_01.json --seasons 2021 2025 --data data
@@ -36,6 +35,14 @@ bym predict --round rounds/2026_27_round_01.json --seasons 2021 2025 --data data
 Output is the §20 pre-round report: six picks with RESULT / SCORE / EV /
 CONF columns, Golden Goal minute (with the Sky one-off interval convention,
 §15), and expected round score.
+
+Club names may be written either way — Sky's "Manchester City" or the
+corpus's "Man City". They are resolved to the corpus form on load and the
+substitution is reported. A name that resolves to nothing is kept as typed
+and warned about, because it will be forecast from a league-average
+stand-in rather than from that club.
+
+Your own round files are gitignored; only the example is tracked.
 
 ## Local decision UI
 

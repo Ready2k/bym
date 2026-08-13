@@ -1,0 +1,13 @@
+{
+  "round_number": 1,
+  "deadline_at": "2026-08-22T15:00:00+01:00",
+  "fixtures": [
+    { "home": "Everton", "away": "Crystal Palace" },
+    { "home": "Nott'm Forest", "away": "Leeds" },
+    { "home": "Brentford", "away": "Tottenham" },
+    { "home": "Man City", "away": "Bournemouth" },
+    { "home": "Brighton", "away": "Aston Villa" },
+    { "home": "Newcastle", "away": "Liverpool" }
+  ],
+  "source": "MANUAL"
+}
