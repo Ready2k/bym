@@ -15,17 +15,40 @@ Super 6 uses for its exact-score forecast. What's new here is LMS-specific
 bookkeeping — excluding already-used clubs, ranking by win probability,
 and tracking one entrant's survival round over round — none of which
 exists anywhere else in this codebase.
+
+Strategy: the highest P(win) is not the pick
+--------------------------------------------
+Ranking this gameweek's clubs by P(win) answers "which club is most
+likely to win on Saturday", which is not the question the format asks. A
+club is a one-use resource across the whole competition, so spending the
+best one now is only right if nothing better is coming. `plan_horizon`
+therefore solves the actual problem — assign one distinct club to each of
+the next few gameweeks so that the probability of surviving *all* of them
+is maximised — and `recommend_gameweek`'s ranking becomes what it should
+be, the menu the plan chooses from rather than the recommendation itself.
+
+`field_equity` handles the second gap. Surviving is not winning: an
+entrant who survives alongside the entire field has gained nothing, so
+where the field's picks are known, equity in the pot (survive while
+others do not) ranks differently from raw survival. Both are offered
+separately rather than fused into one number, because the weighting
+between them depends on pot size and rules this module does not know.
 """
 
 from __future__ import annotations
 
 import json
+import math
+import os
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Iterable, Sequence
 
-from .config import DEFAULT_MODEL, ModelConfig
+import numpy as np
+from scipy.optimize import linear_sum_assignment
+
+from .config import DEFAULT_LMS, DEFAULT_MODEL, LMSConfig, ModelConfig
 from .model import market as market_mod
 from .model.dixon_coles import DixonColesParams
 from .model.matrix import score_matrix
@@ -54,6 +77,11 @@ class Gameweek:
     number: int
     fixtures: tuple[GameweekFixture, ...]
     deadline_at: datetime | None = None
+    # Optional: club -> share of the field picking it, where the
+    # competition publishes its entrants' picks. Feeds `field_equity`;
+    # absent everywhere else, since nothing else needs to know what the
+    # rest of the field is doing.
+    popularity: dict[str, float] | None = None
 
 
 def load_gameweek(path: Path) -> Gameweek:
@@ -85,7 +113,26 @@ def gameweek_from_dict(raw: dict) -> Gameweek:
     deadline = raw.get("deadline_at")
     if deadline:
         deadline = datetime.fromisoformat(deadline.replace("Z", "+00:00"))
-    return Gameweek(number=int(raw["gameweek"]), fixtures=fixtures, deadline_at=deadline)
+    popularity = raw.get("popularity")
+    if popularity:
+        unknown = sorted(k for k in popularity if k.lower() not in seen)
+        if unknown:
+            # A club that isn't playing cannot hold any of the field's
+            # picks, so this is a typo, and a silent 0% share would
+            # quietly distort every equity number computed from it.
+            raise ValueError(
+                f"popularity names club(s) not playing this gameweek: "
+                f"{', '.join(unknown)}"
+            )
+        if any(float(v) < 0 for v in popularity.values()):
+            raise ValueError("popularity shares cannot be negative")
+        popularity = {k: float(v) for k, v in popularity.items()}
+    return Gameweek(
+        number=int(raw["gameweek"]),
+        fixtures=fixtures,
+        deadline_at=deadline,
+        popularity=popularity or None,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -108,34 +155,49 @@ class PickCandidate:
         return f"{self.team} {'v' if self.is_home else '@'} {self.opponent}"
 
 
-def _confidence(p_win: float, cfg: ModelConfig) -> str:
-    # Reuses Super 6's RESULT confidence banding (§20 CONF v1) — it is
-    # exactly the same quantity (a result probability) read for a
-    # different purpose.
-    if p_win >= cfg.conf_high_result_p:
+def _confidence(p_win: float, lms_cfg: LMSConfig) -> str:
+    # LMS-specific banding (config.LMSConfig), NOT Super 6's §20 CONF v1.
+    # Same quantity, but a threshold that means "worth two points off one
+    # of six fixtures" is not the threshold that means "worth staking the
+    # competition on" — see LMSConfig for why 0.58 would flatter the
+    # coin-flips that get entrants knocked out.
+    if p_win >= lms_cfg.conf_high_p_win:
         return "HIGH"
-    if p_win < cfg.conf_low_result_p:
+    if p_win < lms_cfg.conf_low_p_win:
         return "LOW"
     return "MEDIUM"
 
 
-def recommend_gameweek(
+@dataclass(frozen=True)
+class FixtureOutlook:
+    """One fixture's 1X2 probabilities, model fitted and market blended.
+
+    Split out from candidate ranking because the ranking is per entrant
+    (each has their own used-club list) while this is not: the dashboard
+    ranks the same gameweek for every entrant, and the horizon planner
+    ranks the same gameweek repeatedly. Computing the score matrix once
+    per fixture instead of once per fixture per entrant is the whole point
+    of the type.
+    """
+
+    fixture: GameweekFixture
+    p_home_win: float
+    p_draw: float
+    p_away_win: float
+
+
+def fixture_outlooks(
     params: DixonColesParams | ParamRouter,
     gw: Gameweek,
-    used_clubs: set[str] | frozenset[str] = frozenset(),
     cfg: ModelConfig = DEFAULT_MODEL,
-) -> list[PickCandidate]:
-    """Every club still eligible this gameweek, ranked by P(win) descending.
+) -> list[FixtureOutlook]:
+    """1X2 probabilities for every fixture in a gameweek.
 
     `params` is either one fitted parameter set or a (home, away) -> params
-    router, same convention as `recommend.recommend_round`. A club already
-    in `used_clubs` (matched case-insensitively) is excluded entirely — the
-    one-club-once rule — rather than merely flagged, so the returned list
-    is always a legal set of picks.
+    router, same convention as `recommend.recommend_round`.
     """
     router: ParamRouter = params if callable(params) else (lambda h, a: params)
-    used_lower = {c.lower() for c in used_clubs}
-    candidates: list[PickCandidate] = []
+    outlooks: list[FixtureOutlook] = []
     for f in gw.fixtures:
         p = router(f.home, f.away)
         lam_h, lam_a = p.lambdas(f.home, f.away, cfg)
@@ -143,17 +205,62 @@ def recommend_gameweek(
         if f.odds is not None and cfg.market_blend_weight is not None:
             mh, md, ma = market_mod.implied_result_probs(*f.odds)
             matrix = market_mod.blend_matrix(matrix, mh, md, ma, cfg.market_blend_weight)
-        p_h, p_d, p_a = matrix.p_home_win, matrix.p_draw, matrix.p_away_win
+        outlooks.append(
+            FixtureOutlook(f, matrix.p_home_win, matrix.p_draw, matrix.p_away_win)
+        )
+    return outlooks
+
+
+def rank_candidates(
+    outlooks: Sequence[FixtureOutlook],
+    used_clubs: Iterable[str] = (),
+    lms_cfg: LMSConfig = DEFAULT_LMS,
+) -> list[PickCandidate]:
+    """Eligible clubs from already-computed outlooks, best P(win) first.
+
+    A club in `used_clubs` (matched case-insensitively) is excluded
+    entirely — the one-club-once rule — rather than merely flagged, so the
+    returned list is always a legal set of picks.
+    """
+    used_lower = {c.lower() for c in used_clubs}
+    candidates: list[PickCandidate] = []
+    for o in outlooks:
+        f = o.fixture
         if f.home.lower() not in used_lower:
             candidates.append(
-                PickCandidate(f.home, f.away, True, p_h, p_d, p_a, _confidence(p_h, cfg))
+                PickCandidate(
+                    f.home, f.away, True, o.p_home_win, o.p_draw, o.p_away_win,
+                    _confidence(o.p_home_win, lms_cfg),
+                )
             )
         if f.away.lower() not in used_lower:
             candidates.append(
-                PickCandidate(f.away, f.home, False, p_a, p_d, p_h, _confidence(p_a, cfg))
+                PickCandidate(
+                    f.away, f.home, False, o.p_away_win, o.p_draw, o.p_home_win,
+                    _confidence(o.p_away_win, lms_cfg),
+                )
             )
-    candidates.sort(key=lambda c: c.p_win, reverse=True)
+    # Ties broken by club name so the ordering is stable across runs —
+    # a recommendation that reshuffles between identical inputs reads as
+    # the model changing its mind when it has not.
+    candidates.sort(key=lambda c: (-c.p_win, c.team))
     return candidates
+
+
+def recommend_gameweek(
+    params: DixonColesParams | ParamRouter,
+    gw: Gameweek,
+    used_clubs: set[str] | frozenset[str] = frozenset(),
+    cfg: ModelConfig = DEFAULT_MODEL,
+    lms_cfg: LMSConfig = DEFAULT_LMS,
+) -> list[PickCandidate]:
+    """Every club still eligible this gameweek, ranked by P(win) descending.
+
+    This is the menu, not the recommendation: the best club for *this*
+    gameweek is frequently the wrong club to spend, because it is also the
+    best club for a gameweek to come. See `plan_horizon`.
+    """
+    return rank_candidates(fixture_outlooks(params, gw, cfg), used_clubs, lms_cfg)
 
 
 def format_recommendations(
@@ -184,14 +291,412 @@ def format_recommendations(
     best = candidates[0]
     lines += [
         "",
-        f"Recommended pick: {best.team} ({best.fixture_label}) — "
+        f"Strongest club this gameweek: {best.team} ({best.fixture_label}) — "
         f"{best.p_win:.1%} to win",
+        "  This ranking ignores future gameweeks. Run `lms-plan` before "
+        "committing — the strongest club now is often one you need later.",
     ]
     if best.confidence != "HIGH":
         lines.append(
-            "  (no HIGH-confidence pick available this gameweek — check "
-            "the alternatives above before committing a strong future club)"
+            f"  Nothing above {DEFAULT_LMS.conf_high_p_win:.0%} is available "
+            "this gameweek, so every pick here is a real risk of elimination."
         )
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Horizon planning — the strategic core (see module docstring)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class PlannedPick:
+    gameweek: int
+    weeks_ahead: int
+    candidate: PickCandidate
+    # p_win after the future-uncertainty shrink; equal to candidate.p_win
+    # for the gameweek being picked now (weeks_ahead == 0).
+    planning_p_win: float
+
+
+@dataclass(frozen=True)
+class HorizonPlan:
+    """One club per gameweek, chosen jointly rather than one week at a time.
+
+    `survival_p` is the honest headline: the probability of surviving
+    every gameweek in the plan, using the model's unshrunk probabilities.
+    `greedy_*` is the same figure for the take-the-favourite-every-week
+    policy, kept so the difference between the two is visible rather than
+    asserted.
+    """
+
+    picks: tuple[PlannedPick, ...]
+    survival_p: float
+    greedy_picks: tuple[PlannedPick, ...]
+    greedy_survival_p: float
+    # Gameweeks in the requested horizon with no legal pick left (every
+    # club playing has already been used). Not padded over: an entrant who
+    # reaches one of these is eliminated by the fixture list, and that is
+    # worth seeing early.
+    unplannable: tuple[int, ...] = ()
+
+    @property
+    def this_week(self) -> PlannedPick | None:
+        return self.picks[0] if self.picks else None
+
+    @property
+    def survival_gain(self) -> float:
+        """Extra probability of surviving the whole horizon, versus greedy."""
+        return self.survival_p - self.greedy_survival_p
+
+
+def _shrunk(p: float, mean_p: float, weeks_ahead: int, lms_cfg: LMSConfig) -> float:
+    """Pull a future gameweek's win probability toward that gameweek's mean.
+
+    A fixture k weeks out is forecast from today's squad strengths; the
+    further out it is, the more time there is for that to stop being true.
+    Shrinking toward the gameweek's own mean rather than toward a fixed
+    constant keeps the correction free of any assumed base rate — it only
+    says "distant edges are smaller than they look", never how big a win
+    probability ought to be.
+    """
+    if weeks_ahead <= 0 or lms_cfg.future_shrink_per_week <= 0:
+        return p
+    keep = (1.0 - lms_cfg.future_shrink_per_week) ** weeks_ahead
+    return mean_p + (p - mean_p) * keep
+
+
+def _planning_table(
+    outlooks: Sequence[Sequence[FixtureOutlook]],
+    used_clubs: Iterable[str],
+    lms_cfg: LMSConfig,
+) -> tuple[list[list[PickCandidate]], list[dict[str, float]], list[str]]:
+    """Per-gameweek candidates, their planning probabilities, and club keys."""
+    per_week: list[list[PickCandidate]] = []
+    planning: list[dict[str, float]] = []
+    keys: dict[str, None] = {}
+    for k, week_outlooks in enumerate(outlooks):
+        candidates = rank_candidates(week_outlooks, used_clubs, lms_cfg)
+        per_week.append(candidates)
+        mean_p = (
+            sum(c.p_win for c in candidates) / len(candidates) if candidates else 0.0
+        )
+        planning.append(
+            {c.team.lower(): _shrunk(c.p_win, mean_p, k, lms_cfg) for c in candidates}
+        )
+        for c in candidates:
+            keys.setdefault(c.team.lower(), None)
+    return per_week, planning, list(keys)
+
+
+def plan_horizon(
+    params: DixonColesParams | ParamRouter,
+    gameweeks: Sequence[Gameweek],
+    used_clubs: Iterable[str] = (),
+    cfg: ModelConfig = DEFAULT_MODEL,
+    lms_cfg: LMSConfig = DEFAULT_LMS,
+    outlooks: Sequence[Sequence[FixtureOutlook]] | None = None,
+) -> HorizonPlan:
+    """Assign one distinct club to each gameweek, maximising joint survival.
+
+    Surviving every gameweek in the horizon has probability ∏ p_win over
+    the chosen picks, so maximising it is the same as minimising
+    ∑ −log p_win — a rectangular assignment problem (gameweeks × clubs)
+    with the one-club-once rule expressed exactly as the constraint that
+    no column is used twice. `scipy.optimize.linear_sum_assignment` solves
+    it optimally in polynomial time; there is no need to approximate, and
+    a greedy week-by-week choice is not merely an approximation but a
+    systematically worse policy, because it spends clubs with no regard
+    for what they would have been worth later.
+
+    `gameweeks` must be in chronological order, the first being the one to
+    pick now. Probabilities for later gameweeks are shrunk toward that
+    gameweek's mean before planning (see `_shrunk`); the reported
+    `survival_p` uses the unshrunk model probabilities, so the plan is
+    chosen cautiously but scored honestly.
+
+    `outlooks` accepts probabilities already computed for these gameweeks
+    (`fixture_outlooks` per gameweek, in the same order). Only the
+    used-club exclusion differs between entrants, so a caller planning for
+    several of them — the dashboard — computes the score matrices once
+    rather than once per entrant.
+    """
+    gameweeks = list(gameweeks)
+    if not gameweeks:
+        return HorizonPlan((), 0.0, (), 0.0, ())
+    if outlooks is None:
+        outlooks = [fixture_outlooks(params, gw, cfg) for gw in gameweeks]
+
+    per_week, planning, club_keys = _planning_table(outlooks, used_clubs, lms_cfg)
+    by_key = [{c.team.lower(): c for c in week} for week in per_week]
+
+    # −log p, with unavailable (club, gameweek) pairs infeasible. Clamped
+    # away from zero so a 0% club is merely a terrible assignment rather
+    # than an infinity that makes every plan containing it equally bad.
+    floor = 1e-9
+    cost = np.full((len(gameweeks), len(club_keys)), np.inf)
+    for row, week in enumerate(planning):
+        for col, key in enumerate(club_keys):
+            p = week.get(key)
+            if p is not None:
+                cost[row, col] = -math.log(max(p, floor))
+
+    rows, cols = _assign(cost)
+    picks = tuple(
+        PlannedPick(
+            gameweek=gameweeks[r].number,
+            weeks_ahead=r,
+            candidate=by_key[r][club_keys[c]],
+            planning_p_win=planning[r][club_keys[c]],
+        )
+        for r, c in sorted(zip(rows, cols))
+    )
+    planned_weeks = {p.weeks_ahead for p in picks}
+    unplannable = tuple(
+        gw.number for i, gw in enumerate(gameweeks) if i not in planned_weeks
+    )
+
+    greedy = _greedy_picks(gameweeks, per_week, planning)
+    return HorizonPlan(
+        picks=picks,
+        survival_p=_survival(picks),
+        greedy_picks=greedy,
+        # Greedy running out of legal clubs before the horizon the plan
+        # reaches is not a shorter horizon, it is elimination: it survives
+        # those gameweeks with probability zero. Scoring it over the weeks
+        # it managed to fill would reward it for spending clubs it should
+        # have saved, which is the exact failure being measured.
+        greedy_survival_p=_survival(greedy) if len(greedy) == len(picks) else 0.0,
+        unplannable=unplannable,
+    )
+
+
+def _assign(cost: np.ndarray) -> tuple[Sequence[int], Sequence[int]]:
+    """Optimal assignment over the longest fillable prefix of gameweeks.
+
+    Late in a competition there may be no legal club left for some future
+    gameweek. Two ways that shows up, both handled here rather than
+    surfacing as a broken plan: `linear_sum_assignment` raises when the
+    infeasible entries leave no complete assignment, and on a matrix with
+    fewer clubs than gameweeks it quietly matches only as many rows as
+    there are columns.
+
+    Shortening from the END is what makes the result meaningful: a
+    gameweek with no legal pick eliminates the entrant, so planning past
+    one is planning for a competition already lost. The prefix is
+    re-solved rather than trimmed, so the clubs go to the gameweeks that
+    are actually going to be played.
+    """
+    for depth in range(cost.shape[0], 0, -1):
+        try:
+            rows, cols = linear_sum_assignment(cost[:depth])
+        except ValueError:
+            continue
+        if len(rows) == depth:  # every gameweek in the prefix got a club
+            return rows, cols
+    return (), ()
+
+
+def _greedy_picks(
+    gameweeks: Sequence[Gameweek],
+    per_week: Sequence[Sequence[PickCandidate]],
+    planning: Sequence[dict[str, float]],
+) -> tuple[PlannedPick, ...]:
+    """The take-the-favourite-every-week policy, for comparison only.
+
+    Stops at the first gameweek where it has no legal club left, because
+    that is where the policy's entrant goes out — it does not get to skip
+    a week and carry on.
+    """
+    spent: set[str] = set()
+    picks: list[PlannedPick] = []
+    for k, week in enumerate(per_week):
+        best = next((c for c in week if c.team.lower() not in spent), None)
+        if best is None:
+            break
+        spent.add(best.team.lower())
+        picks.append(
+            PlannedPick(gameweeks[k].number, k, best, planning[k][best.team.lower()])
+        )
+    return tuple(picks)
+
+
+def _survival(picks: Sequence[PlannedPick]) -> float:
+    """P(surviving every gameweek in a plan), on unshrunk probabilities."""
+    if not picks:
+        return 0.0
+    p = 1.0
+    for pick in picks:
+        p *= pick.candidate.p_win
+    return p
+
+
+def format_plan(plan: HorizonPlan, used_clubs: Iterable[str] = ()) -> str:
+    used = sorted(used_clubs)
+    lines = ["LAST MAN STANDING — HORIZON PLAN", ""]
+    if used:
+        lines += [f"Already used ({len(used)}): {', '.join(used)}", ""]
+    if not plan.picks:
+        lines.append(
+            "No legal pick available — every club in the horizon's fixtures "
+            "has already been used."
+        )
+        return "\n".join(lines)
+    lines.append(
+        f"{'GW':>4s}  {'PICK':20s} {'FIXTURE':28s} {'P(WIN)':>7s} "
+        f"{'PLAN':>6s}  CONF"
+    )
+    for p in plan.picks:
+        c = p.candidate
+        lines.append(
+            f"{p.gameweek:>4d}  {c.team[:20]:20s} {c.fixture_label[:28]:28s} "
+            f"{c.p_win:>6.1%} {p.planning_p_win:>5.1%}  {c.confidence}"
+        )
+    now = plan.this_week
+    lines += [
+        "",
+        f"Pick now (GW{now.gameweek}): {now.candidate.team} — "
+        f"{now.candidate.p_win:.1%} to win",
+        f"Surviving all {len(plan.picks)} gameweek(s) on this plan: "
+        f"{plan.survival_p:.1%}",
+    ]
+    greedy_now = plan.greedy_picks[0] if plan.greedy_picks else None
+    ran_out = len(plan.greedy_picks) < len(plan.picks)
+    if greedy_now and greedy_now.candidate.team != now.candidate.team:
+        lines.append(
+            f"Taking the favourite ({greedy_now.candidate.team}, "
+            f"{greedy_now.candidate.p_win:.1%}) instead: "
+            f"{plan.greedy_survival_p:.1%} — "
+            f"{plan.survival_gain * 100:+.1f}pp for planning ahead. "
+            f"{now.candidate.team} is chosen because "
+            f"{greedy_now.candidate.team} is worth more in a later gameweek."
+        )
+        if ran_out:
+            lines.append(
+                f"  (0.0% because taking the favourite every week leaves no "
+                f"legal club for GW{plan.picks[len(plan.greedy_picks)].gameweek}.)"
+            )
+    elif plan.survival_gain > 0:
+        lines.append(
+            f"Same club as the week-by-week favourite, but the plan reorders "
+            f"later gameweeks: {plan.survival_gain * 100:+.1f}pp over the horizon."
+        )
+    else:
+        lines.append(
+            "The week-by-week favourite is also the planned pick — nothing "
+            "in the horizon is worth saving it for."
+        )
+    if plan.unplannable:
+        lines.append(
+            "No legal pick for GW"
+            + ", GW".join(str(n) for n in plan.unplannable)
+            + " — every club playing is already used. Surviving that far "
+            "means being eliminated by the fixture list."
+        )
+    lines.append(
+        "\nThe plan is advisory for future gameweeks and re-solved every "
+        "week; only the GW"
+        f"{now.gameweek} pick has to be committed now."
+    )
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Pot equity — surviving is not the same as winning
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class FieldEquity:
+    candidate: PickCandidate
+    field_share: float       # fraction of the field on this club
+    expected_survivors: float  # fraction of the field still alive if it wins
+    equity: float            # P(win) / expected survivors — relative pot share
+
+
+def field_equity(
+    candidates: Sequence[PickCandidate],
+    popularity: dict[str, float],
+) -> list[FieldEquity]:
+    """Rank picks by share of the pot rather than by survival alone.
+
+    In a pool, an entrant who survives alongside everyone else has gained
+    nothing; the pot is only won by outlasting the field. Picking club c
+    is therefore worth, to a first approximation,
+
+        equity(c) = P(c wins) / E[fraction of the field alive | c wins]
+
+    which is exactly the expected share of the pot if the competition
+    settled after this gameweek. Two consequences fall straight out and
+    are the reason this exists: a heavily-backed favourite is worth less
+    than its win probability suggests, and a rival who picked c's OPPONENT
+    is eliminated with certainty when c wins — that correlation is real,
+    and is the one case where the independence assumption below would be
+    plainly wrong, so it is handled exactly.
+
+    `popularity` maps club name to the fraction of the field picking it
+    (percentages are accepted and converted). Any mass not accounted for
+    is assumed to survive at the mean win probability of the candidate
+    list. Everything beyond the picked fixture is treated as independent,
+    which is what independent football matches are.
+
+    Deliberately NOT folded into `plan_horizon`: pot equity is a one-week
+    quantity about other entrants, joint survival is a multi-week quantity
+    about fixtures, and the exchange rate between them depends on pot size
+    and rollover rules this module has no knowledge of.
+    """
+    if not candidates:
+        return []
+    pop = {k.lower(): float(v) for k, v in popularity.items() if float(v) > 0}
+    if any(v > 1.0 for v in pop.values()):  # given as percentages
+        pop = {k: v / 100.0 for k, v in pop.items()}
+    p_by_club = {c.team.lower(): c.p_win for c in candidates}
+    mean_p = sum(p_by_club.values()) / len(p_by_club)
+    unaccounted = max(0.0, 1.0 - sum(pop.values()))
+
+    out: list[FieldEquity] = []
+    for c in candidates:
+        key, opp = c.team.lower(), c.opponent.lower()
+        # Given c wins: everyone on c survives, everyone on c's opponent
+        # is out, everyone else survives at their own club's P(win).
+        survivors = pop.get(key, 0.0) + unaccounted * mean_p
+        for other, share in pop.items():
+            if other in (key, opp):
+                continue
+            survivors += share * p_by_club.get(other, mean_p)
+        survivors = max(survivors, 1e-9)
+        out.append(FieldEquity(c, pop.get(key, 0.0), survivors, c.p_win / survivors))
+    out.sort(key=lambda e: (-e.equity, e.candidate.team))
+    return out
+
+
+def format_field_equity(equities: Sequence[FieldEquity], top_n: int = 10) -> str:
+    lines = [
+        "LAST MAN STANDING — POT EQUITY (field-adjusted)",
+        "",
+        f"{'TEAM':20s} {'FIXTURE':28s} {'P(WIN)':>7s} {'FIELD':>6s} "
+        f"{'EQUITY':>7s}",
+    ]
+    for e in equities[:top_n]:
+        c = e.candidate
+        lines.append(
+            f"{c.team[:20]:20s} {c.fixture_label[:28]:28s} {c.p_win:>6.1%} "
+            f"{e.field_share:>5.1%} {e.equity:>7.2f}"
+        )
+    if equities:
+        best = equities[0]
+        lines += [
+            "",
+            f"Highest pot equity: {best.candidate.team} "
+            f"({best.candidate.p_win:.1%} to win, {best.field_share:.0%} of "
+            f"the field on it).",
+            "Equity is relative (expected share of the pot ÷ the field's) and "
+            "means nothing except against the other rows here.",
+            "It also covers this gameweek only. A long shot can rank high "
+            "purely because beating a heavily-backed opponent would wipe out "
+            "the field — read it next to P(WIN), which is still the chance "
+            "you are in the competition next week at all.",
+        ]
     return "\n".join(lines)
 
 
@@ -208,17 +713,41 @@ class LMSState:
     history: list[dict] = field(default_factory=list)
 
 
+_STATE_FIELDS = ("entrant", "alive", "used_clubs", "history")
+
+
 def load_states(path: Path = DEFAULT_STATE_PATH) -> dict[str, LMSState]:
+    """Read every entrant's state.
+
+    Unrecognised keys are dropped rather than raising: this file is
+    hand-editable by design (it is the fallback when a result cannot be
+    fetched), and a whole competition's history should not become
+    unreadable because one stray key was typed into it, or because it was
+    written by a later version of this module.
+    """
     if not path.exists():
         return {}
     raw = json.loads(path.read_text())
-    return {k: LMSState(**v) for k, v in raw.items()}
+    return {
+        k: LMSState(**{f: v[f] for f in _STATE_FIELDS if f in v})
+        for k, v in raw.items()
+    }
 
 
 def save_states(states: dict[str, LMSState], path: Path = DEFAULT_STATE_PATH) -> None:
+    """Write every entrant's state atomically.
+
+    Via a temporary file and `os.replace` because this one file is the
+    entire competition — every entrant's used clubs and pick history, with
+    no other copy. A crash or a full disk partway through a plain write
+    would leave truncated JSON that `load_states` cannot parse, and there
+    would be nothing to restore it from.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = {k: vars(v) for k, v in states.items()}
-    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+    os.replace(tmp, path)
 
 
 def get_state(entrant: str, path: Path = DEFAULT_STATE_PATH) -> LMSState:
@@ -257,6 +786,19 @@ def record_pick(
 
 
 VALID_RESULTS = {"WIN", "DRAW", "LOSS"}
+ELIMINATING_RESULTS = {"DRAW", "LOSS"}
+
+
+def alive_from_history(history: Sequence[dict]) -> bool:
+    """Survival derived from the settled picks, not tracked alongside them.
+
+    `alive` has to be recomputed rather than latched off, because results
+    get corrected: a pick settled LOSS by a mistyped `lms-result`, or by a
+    feed reporting an abandoned match, is later fixed to WIN. Latching
+    would leave that entrant permanently eliminated with a full set of
+    wins on record and no way back short of editing the JSON by hand.
+    """
+    return not any(h.get("result") in ELIMINATING_RESULTS for h in history)
 
 
 def record_result(
@@ -279,8 +821,7 @@ def record_result(
         raise ValueError(f"no pick recorded for {state.entrant} in gameweek {gameweek}")
     entry["result"] = result
     entry["source"] = source
-    if result != "WIN":
-        state.alive = False
+    state.alive = alive_from_history(state.history)
     return state
 
 
@@ -290,6 +831,38 @@ def result_for_pick(is_home: bool, home_goals: int, away_goals: int) -> str:
         return "DRAW"
     home_won = home_goals > away_goals
     return "WIN" if (home_won == is_home) else "LOSS"
+
+
+def pending_gameweeks(states: dict[str, LMSState]) -> dict[int, Gameweek]:
+    """Every gameweek holding an unsettled pick, with the fixtures those
+    picks are on.
+
+    Built from the picks themselves rather than from a fixture list,
+    because settlement must not depend on which gameweek is *current*. A
+    pick on the Monday night game is still PENDING when the feed has
+    already moved the current matchday on to next week; keying settlement
+    off the current gameweek would leave it PENDING forever and show an
+    entrant as alive who may well be out.
+    """
+    out: dict[int, dict[tuple[str, str], GameweekFixture]] = {}
+    for state in states.values():
+        for h in state.history:
+            if h.get("result") != "PENDING":
+                continue
+            home, away = (
+                (h["team"], h["opponent"])
+                if h["is_home"]
+                else (h["opponent"], h["team"])
+            )
+            fixtures = out.setdefault(int(h["gameweek"]), {})
+            fixtures.setdefault(
+                (home.strip().lower(), away.strip().lower()),
+                GameweekFixture(home, away),
+            )
+    return {
+        number: Gameweek(number=number, fixtures=tuple(fixtures.values()))
+        for number, fixtures in sorted(out.items())
+    }
 
 
 def auto_settle(
@@ -306,7 +879,14 @@ def auto_settle(
     left PENDING rather than guessed at. Returns (entrant, gameweek,
     result) for everything this call settled.
     """
-    fixture_index = {(f.home, f.away): i for i, f in enumerate(gw.fixtures)}
+    # Keyed case- and whitespace-insensitively: a pick typed in by hand
+    # ("man city") has to settle against a fixture list fetched from a
+    # feed ("Man City"), and the failure mode of an exact match here is
+    # silent — the pick just stays PENDING with no indication why.
+    def key(home: str, away: str) -> tuple[str, str]:
+        return (home.strip().lower(), away.strip().lower())
+
+    fixture_index = {key(f.home, f.away): i for i, f in enumerate(gw.fixtures)}
     settled: list[tuple[str, int, str]] = []
     for name, state in states.items():
         entry = next(
@@ -319,9 +899,9 @@ def auto_settle(
         if entry is None:
             continue
         pair = (
-            (entry["team"], entry["opponent"])
+            key(entry["team"], entry["opponent"])
             if entry["is_home"]
-            else (entry["opponent"], entry["team"])
+            else key(entry["opponent"], entry["team"])
         )
         index = fixture_index.get(pair)
         if index is None:

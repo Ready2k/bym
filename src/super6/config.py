@@ -105,6 +105,50 @@ class MovementConfig:
 
 
 @dataclass(frozen=True)
+class LMSConfig:
+    """Last Man Standing tuning (`lms.py`).
+
+    PROVISIONAL and strategy-only. Nothing here touches the fitted model —
+    LMS reads exactly the same score matrix Super 6 does. These values
+    decide how that probability is *acted on* in a knockout format, which
+    is a different question from how a scoreline is forecast, and they
+    carry no validation claim yet: unlike ξ or the market blend weight,
+    there is no backtest behind them, because the competition has one
+    observation per entrant per season. Treat them as stated judgement to
+    be revised prospectively, not as calibrated numbers.
+    """
+
+    # Confidence banding for a survive-or-die pick. Deliberately NOT
+    # ModelConfig's conf_high_result_p (0.58): that threshold bands the
+    # probability of a Super 6 *selected outcome*, where being wrong costs
+    # points off one fixture out of six. Here being wrong ends the
+    # competition, and the strongest Premier League home favourites price
+    # around 0.75-0.85, so calling 0.58 "HIGH" would flatter exactly the
+    # coin-flip picks that eliminate entrants.
+    conf_high_p_win: float = 0.70
+    conf_low_p_win: float = 0.55
+
+    # Default lookahead depth for `lms.plan_horizon`, in gameweeks
+    # including the one being picked. 4 covers the reason lookahead exists
+    # at all (a club with two strong fixtures in the window can only be
+    # spent on one of them) while staying inside the range where the
+    # fixture list is stable — beyond about a month, postponements and
+    # rescheduling churn the plan faster than it can pay off.
+    horizon_gameweeks: int = 4
+
+    # Per-week shrink applied to a FUTURE gameweek's win probabilities
+    # before planning, toward that gameweek's own mean: a fixture k weeks
+    # out is forecast from today's squad strengths, and injuries, form and
+    # transfers have k weeks to invalidate that. Without it the planner
+    # treats a distant 0.80 as being as bankable as this week's 0.80 and
+    # hoards clubs for fixtures that may never look that good on the day.
+    # 0.05/week (a 4-week-out edge retains ~86% of its size) is a
+    # deliberately mild default — the direction is defensible, the
+    # magnitude is a guess.
+    future_shrink_per_week: float = 0.05
+
+
+@dataclass(frozen=True)
 class DataConfig:
     # Football-Data.co.uk (§18): free historical results + odds corpus.
     base_url: str = "https://www.football-data.co.uk/mmz4281"
@@ -133,6 +177,7 @@ class DataConfig:
 DEFAULT_MODEL = ModelConfig()
 DEFAULT_DATA = DataConfig()
 DEFAULT_MOVEMENT = MovementConfig()
+DEFAULT_LMS = LMSConfig()
 
 # PHASE1_MODEL_V1 — the frozen quantitative core (MANIFEST.md), pinned
 # explicitly rather than tracking DEFAULT_MODEL.

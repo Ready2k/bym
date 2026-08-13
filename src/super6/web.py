@@ -21,7 +21,7 @@ from urllib.parse import urlparse
 
 from . import db, events, prediction_history, strategy_history, submission
 from .api import service
-from .config import FROZEN_PHASE1_V1
+from .config import DEFAULT_LMS, FROZEN_PHASE1_V1
 from .data.football_data import load_matches
 from .engine import run_engine
 from .round import Round, load_round, round_from_dict, round_to_dict
@@ -1573,9 +1573,35 @@ def _lms_candidate_dict(candidate) -> dict:
     }
 
 
+def _lms_plan_dict(plan) -> dict:
+    """A horizon plan flattened for the UI, greedy comparison included.
+
+    The comparison is part of the payload rather than a footnote because
+    the plan's whole claim is that it beats taking the favourite; showing
+    the recommendation without the number behind it would make it an
+    assertion the user has to take on trust.
+    """
+    return {
+        "picks": [
+            {
+                "gameweek": p.gameweek,
+                "weeks_ahead": p.weeks_ahead,
+                "planning_p_win": p.planning_p_win,
+                **_lms_candidate_dict(p.candidate),
+            }
+            for p in plan.picks
+        ],
+        "survival_p": plan.survival_p,
+        "greedy_survival_p": plan.greedy_survival_p,
+        "survival_gain": plan.survival_gain,
+        "greedy_team": plan.greedy_picks[0].candidate.team if plan.greedy_picks else None,
+        "unplannable": list(plan.unplannable),
+    }
+
+
 def lms_payload(config: WebConfig, router=None, known_teams: set[str] | None = None) -> dict:
-    """Every entrant's survival state, plus this gameweek's clubs ranked by
-    P(win) for each entrant still alive (their own used-club list excluded).
+    """Every entrant's survival state, this gameweek's eligible clubs, and
+    the multi-gameweek plan behind the recommendation.
 
     The gameweek itself is fetched from football-data.org, not typed in —
     see `_lms_current_gameweek`. `router`/`known_teams` let a caller that
@@ -1583,6 +1609,12 @@ def lms_payload(config: WebConfig, router=None, known_teams: set[str] | None = N
     paying for a second fit — passed by `app_payload` below; a bare
     `lms_payload(config)` call (e.g. a future standalone endpoint) fits
     its own.
+
+    Every entrant's ranking and plan comes off ONE pass of score matrices
+    per gameweek (`fixture_outlooks`). The only thing that differs between
+    entrants is which clubs are excluded, so recomputing the model per
+    entrant would multiply the dashboard's cost by the size of the
+    competition for identical numbers.
     """
     from . import lms as lms_mod
 
@@ -1600,20 +1632,12 @@ def lms_payload(config: WebConfig, router=None, known_teams: set[str] | None = N
         if router is None:
             router = _fit_router(matches)
 
-    gw, fixtures_info = _lms_current_gameweek(config, known_teams)
+    gameweeks, fixtures_info, fetched = _lms_current_gameweek(config, known_teams)
 
-    if gw is None:
-        entrants = {
-            name: {"entrant": s.entrant, "alive": s.alive, "used_clubs": s.used_clubs, "history": s.history}
-            for name, s in states.items()
-        }
-        return {
-            "gameweek": None, "entrants": entrants, "recommendations": {},
-            "unknown_teams": [], "auto_settle": {"ran": False, "settled": [], "note": None},
-            "fixtures_source": fixtures_info,
-        }
-
-    auto_settle_info = _lms_auto_settle(gw, states, config)
+    # Settled before anything is read off `states`, and before the
+    # no-fixtures branch below: the last gameweek of a season still has
+    # picks to settle after the fixture list has run out.
+    auto_settle_info = _lms_auto_settle(states, config, fetched)
     if auto_settle_info["settled"]:
         lms_mod.save_states(states, config.lms_state_path)
 
@@ -1622,22 +1646,30 @@ def lms_payload(config: WebConfig, router=None, known_teams: set[str] | None = N
         for name, s in states.items()
     }
 
+    if not gameweeks:
+        return {
+            "gameweek": None, "entrants": entrants, "recommendations": {}, "plans": {},
+            "unknown_teams": [], "auto_settle": auto_settle_info,
+            "fixtures_source": fixtures_info,
+        }
+
+    gw = gameweeks[0]
     unknown = sorted(
         {team for f in gw.fixtures for team in (f.home, f.away) if team not in known_teams}
     )
 
-    recommendations = {
-        "__all__": [
-            _lms_candidate_dict(c) for c in lms_mod.recommend_gameweek(router, gw, set())
-        ]
-    }
+    outlooks = [lms_mod.fixture_outlooks(router, week) for week in gameweeks]
+
+    def for_used(used: set[str]) -> tuple[list[dict], dict]:
+        candidates = lms_mod.rank_candidates(outlooks[0], used)
+        plan = lms_mod.plan_horizon(router, gameweeks, used, outlooks=outlooks)
+        return [_lms_candidate_dict(c) for c in candidates], _lms_plan_dict(plan)
+
+    recommendations, plans = {}, {}
+    recommendations["__all__"], plans["__all__"] = for_used(set())
     for name, state in states.items():
-        if not state.alive:
-            continue
-        recommendations[name] = [
-            _lms_candidate_dict(c)
-            for c in lms_mod.recommend_gameweek(router, gw, set(state.used_clubs))
-        ]
+        if state.alive:
+            recommendations[name], plans[name] = for_used(set(state.used_clubs))
 
     return {
         "gameweek": {
@@ -1646,9 +1678,11 @@ def lms_payload(config: WebConfig, router=None, known_teams: set[str] | None = N
                 {"home": f.home, "away": f.away, "odds": list(f.odds) if f.odds else None}
                 for f in gw.fixtures
             ],
+            "horizon": [week.number for week in gameweeks],
         },
         "entrants": entrants,
         "recommendations": recommendations,
+        "plans": plans,
         "unknown_teams": unknown,
         "auto_settle": auto_settle_info,
         "fixtures_source": fixtures_info,
@@ -1656,7 +1690,7 @@ def lms_payload(config: WebConfig, router=None, known_teams: set[str] | None = N
 
 
 def _lms_current_gameweek(config: WebConfig, known_teams: set[str]):
-    """The gameweek LMS should show right now, fetched from
+    """The gameweeks LMS should plan over right now, fetched from
     football-data.org's Premier League fixture list — nobody has to type
     fixtures in by hand. Falls back to whatever is cached at
     `lms_gameweek_path` (a previous successful fetch, or a manual entry
@@ -1664,7 +1698,15 @@ def _lms_current_gameweek(config: WebConfig, known_teams: set[str]):
     cache is overwritten on the next successful fetch, since the live list
     is the source of truth once a key is available.
 
-    Returns (Gameweek | None, {"mode": "auto" | "manual" | "none", "note": str | None}).
+    Returns (gameweeks, {"mode": "auto" | "manual" | "none", "note": ...},
+    matches). The first gameweek is the one being picked; the rest are the
+    lookahead, and come out of the same single request, so planning ahead
+    costs no extra quota. `matches` is that fetched list, handed to
+    `_lms_auto_settle` so one page load makes one request rather than two
+    against a ten-per-minute free tier. It is None when nothing was
+    fetched (no key, or the request failed), and the fallback cache can
+    only ever supply one gameweek — a manually entered fixture list is
+    this week's, so the plan degenerates to the weekly favourite.
     """
     from . import lms as lms_mod
     from .secrets import get_key
@@ -1678,6 +1720,7 @@ def _lms_current_gameweek(config: WebConfig, known_teams: set[str]):
             cached = lms_mod.load_gameweek(config.lms_gameweek_path)
         except (ValueError, KeyError, OSError):
             cached = None
+    fallback = [cached] if cached else []
 
     api_key = get_key("FOOTBALL_DATA_ORG_KEY")
     if not api_key:
@@ -1687,32 +1730,37 @@ def _lms_current_gameweek(config: WebConfig, known_teams: set[str]):
             "No FOOTBALL_DATA_ORG_KEY configured — add fixtures manually below, "
             "or add a key to fetch them automatically."
         )
-        return cached, {"mode": "manual" if cached else "none", "note": note}
+        return fallback, {"mode": "manual" if cached else "none", "note": note}, None
 
+    matches = None
     try:
         matches = fdo.fetch_matches("E0", _lms_fd_season(), api_key)
-        matchday = fdo.current_matchday(matches)
-        if matchday is None:
+        matchdays = fdo.upcoming_matchdays(matches, DEFAULT_LMS.horizon_gameweeks)
+        if not matchdays:
             note = "football-data.org has no upcoming Premier League fixtures right now."
-            return cached, {"mode": "manual" if cached else "none", "note": note}
-        day_matches = fdo.fixtures_for_matchday(matches, matchday)
-        fixtures = tuple(
-            lms_mod.GameweekFixture(
-                home=resolve_team_name(m.home_team, known_teams) or m.home_team,
-                away=resolve_team_name(m.away_team, known_teams) or m.away_team,
+            return fallback, {"mode": "manual" if cached else "none", "note": note}, matches
+        gameweeks = [
+            lms_mod.Gameweek(
+                number=matchday,
+                fixtures=tuple(
+                    lms_mod.GameweekFixture(
+                        home=resolve_team_name(m.home_team, known_teams) or m.home_team,
+                        away=resolve_team_name(m.away_team, known_teams) or m.away_team,
+                    )
+                    for m in fdo.fixtures_for_matchday(matches, matchday)
+                ),
             )
-            for m in day_matches
-        )
-        gw = lms_mod.Gameweek(number=matchday, fixtures=fixtures)
-        _write_lms_gameweek(gw, config.lms_gameweek_path)
-        return gw, {"mode": "auto", "note": None}
+            for matchday in matchdays
+        ]
+        _write_lms_gameweek(gameweeks[0], config.lms_gameweek_path)
+        return gameweeks, {"mode": "auto", "note": None}, matches
     except SourceNotApprovedError as exc:
-        return cached, {"mode": "manual" if cached else "none", "note": str(exc)}
+        return fallback, {"mode": "manual" if cached else "none", "note": str(exc)}, matches
     except Exception as exc:
         note = f"Fixture fetch failed: {exc}"
         if cached:
             note += " — using the last saved fixtures."
-        return cached, {"mode": "manual" if cached else "none", "note": note}
+        return fallback, {"mode": "manual" if cached else "none", "note": note}, matches
 
 
 def _write_lms_gameweek(gw, path: Path) -> None:
@@ -1736,10 +1784,20 @@ def _write_lms_gameweek(gw, path: Path) -> None:
     )
 
 
-def _lms_auto_settle(gw, states: dict, config: WebConfig) -> dict:
-    """Try to settle this gameweek's PENDING picks from a real results
-    feed before anyone sees them, so no entrant is ever the one deciding
-    whether their own pick survived.
+def _lms_auto_settle(states: dict, config: WebConfig, prefetched=None) -> dict:
+    """Try to settle every PENDING pick from a real results feed before
+    anyone sees them, so no entrant is ever the one deciding whether their
+    own pick survived.
+
+    Every pending pick, not just the current gameweek's: once a gameweek's
+    last fixture has kicked off, the feed's current matchday moves on, and
+    a pick tied to the gameweek on screen would never settle at all.
+
+    `prefetched` is the Premier League match list `_lms_current_gameweek`
+    already fetched this page load. Reused rather than re-requested: it is
+    the same season's fixtures and results, from the same endpoint, and
+    the free tier allows ten requests a minute across everything the
+    system does.
 
     Degrades like every other external call in this file: no key, no
     coverage, or a request failure all just mean "nothing settled this
@@ -1760,14 +1818,18 @@ def _lms_auto_settle(gw, states: dict, config: WebConfig) -> dict:
                      "must be settled by hand below until one is added.",
         }
     try:
-        fixtures = [(f.home, f.away) for f in gw.fixtures]
-        matches = []
+        matches = list(prefetched) if prefetched else []
         for division in config.divisions:
             if division not in fdo.COMPETITION_CODES:
                 continue
+            if division == "E0" and prefetched:
+                continue
             matches.extend(fdo.fetch_matches(division, _lms_fd_season(), api_key))
-        results = fdo.results_for_round(matches, fixtures, resolve_team_name)
-        settled = lms_mod.auto_settle(states, gw, results)
+        settled = []
+        for pending in lms_mod.pending_gameweeks(states).values():
+            fixtures = [(f.home, f.away) for f in pending.fixtures]
+            results = fdo.results_for_round(matches, fixtures, resolve_team_name)
+            settled.extend(lms_mod.auto_settle(states, pending, results))
         return {"ran": True, "settled": settled, "note": None}
     except SourceNotApprovedError as exc:
         return {"ran": False, "settled": [], "note": str(exc)}

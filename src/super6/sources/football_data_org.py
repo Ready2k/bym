@@ -171,19 +171,45 @@ def current_matchday(matches: list[Match]) -> int | None:
     coming up. None once nothing SCHEDULED remains in what was fetched
     (e.g. past the end of the season).
     """
-    upcoming = [
-        m for m in matches
-        if m.matchday is not None and m.status == FixtureStatus.SCHEDULED.value
-    ]
-    if not upcoming:
-        return None
-    return min(upcoming, key=lambda m: m.kickoff_at).matchday
+    days = upcoming_matchdays(matches, 1)
+    return days[0] if days else None
 
 
-def fixtures_for_matchday(matches: list[Match], matchday: int) -> list[Match]:
-    """Every fixture in one matchday, kickoff order."""
+def upcoming_matchdays(matches: list[Match], count: int) -> list[int]:
+    """The next `count` matchdays that still have a fixture to be played.
+
+    Ordered by earliest remaining kickoff, which is not the same as
+    ordered by matchday number: a rearranged fixture can leave matchday 12
+    being played after matchday 13. Last Man Standing planning needs them
+    in the order they will actually be *picked*, so kickoff order is the
+    only ordering that means anything here.
+    """
+    upcoming: dict[int, str] = {}
+    for m in matches:
+        if m.matchday is None or m.status != FixtureStatus.SCHEDULED.value:
+            continue
+        first = upcoming.get(m.matchday)
+        if first is None or m.kickoff_at < first:
+            upcoming[m.matchday] = m.kickoff_at
+    return [day for day, _ in sorted(upcoming.items(), key=lambda kv: kv[1])][:count]
+
+
+def fixtures_for_matchday(
+    matches: list[Match], matchday: int, include_void: bool = False
+) -> list[Match]:
+    """Every fixture in one matchday, kickoff order.
+
+    Void fixtures (postponed, cancelled, abandoned — §2.2) are excluded by
+    default: a postponed match is not a fixture being played that
+    matchday, and offering its clubs as Last Man Standing picks would put
+    an entrant's survival on a game that will not be played.
+    """
     return sorted(
-        (m for m in matches if m.matchday == matchday), key=lambda m: m.kickoff_at
+        (
+            m for m in matches
+            if m.matchday == matchday and (include_void or not m.is_void)
+        ),
+        key=lambda m: m.kickoff_at,
     )
 
 

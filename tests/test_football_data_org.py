@@ -169,4 +169,51 @@ def test_current_matchday_none_when_nothing_scheduled():
 def test_fixtures_for_matchday_filters_and_orders_by_kickoff():
     matches = fdo.parse_matches(PAYLOAD)
     day = fdo.fixtures_for_matchday(matches, 1)
+    # 537001 is POSTPONED: it is not a fixture being played this matchday,
+    # and its clubs must not be offered as Last Man Standing picks.
+    assert [m.match_id for m in day] == ["537000", "537002"]
+
+
+def test_fixtures_for_matchday_can_include_void_fixtures():
+    matches = fdo.parse_matches(PAYLOAD)
+    day = fdo.fixtures_for_matchday(matches, 1, include_void=True)
     assert [m.match_id for m in day] == ["537000", "537001", "537002"]
+
+
+def test_upcoming_matchdays_are_ordered_by_kickoff_not_by_number():
+    """A rearranged fixture can leave a lower matchday being played later;
+    planning has to see them in the order they will be picked."""
+    payload = {"matches": [
+        {
+            "id": 1, "status": "SCHEDULED", "matchday": 13,
+            "utcDate": "2026-11-07T15:00:00Z",
+            "homeTeam": {"name": "A"}, "awayTeam": {"name": "B"},
+            "score": {"fullTime": {"home": None, "away": None}},
+        },
+        {
+            "id": 2, "status": "SCHEDULED", "matchday": 12,
+            "utcDate": "2026-11-25T19:45:00Z",
+            "homeTeam": {"name": "C"}, "awayTeam": {"name": "D"},
+            "score": {"fullTime": {"home": None, "away": None}},
+        },
+        {
+            "id": 3, "status": "SCHEDULED", "matchday": 14,
+            "utcDate": "2026-11-14T15:00:00Z",
+            "homeTeam": {"name": "E"}, "awayTeam": {"name": "F"},
+            "score": {"fullTime": {"home": None, "away": None}},
+        },
+    ]}
+    matches = fdo.parse_matches(payload)
+    assert fdo.upcoming_matchdays(matches, 3) == [13, 14, 12]
+    assert fdo.upcoming_matchdays(matches, 2) == [13, 14]
+    assert fdo.current_matchday(matches) == 13
+
+
+def test_upcoming_matchdays_empty_when_nothing_scheduled():
+    payload = {"matches": [{
+        "id": 1, "status": "FINISHED", "matchday": 1,
+        "utcDate": "2026-08-21T19:00:00Z",
+        "homeTeam": {"name": "A"}, "awayTeam": {"name": "B"},
+        "score": {"fullTime": {"home": 1, "away": 0}},
+    }]}
+    assert fdo.upcoming_matchdays(fdo.parse_matches(payload), 4) == []

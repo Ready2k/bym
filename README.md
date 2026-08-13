@@ -168,14 +168,57 @@ survive only if it wins, never reuse a club. Not part of the §1-53 spec —
 its own module, its own state file (`data/lms_state.json`), no exact
 scores or EV involved.
 
+The format's trap is that a club is a one-use resource for the whole
+season, so the club most likely to win *this* gameweek is regularly one a
+later gameweek needs more. Picking week by week spends the best clubs
+first and leaves coin-flips for the weeks that have no alternative, which
+is why `lms-plan` — not `lms-recommend` — is the command to start from.
+
+- `super6 lms-plan --seasons 2019 2025 --data data --entrant <name>`
+  — assigns one club to each of the next `--horizon` gameweeks (4 by
+  default) so that the probability of surviving **all** of them is as high
+  as it can be, and prints what taking the weekly favourite would have
+  cost instead. Solved exactly, not approximated: maximising ∏ P(win) is
+  minimising ∑ −log P(win), a rectangular assignment problem where "one
+  club once" is the constraint that no club is used twice
+  (`scipy.optimize.linear_sum_assignment`). Only the first pick is
+  committed — the rest are re-planned every week as fixtures and form
+  move. Future gameweeks are shrunk toward their own mean before planning
+  (`LMSConfig.future_shrink_per_week`), because a fixture a month out is
+  forecast from today's squads; the survival probabilities reported are
+  the unshrunk ones, so the plan is chosen cautiously and scored honestly.
+  One request covers the whole horizon, so planning ahead costs no extra
+  API quota.
 - `super6 lms-recommend --seasons 2019 2025 --data data --entrant <name>`
   — every club still eligible this gameweek, ranked by P(win) (from the
   same score matrix Super 6 uses, just read as home/draw/away instead of
-  an exact score). Fetches the current Premier League gameweek from
+  an exact score). This is the menu, not the recommendation — see
+  `lms-plan`. Fetches the current Premier League gameweek from
   football-data.org automatically (needs `FOOTBALL_DATA_ORG_KEY`) — no
   fixture list to type in. `--entrant` pulls the used-club list from that
   entrant's saved state so used clubs are excluded automatically; `--used`
   excludes extra clubs ad hoc without a state file.
+
+  Confidence bands here are LMS's own (`LMSConfig`, HIGH ≥ 70%), not Super
+  6's §20 result bands (HIGH ≥ 58%): the same probability means something
+  different when being wrong ends the competition rather than costing
+  points off one fixture of six. Both are provisional judgement rather
+  than backtested — a survivor competition gives one observation per
+  entrant per season, so there is nothing yet to calibrate against.
+
+  Where the competition publishes what everyone else picked, adding a
+  `popularity` map to the gameweek file also prints a **pot equity**
+  table: surviving alongside the whole field wins nothing, so a
+  heavily-backed favourite is worth less than its win probability
+  suggests, and beating a club the field has piled onto is worth more.
+  ```json
+  {"gameweek": 1, "fixtures": [...], "popularity": {"Man City": 55, "Liverpool": 20}}
+  ```
+  Shares may be percentages or fractions. It is a one-gameweek measure of
+  pot share, deliberately kept separate from the horizon plan rather than
+  fused into a single score — the exchange rate between "survive longer"
+  and "survive alone" depends on pot size and rollover rules the model
+  knows nothing about.
 - `super6 lms-fixtures --seasons 2019 2025 --data data [--gameweek <file>]`
   — fetches and saves the current gameweek on its own, e.g. for `lms-settle`
   to read later. Without a key (or as a manual override — a late
@@ -192,17 +235,22 @@ scores or EV involved.
   ```
   — however many fixtures the Premier League actually plays that week, not
   Super 6's fixed six; `odds` is optional per fixture, same [H, D, A]
-  convention as a Super 6 round. Pass it to `lms-recommend`/`lms-settle`
-  with `--gameweek <file>` to use it instead of the live fetch.
+  convention as a Super 6 round. Pass it to `lms-recommend` with
+  `--gameweek <file>` to use it instead of the live fetch. `lms-plan`
+  accepts it too, but only as a fallback when the fetch fails: one
+  gameweek is not a horizon, so the "plan" degenerates to the weekly
+  favourite and says so.
 - `super6 lms-pick --entrant <name> --gameweek <n> --team <club> --opponent <club> [--home]`
   — records a pick. Refuses a club already used or a second pick logged for
   the same gameweek.
-- `super6 lms-settle --gameweek <file> [--fd-season 2026]` — fetches full-time
-  results from football-data.org (needs `FOOTBALL_DATA_ORG_KEY`, same source
-  `super6 score` uses) and settles every PENDING pick that's finished. This
-  is the trusted path: in a multi-entrant competition, an entrant reporting
-  their own elimination is a conflict of interest an automatic feed doesn't
-  have.
+- `super6 lms-settle [--fd-season 2026]` — fetches full-time results from
+  football-data.org (needs `FOOTBALL_DATA_ORG_KEY`, same source `super6
+  score` uses) and settles every PENDING pick that's finished. This is the
+  trusted path: in a multi-entrant competition, an entrant reporting their
+  own elimination is a conflict of interest an automatic feed doesn't
+  have. It works off the saved picks rather than a gameweek file, so a
+  pick still settles after the competition has moved on to a later
+  gameweek — which is the normal case for anything played on a Monday.
 - `super6 lms-result --entrant <name> --gameweek <n> --result WIN|DRAW|LOSS`
   — settles a pick **by hand**. Fallback only, for a fixture `lms-settle`
   can't resolve (no key configured, or outside football-data.org's
@@ -214,9 +262,10 @@ scores or EV involved.
   everyone recorded.
 
 It also has its own tab in the local dashboard (`super6 serve`, see below) —
-the current gameweek's fixtures are fetched and ranked automatically on
-every page load, type an entrant name, see clubs ranked by P(win) with a
-**Pick** button. Every load also tries `lms-settle`'s result fetch; a
+the next few gameweeks' fixtures are fetched and planned automatically on
+every page load: type an entrant name, see the recommended pick with the
+plan behind it and what the weekly favourite would have cost, then the
+full list of eligible clubs with a **Pick** button. Every load also tries `lms-settle`'s result fetch; a
 pending pick only ever shows manual WIN/DRAW/LOSS buttons when no
 `FOOTBALL_DATA_ORG_KEY` is configured, and using them is logged as
 self-reported. Without a key the fixtures editor becomes the primary way

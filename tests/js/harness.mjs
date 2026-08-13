@@ -28,7 +28,29 @@ const EXPOSED = [
   "heatmapGrid", "evBreakdown", "sourceFreshness", "surpriseNote",
   "strategyPanel", "submissionRecord", "leagueView", "homeView",
   "teamBadge", "activityItem", "emptyState", "markScrollableRegions",
+  "lmsPlanCard", "lmsRecommendationRows",
 ];
+
+/** A Last Man Standing horizon plan as `lms_payload` shapes it. */
+export function lmsPlan(overrides = {}) {
+  return {
+    picks: [
+      {
+        gameweek: 3, weeks_ahead: 0, team: "Brentford", opponent: "Tottenham",
+        is_home: true, p_win: 0.51, p_draw: 0.25, p_loss: 0.24,
+        planning_p_win: 0.51, confidence: "LOW",
+      },
+      {
+        gameweek: 4, weeks_ahead: 1, team: "Man City", opponent: "Bournemouth",
+        is_home: true, p_win: 0.78, p_draw: 0.14, p_loss: 0.08,
+        planning_p_win: 0.75, confidence: "HIGH",
+      },
+    ],
+    survival_p: 0.398, greedy_survival_p: 0.311, survival_gain: 0.087,
+    greedy_team: "Man City", unplannable: [],
+    ...overrides,
+  };
+}
 
 function elementStub() {
   const node = {

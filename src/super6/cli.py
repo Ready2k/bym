@@ -12,7 +12,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from .config import DEFAULT_DATA, DEFAULT_MODEL
+from .config import DEFAULT_DATA, DEFAULT_LMS, DEFAULT_MODEL
 
 
 def _season_range(args) -> list[int]:
@@ -1210,6 +1210,85 @@ def cmd_lms_recommend(args) -> int:
 
     candidates = lms.recommend_gameweek(router, gw, used, FROZEN_PHASE1_V1)
     print(lms.format_recommendations(gw, candidates, used))
+    if gw.popularity:
+        print()
+        print(lms.format_field_equity(lms.field_equity(candidates, gw.popularity)))
+    return 0
+
+
+def cmd_lms_plan(args) -> int:
+    """Last Man Standing: plan the next several gameweeks at once.
+
+    The command that actually answers the format's question. A club can be
+    used once all season, so the pick that maximises survival *this*
+    gameweek routinely spends a club that a later gameweek needs more.
+    This assigns one club per gameweek over the horizon to maximise the
+    probability of surviving all of them, and prints what the
+    take-the-favourite policy would have cost."""
+    from .config import FROZEN_PHASE1_V1
+    from .data.football_data import load_matches
+    from . import lms
+
+    matches = load_matches(Path(args.data), _season_range(args), tuple(args.divisions))
+    known = set(matches["home_team"]) | set(matches["away_team"])
+
+    try:
+        gameweeks = _fetch_lms_horizon(known, args.fd_season, args.horizon)
+    except RuntimeError as exc:
+        # Without future fixtures there is no horizon to plan over. Fall
+        # back to the one gameweek to hand and say plainly that the plan
+        # has degenerated to the greedy pick, rather than presenting a
+        # one-week answer as if it were a plan.
+        if not args.gameweek:
+            print(str(exc), file=sys.stderr)
+            return 1
+        print(f"{exc}\nPlanning over the single saved gameweek only — with no "
+              "future fixtures this is just the week-by-week favourite.\n",
+              file=sys.stderr)
+        gameweeks = [lms.load_gameweek(Path(args.gameweek))]
+    else:
+        print(
+            f"Planning GW{gameweeks[0].number}"
+            + (f"-{gameweeks[-1].number}" if len(gameweeks) > 1 else "")
+            + f" — {len(gameweeks)} gameweek(s) fetched from football-data.org\n"
+        )
+
+    unknown = sorted(
+        {
+            team
+            for gw in gameweeks
+            for f in gw.fixtures
+            for team in (f.home, f.away)
+            if team not in known
+        }
+    )
+    for team in unknown:
+        print(
+            f"WARNING: '{team}' not in training data — it will use "
+            "league-average strength.",
+            file=sys.stderr,
+        )
+
+    router = _fit_router(matches, args.xi, FROZEN_PHASE1_V1)
+
+    used: set[str] = set(args.used or [])
+    if args.entrant:
+        state = lms.get_state(args.entrant, Path(args.state))
+        if not state.alive:
+            print(f"{args.entrant} is already eliminated (see `lms-status`).")
+            return 0
+        used |= set(state.used_clubs)
+
+    plan = lms.plan_horizon(router, gameweeks, used, FROZEN_PHASE1_V1)
+    print(lms.format_plan(plan, used))
+
+    popularity = gameweeks[0].popularity
+    if popularity:
+        candidates = lms.rank_candidates(
+            lms.fixture_outlooks(router, gameweeks[0], FROZEN_PHASE1_V1), used
+        )
+        print()
+        print(lms.format_field_equity(lms.field_equity(candidates, popularity)))
     return 0
 
 
@@ -1257,14 +1336,24 @@ def cmd_lms_result(args) -> int:
 def cmd_lms_settle(args) -> int:
     """Fetch full-time results from football-data.org and settle every
     PENDING pick whose fixture has finished — the trusted path, since it
-    does not depend on an entrant reporting their own survival."""
+    does not depend on an entrant reporting their own survival.
+
+    Works off the saved picks, not off a gameweek file: which fixture a
+    pick is on is recorded with the pick, so a result settles whether it
+    is this gameweek's or one the competition has already moved past."""
     from . import lms
     from .secrets import get_key
     from .sources import football_data_org as fdo
     from .sources.registry import SourceNotApprovedError
     from .sources.teams import resolve as resolve_team_name
 
-    gw = lms.load_gameweek(Path(args.gameweek))
+    path = Path(args.state)
+    states = lms.load_states(path)
+    pending = lms.pending_gameweeks(states)
+    if not pending:
+        print("  Nothing to settle — no pending picks recorded.")
+        return 0
+
     api_key = get_key("FOOTBALL_DATA_ORG_KEY")
     if not api_key:
         print(
@@ -1274,7 +1363,6 @@ def cmd_lms_settle(args) -> int:
         )
         return 1
 
-    fixtures = [(f.home, f.away) for f in gw.fixtures]
     matches = []
     try:
         for division in args.divisions:
@@ -1288,10 +1376,11 @@ def cmd_lms_settle(args) -> int:
         print(f"Result fetch failed: {exc}", file=sys.stderr)
         return 1
 
-    results = fdo.results_for_round(matches, fixtures, resolve_team_name)
-    path = Path(args.state)
-    states = lms.load_states(path)
-    settled = lms.auto_settle(states, gw, results)
+    settled = []
+    for gw in pending.values():
+        fixtures = [(f.home, f.away) for f in gw.fixtures]
+        results = fdo.results_for_round(matches, fixtures, resolve_team_name)
+        settled.extend(lms.auto_settle(states, gw, results))
     if settled:
         lms.save_states(states, path)
         for name, gameweek, result in settled:
@@ -1301,14 +1390,19 @@ def cmd_lms_settle(args) -> int:
     return 0
 
 
-def _fetch_lms_gameweek(known_teams: set[str], fd_season: int):
-    """Fetch the current Premier League matchday from football-data.org
-    and resolve it onto the training corpus's team names.
+def _fetch_lms_horizon(known_teams: set[str], fd_season: int, horizon: int = 1):
+    """Fetch the next `horizon` Premier League matchdays from
+    football-data.org and resolve them onto the training corpus's names.
 
-    Shared by `lms-fixtures` and `lms-recommend --auto` so both build the
-    same Gameweek the same way. Raises RuntimeError with a message meant
-    to be printed as-is on any failure — no key, no upcoming fixtures, or
-    the request itself failing.
+    One request covers the whole season, so a four-gameweek plan costs
+    exactly what a one-gameweek recommendation costs — worth stating,
+    because the free tier allows ten requests a minute and this is the
+    call the LMS commands and the dashboard all make.
+
+    Returned in kickoff order (see `fdo.upcoming_matchdays`), which is the
+    order the picks have to be committed in. Raises RuntimeError with a
+    message meant to be printed as-is on any failure — no key, no upcoming
+    fixtures, or the request itself failing.
     """
     from . import lms
     from .secrets import get_key
@@ -1329,20 +1423,29 @@ def _fetch_lms_gameweek(known_teams: set[str], fd_season: int):
     except Exception as exc:
         raise RuntimeError(f"Fixture fetch failed: {exc}") from exc
 
-    matchday = fdo.current_matchday(matches)
-    if matchday is None:
+    matchdays = fdo.upcoming_matchdays(matches, horizon)
+    if not matchdays:
         raise RuntimeError(
             "football-data.org has no upcoming Premier League fixtures right now."
         )
-    day_matches = fdo.fixtures_for_matchday(matches, matchday)
-    fixtures = tuple(
-        lms.GameweekFixture(
-            home=resolve_team_name(m.home_team, known_teams) or m.home_team,
-            away=resolve_team_name(m.away_team, known_teams) or m.away_team,
+    return [
+        lms.Gameweek(
+            number=matchday,
+            fixtures=tuple(
+                lms.GameweekFixture(
+                    home=resolve_team_name(m.home_team, known_teams) or m.home_team,
+                    away=resolve_team_name(m.away_team, known_teams) or m.away_team,
+                )
+                for m in fdo.fixtures_for_matchday(matches, matchday)
+            ),
         )
-        for m in day_matches
-    )
-    return lms.Gameweek(number=matchday, fixtures=fixtures)
+        for matchday in matchdays
+    ]
+
+
+def _fetch_lms_gameweek(known_teams: set[str], fd_season: int):
+    """The current matchday alone — `lms-fixtures` and `lms-recommend`."""
+    return _fetch_lms_horizon(known_teams, fd_season, 1)[0]
 
 
 def cmd_lms_fixtures(args) -> int:
@@ -1669,6 +1772,36 @@ def main(argv: list[str] | None = None) -> int:
     p.set_defaults(func=cmd_lms_recommend)
 
     p = sub.add_parser(
+        "lms-plan",
+        help="Last Man Standing: plan several gameweeks at once (start here)",
+    )
+    common(p)
+    p.add_argument(
+        "--horizon", type=int, default=DEFAULT_LMS.horizon_gameweeks,
+        help="gameweeks to plan over, including this one (default "
+             f"{DEFAULT_LMS.horizon_gameweeks})",
+    )
+    p.add_argument(
+        "--gameweek",
+        help="fallback gameweek JSON file, used only if fixtures cannot be "
+             "fetched — a one-week 'plan' is just the favourite",
+    )
+    p.add_argument(
+        "--fd-season", type=int, default=2026,
+        help="football-data.org season start-year (e.g. 2026 for 2026/27)",
+    )
+    p.add_argument("--xi", type=float, default=DEFAULT_MODEL.xi)
+    p.add_argument(
+        "--entrant", help="pull already-used clubs from this entrant's saved state"
+    )
+    p.add_argument(
+        "--used", nargs="+", default=[],
+        help="extra club(s) to exclude ad hoc, on top of --entrant's history",
+    )
+    p.add_argument("--state", default="data/lms_state.json")
+    p.set_defaults(func=cmd_lms_plan)
+
+    p = sub.add_parser(
         "lms-fixtures",
         help="Last Man Standing: fetch and save the current gameweek's fixtures",
     )
@@ -1702,10 +1835,6 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser(
         "lms-settle",
         help="Last Man Standing: auto-settle pending picks from football-data.org results",
-    )
-    p.add_argument(
-        "--gameweek", default="data/lms_gameweek.json",
-        help="gameweek JSON file (defaults to lms-fixtures' output path)",
     )
     p.add_argument("--state", default="data/lms_state.json")
     p.add_argument(

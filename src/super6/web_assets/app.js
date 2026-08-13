@@ -269,10 +269,10 @@ function lmsStatusPill(alive) {
   return `<span class="status-pill ${alive ? "approved" : "prohibited"}">${alive ? "ALIVE" : "ELIMINATED"}</span>`;
 }
 
-function lmsRecommendationRows(candidates, canPick) {
+function lmsRecommendationRows(candidates, canPick, plannedTeam) {
   if (!candidates.length) return `<tr><td colspan="7">No eligible clubs left this gameweek — every fixture involves a club already used.</td></tr>`;
   return candidates.slice(0, 10).map((c) => `<tr>
-    <td>${escapeHtml(c.team)}</td>
+    <td>${escapeHtml(c.team)}${c.team === plannedTeam ? ` <span class="status-pill approved">PLAN</span>` : ""}</td>
     <td>${escapeHtml(c.team)} ${c.is_home ? "v" : "@"} ${escapeHtml(c.opponent)}</td>
     <td>${percent(c.p_win)}</td>
     <td>${percent(c.p_draw)}</td>
@@ -280,6 +280,41 @@ function lmsRecommendationRows(candidates, canPick) {
     <td><span class="confidence ${c.confidence.toLowerCase()}">${c.confidence}</span></td>
     <td>${canPick ? `<button class="button secondary-button" data-lms-pick data-team="${escapeHtml(c.team)}" data-opponent="${escapeHtml(c.opponent)}" data-home="${c.is_home}">Pick</button>` : ""}</td>
   </tr>`).join("");
+}
+
+// The plan, not the weekly ranking, is the recommendation: a club can be
+// used once all season, so the strongest club this gameweek is regularly
+// one a later gameweek needs more. The comparison against taking the
+// weekly favourite is shown rather than described, so the advice can be
+// judged instead of trusted.
+function lmsPlanCard(plan) {
+  if (!plan || !plan.picks?.length) return "";
+  const now = plan.picks[0];
+  const rows = plan.picks.map((p) => `<tr>
+    <td>GW${p.gameweek}</td>
+    <td>${escapeHtml(p.team)}</td>
+    <td>${escapeHtml(p.team)} ${p.is_home ? "v" : "@"} ${escapeHtml(p.opponent)}</td>
+    <td>${percent(p.p_win)}</td>
+    <td><span class="confidence ${p.confidence.toLowerCase()}">${p.confidence}</span></td>
+  </tr>`).join("");
+  let comparison;
+  if (plan.picks.length < 2) {
+    comparison = `<p class="subtitle">Only one gameweek of fixtures is available, so this is just the weekly favourite — no lookahead was possible.</p>`;
+  } else if (plan.greedy_team && plan.greedy_team !== now.team) {
+    comparison = `<p class="subtitle">Taking this gameweek's favourite (${escapeHtml(plan.greedy_team)}) instead survives the same ${plan.picks.length} gameweeks ${percent(plan.greedy_survival_p)} of the time — ${(plan.survival_gain * 100).toFixed(1)}pp worse. ${escapeHtml(now.team)} is picked because ${escapeHtml(plan.greedy_team)} is worth more later.</p>`;
+  } else {
+    comparison = `<p class="subtitle">This gameweek's favourite is also the planned pick — nothing in the next ${plan.picks.length} gameweeks is worth saving it for.</p>`;
+  }
+  const unplannable = plan.unplannable?.length
+    ? `<p class="subtitle">No legal pick left for ${plan.unplannable.map((n) => `GW${n}`).join(", ")} — every club playing has been used.</p>`
+    : "";
+  return `<div class="stat-table-card">
+    <p class="eyebrow">Recommended pick</p>
+    <h3>${escapeHtml(now.team)} ${now.is_home ? "v" : "@"} ${escapeHtml(now.opponent)} — ${percent(now.p_win)} to win</h3>
+    <p class="subtitle">Surviving all ${plan.picks.length} planned gameweek${plan.picks.length === 1 ? "" : "s"}: ${percent(plan.survival_p)}. Later gameweeks are advisory and re-planned every week.</p>
+    <table><thead><tr><th>Gameweek</th><th>Club</th><th>Fixture</th><th>P(Win)</th><th>Conf</th></tr></thead><tbody>${rows}</tbody></table>
+    ${comparison}${unplannable}
+  </div>`;
 }
 
 function lmsHistoryRows(entrants) {
@@ -309,12 +344,13 @@ function lmsFixturesSourceBanner(fixturesSource) {
 }
 
 function lmsView() {
-  const lms = appData.lms || { gameweek: null, entrants: {}, recommendations: {}, unknown_teams: [], auto_settle: null, fixtures_source: null };
+  const lms = appData.lms || { gameweek: null, entrants: {}, recommendations: {}, plans: {}, unknown_teams: [], auto_settle: null, fixtures_source: null };
   const gw = lms.gameweek;
   const entrants = lms.entrants || {};
   if (!lmsEntrant) lmsEntrant = Object.keys(entrants)[0] || "";
   const state = entrants[lmsEntrant];
   const candidates = (lmsEntrant && lms.recommendations[lmsEntrant]) || lms.recommendations.__all__ || [];
+  const plan = (lmsEntrant && lms.plans?.[lmsEntrant]) || lms.plans?.__all__ || null;
   const pendingPick = gw && state?.history.find((h) => h.gameweek === gw.number);
   const eliminated = state && !state.alive;
 
@@ -335,7 +371,7 @@ function lmsView() {
       : !settled ? `<p class="subtitle" style="margin-top:.4rem">Waiting for full time. This settles itself automatically once football-data.org has the result.</p>` : "";
     pickSection = `<div class="callout muted"><strong>Gameweek ${gw.number}</strong><span>${escapeHtml(pendingPick.team)} ${pendingPick.is_home ? "v" : "@"} ${escapeHtml(pendingPick.opponent)} — ${pendingPick.result}${pendingPick.source ? ` (${pendingPick.source.toLowerCase()})` : ""}${manualFallback}</span></div>`;
   } else {
-    pickSection = `<div class="stat-table-card"><table><thead><tr><th>Team</th><th>Fixture</th><th>P(Win)</th><th>P(Draw)</th><th>P(Loss)</th><th>Conf</th><th></th></tr></thead><tbody>${lmsRecommendationRows(candidates, !!lmsEntrant)}</tbody></table></div>${lmsEntrant ? "" : `<p class="subtitle">Enter an entrant name above to record a pick.</p>`}`;
+    pickSection = `${lmsPlanCard(plan)}<div class="stat-table-card"><p class="eyebrow">Every eligible club</p><table><thead><tr><th>Team</th><th>Fixture</th><th>P(Win)</th><th>P(Draw)</th><th>P(Loss)</th><th>Conf</th><th></th></tr></thead><tbody>${lmsRecommendationRows(candidates, !!lmsEntrant, plan?.picks?.[0]?.team)}</tbody></table></div>${lmsEntrant ? "" : `<p class="subtitle">Enter an entrant name above to record a pick.</p>`}`;
   }
 
   const unknownNote = gw && lms.unknown_teams.length ? `<p class="subtitle">Not in the training corpus, using league-average strength: ${escapeHtml(lms.unknown_teams.join(", "))}.</p>` : "";
@@ -354,7 +390,7 @@ function lmsView() {
     ${entrantSection}
     ${lmsFixturesSourceBanner(lms.fixtures_source)}
     ${gw ? lmsAutoSettleBanner(lms.auto_settle) : ""}
-    <section class="section-heading"><div><p class="eyebrow">${gw ? `Gameweek ${gw.number}` : "Gameweek"}</p><h2>Ranked by chance of winning</h2></div></section>
+    <section class="section-heading"><div><p class="eyebrow">${gw ? `Gameweek ${gw.number}` : "Gameweek"}</p><h2>Planned across the next few gameweeks</h2></div></section>
     ${pickSection}
     ${unknownNote}
     ${setupSection}

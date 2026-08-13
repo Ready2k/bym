@@ -7,7 +7,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { loadApp, appData, fixture } from "./harness.mjs";
+import { loadApp, appData, fixture, lmsPlan } from "./harness.mjs";
 
 const HOSTILE = '<img src=x onerror="alert(1)">';
 
@@ -317,4 +317,68 @@ test("badge initials are hidden from assistive tech, not just styled small", () 
   const html = app.teamBadge("Arsenal");
   assert.match(html, /<b aria-hidden="true">/);
   assert.match(html, /aria-label="Arsenal badge"/);
+});
+
+// ---- Last Man Standing ---------------------------------------------------
+
+test("the plan card leads with the pick to make now, not the horizon", () => {
+  const app = loadApp(appData());
+  const html = app.lmsPlanCard(lmsPlan());
+  assert.match(html, /Brentford v Tottenham/);
+  assert.ok(html.indexOf("Brentford") < html.indexOf("Man City"),
+    "this gameweek's pick has to come first — it is the only one being committed");
+});
+
+test("the plan card shows what taking the weekly favourite would cost", () => {
+  // The plan's entire claim is that it beats the favourite. Stating the
+  // recommendation without the comparison makes it unfalsifiable.
+  const app = loadApp(appData());
+  const html = app.lmsPlanCard(lmsPlan());
+  assert.match(html, /Man City/);
+  assert.match(html, /8\.7pp worse/);
+});
+
+test("a one-gameweek plan says so instead of implying lookahead", () => {
+  const app = loadApp(appData());
+  const plan = lmsPlan({ picks: [lmsPlan().picks[0]], greedy_team: "Brentford",
+                         survival_gain: 0, greedy_survival_p: 0.51, survival_p: 0.51 });
+  const html = app.lmsPlanCard(plan);
+  assert.match(html, /no lookahead was possible/);
+});
+
+test("gameweeks with no legal pick left are surfaced, not hidden", () => {
+  const app = loadApp(appData());
+  const html = app.lmsPlanCard(lmsPlan({ unplannable: [6, 7] }));
+  assert.match(html, /GW6, GW7/);
+});
+
+test("an empty plan renders nothing rather than an empty card", () => {
+  const app = loadApp(appData());
+  assert.equal(app.lmsPlanCard(null), "");
+  assert.equal(app.lmsPlanCard(lmsPlan({ picks: [] })), "");
+});
+
+test("a hostile club name cannot inject markup through the plan card", () => {
+  const app = loadApp(appData());
+  const plan = lmsPlan();
+  plan.picks[0].team = HOSTILE;
+  plan.greedy_team = HOSTILE;
+  const html = app.lmsPlanCard(plan);
+  assert.ok(!html.includes("<img src=x"), "raw tag reached the DOM string");
+  assert.match(html, /&lt;img/);
+});
+
+test("the planned club is marked in the full eligible list", () => {
+  const app = loadApp(appData());
+  const candidates = [
+    { team: "Man City", opponent: "Bournemouth", is_home: true,
+      p_win: 0.78, p_draw: 0.14, p_loss: 0.08, confidence: "HIGH" },
+    { team: "Brentford", opponent: "Tottenham", is_home: true,
+      p_win: 0.51, p_draw: 0.25, p_loss: 0.24, confidence: "LOW" },
+  ];
+  const html = app.lmsRecommendationRows(candidates, true, "Brentford");
+  // The plan's pick is not the top row: without the marker the user would
+  // read the ranking as the recommendation.
+  assert.match(html, /Brentford<span class="status-pill approved">PLAN<\/span>|Brentford <span class="status-pill approved">PLAN<\/span>/);
+  assert.equal(html.match(/PLAN/g).length, 1);
 });
