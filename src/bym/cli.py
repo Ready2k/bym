@@ -1358,14 +1358,42 @@ def cmd_lms_pick(args) -> int:
     path = Path(args.state)
     states = lms.load_states(path)
     state = states.get(args.entrant, lms.LMSState(entrant=args.entrant))
+    existing = next(
+        (h for h in state.history if h["gameweek"] == args.gameweek), None
+    )
     try:
-        lms.record_pick(state, args.gameweek, args.team, args.opponent, args.home)
+        if existing:
+            # Changing, not duplicating. Locked once the round kicks off,
+            # which needs the fixture list — fetched here rather than
+            # assumed open, since "no fixtures" must not silently become
+            # "no deadline".
+            week = None
+            try:
+                known = {args.team, args.opponent}
+                week = next(
+                    (
+                        w
+                        for w in _fetch_lms_horizon(known, args.fd_season, 1)
+                        if w.number == args.gameweek
+                    ),
+                    None,
+                )
+            except RuntimeError as exc:
+                print(f"note: {exc}", file=sys.stderr)
+            lms.change_pick(
+                state, args.gameweek, args.team, args.opponent, args.home,
+                gameweek_fixtures=week,
+            )
+            verb = f"Changed from {existing['team']}: "
+        else:
+            lms.record_pick(state, args.gameweek, args.team, args.opponent, args.home)
+            verb = "Recorded: "
     except ValueError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
     states[args.entrant] = state
     lms.save_states(states, path)
-    print(f"Recorded: {args.entrant} picks {args.team} (GW{args.gameweek})")
+    print(f"{verb}{args.entrant} picks {args.team} (GW{args.gameweek})")
     return 0
 
 
@@ -1449,6 +1477,23 @@ def cmd_lms_settle(args) -> int:
     return 0
 
 
+def _parse_kickoff(value: str | None):
+    """football-data.org's `utcDate` as an aware datetime, or None.
+
+    None rather than a raised error: a gameweek whose kickoff cannot be
+    read is still a perfectly good gameweek to plan over — it just cannot
+    be locked, and the caller decides what to do about that.
+    """
+    from datetime import datetime
+
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
 def _fetch_lms_horizon(known_teams: set[str], fd_season: int, horizon: int = 1):
     """Fetch the next `horizon` Premier League matchdays from
     football-data.org and resolve them onto the training corpus's names.
@@ -1482,7 +1527,7 @@ def _fetch_lms_horizon(known_teams: set[str], fd_season: int, horizon: int = 1):
     except Exception as exc:
         raise RuntimeError(f"Fixture fetch failed: {exc}") from exc
 
-    matchdays = fdo.upcoming_matchdays(matches, horizon)
+    matchdays = fdo.upcoming_matchdays_with_kickoff(matches, horizon)
     if not matchdays:
         raise RuntimeError(
             "football-data.org has no upcoming Premier League fixtures right now."
@@ -1497,8 +1542,11 @@ def _fetch_lms_horizon(known_teams: set[str], fd_season: int, horizon: int = 1):
                 )
                 for m in fdo.fixtures_for_matchday(matches, matchday)
             ),
+            # The first kickoff is the moment this gameweek's pick stops
+            # being changeable, so it travels with the gameweek.
+            deadline_at=_parse_kickoff(kickoff),
         )
-        for matchday in matchdays
+        for matchday, kickoff in matchdays
     ]
 
 
@@ -1879,6 +1927,9 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--opponent", required=True)
     p.add_argument("--home", action="store_true", help="team is at home this gameweek")
     p.add_argument("--state", default="data/lms_state.json")
+    # Only consulted when replacing an existing pick, to find the kickoff
+    # that closes the gameweek.
+    p.add_argument("--fd-season", type=int, default=2026)
     p.set_defaults(func=cmd_lms_pick)
 
     p = sub.add_parser(

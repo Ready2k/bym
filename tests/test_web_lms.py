@@ -230,3 +230,99 @@ def test_an_entrant_who_booked_this_gameweek_is_planned_from_the_next(
     # Kate has not, so she is still planned normally off the same matrices.
     assert payload["plans"]["Kate"]["picks"]
     assert payload["recommendations"]["Kate"]
+
+
+def test_switching_a_pick_through_the_endpoint_frees_the_old_club(tmp_path, router):
+    from bym.web import save_lms_pick
+
+    config = config_with(
+        tmp_path, GAMEWEEK,
+        {"James": {"entrant": "James", "alive": True, "used_clubs": ["Strong"],
+                   "history": [{"gameweek": 3, "team": "Strong", "opponent": "Weak",
+                                "is_home": True, "result": "PENDING", "source": None}]}},
+    )
+    save_lms_pick(
+        {"entrant": "James", "gameweek": 3, "team": "Middling A",
+         "opponent": "Middling B", "is_home": True},
+        config,
+    )
+    state = lms.load_states(config.lms_state_path)["James"]
+    assert state.used_clubs == ["Middling A"], "the old club must be released"
+    assert [h["team"] for h in state.history] == ["Middling A"]
+
+
+def test_previews_cover_every_eligible_club_and_price_the_whole_horizon(
+    tmp_path, router
+):
+    """"What do Hull cost me" is a question about the horizon, so the
+    preview has to carry a survival figure for the path, not just this
+    week's win probability."""
+    config = config_with(
+        tmp_path, GAMEWEEK,
+        {"James": {"entrant": "James", "alive": True, "used_clubs": [], "history": []}},
+    )
+    payload = lms_payload(config, router=router, known_teams=set(TEAMS))
+    previews = payload["previews"]["James"]
+    offered = {c["team"] for c in payload["recommendations"]["James"]}
+    assert set(previews) == offered
+    for team, preview in previews.items():
+        assert preview["survival_yours"] is not None, team
+        assert preview["steps"][0]["team"] == team
+
+
+def test_a_preview_never_writes_anything(tmp_path, router):
+    """A preview that left a club in used_clubs would be data loss wearing
+    a feature's clothes."""
+    config = config_with(
+        tmp_path, GAMEWEEK,
+        {"James": {"entrant": "James", "alive": True, "used_clubs": [], "history": []}},
+    )
+    before = config.lms_state_path.read_text()
+    lms_payload(config, router=router, known_teams=set(TEAMS))
+    assert config.lms_state_path.read_text() == before
+
+
+def test_the_gameweek_carries_the_kickoff_that_closes_it(tmp_path, router):
+    payload = lms_payload(
+        config_with(tmp_path, {**GAMEWEEK, "deadline_at": "2026-08-15T14:00:00+00:00"}),
+        router=router, known_teams=set(TEAMS),
+    )
+    assert payload["gameweek"]["deadline_at"].startswith("2026-08-15T14:00")
+
+
+def test_a_changeable_week_offers_that_week_s_clubs_not_next_week_s(
+    tmp_path, router
+):
+    """The bug this exists to stop: with GW3 booked but not kicked off,
+    the entrant is still deciding GW3 — offering GW4's clubs beside a
+    Switch button that posts GW3 records a club against a gameweek it is
+    not playing in."""
+    config = config_with(
+        tmp_path,
+        {**GAMEWEEK, "deadline_at": "2099-01-01T00:00:00+00:00"},
+        {"James": {"entrant": "James", "alive": True, "used_clubs": ["Strong"],
+                   "history": [{"gameweek": 3, "team": "Strong", "opponent": "Weak",
+                                "is_home": True, "result": "PENDING", "source": None}]}},
+    )
+    payload = lms_payload(config, router=router, known_teams=set(TEAMS))
+
+    assert payload["decision_weeks"]["James"] == 3, "GW3 is still open to change"
+    offered = {c["team"] for c in payload["switch_candidates"]["James"]}
+    playing = {t for f in GAMEWEEK["fixtures"] for t in (f["home"], f["away"])}
+    assert offered <= playing, "every club offered must be playing that gameweek"
+    assert "Strong" in offered, "the club currently booked cannot block its own week"
+
+
+def test_a_kicked_off_week_moves_the_decision_on(tmp_path, router):
+    config = config_with(
+        tmp_path,
+        {**GAMEWEEK, "deadline_at": "2000-01-01T00:00:00+00:00"},
+        {"James": {"entrant": "James", "alive": True, "used_clubs": ["Strong"],
+                   "history": [{"gameweek": 3, "team": "Strong", "opponent": "Weak",
+                                "is_home": True, "result": "PENDING", "source": None}]}},
+    )
+    payload = lms_payload(config, router=router, known_teams=set(TEAMS))
+    assert payload["decision_weeks"].get("James") is None, (
+        "the round has started and it is the only gameweek on offer — "
+        "there is nothing left to decide"
+    )

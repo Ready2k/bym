@@ -8,6 +8,7 @@ let activityFilter = "ALL";
 let cupForecast;
 let ollamaModels = [];
 let lmsEntrant = "";
+let lmsPreview = "";
 
 // Football-Data crest IDs for the clubs in the supplied Super 6 round.
 // Unknown teams retain the accessible initials fallback inside teamBadge.
@@ -269,16 +270,19 @@ function lmsStatusPill(alive) {
   return `<span class="status-pill ${alive ? "approved" : "prohibited"}">${alive ? "ALIVE" : "ELIMINATED"}</span>`;
 }
 
-function lmsRecommendationRows(candidates, canPick, plannedTeam) {
+function lmsRecommendationRows(candidates, canPick, plannedTeam, currentTeam) {
   if (!candidates.length) return `<tr><td colspan="7">No eligible clubs left this gameweek — every fixture involves a club already used.</td></tr>`;
-  return candidates.slice(0, 10).map((c) => `<tr>
-    <td>${escapeHtml(c.team)}${c.team === plannedTeam ? ` <span class="status-pill approved">PLAN</span>` : ""}</td>
+  // Every eligible club, not a top ten. The table exists so an entrant
+  // can disagree with the model, and the clubs worth disagreeing about
+  // are precisely the ones the model ranked low.
+  return candidates.map((c) => `<tr class="${c.team === lmsPreview ? "lineage-previewing" : ""}" data-lms-preview data-team="${escapeHtml(c.team)}">
+    <td>${escapeHtml(c.team)}${c.team === plannedTeam ? ` <span class="status-pill approved">PLAN</span>` : ""}${c.team === currentTeam ? ` <span class="status-pill">YOUR PICK</span>` : ""}</td>
     <td>${escapeHtml(c.team)} ${c.is_home ? "v" : "@"} ${escapeHtml(c.opponent)}</td>
     <td>${percent(c.p_win)}</td>
     <td>${percent(c.p_draw)}</td>
     <td>${percent(c.p_loss)}</td>
     <td><span class="confidence ${c.confidence.toLowerCase()}">${c.confidence}</span></td>
-    <td>${canPick ? `<button class="button secondary-button" data-lms-pick data-team="${escapeHtml(c.team)}" data-opponent="${escapeHtml(c.opponent)}" data-home="${c.is_home}">Pick</button>` : ""}</td>
+    <td>${canPick && c.team !== currentTeam ? `<button class="button secondary-button" data-lms-pick data-team="${escapeHtml(c.team)}" data-opponent="${escapeHtml(c.opponent)}" data-home="${c.is_home}">${currentTeam ? "Switch" : "Pick"}</button>` : ""}</td>
   </tr>`).join("");
 }
 
@@ -379,11 +383,16 @@ function lineageChart(steps) {
       <text class="lineage-split-label" x="${x + 6}" y="${g.top + 12}">diverges here</text>`;
   })() : "";
 
-  const endLabel = (points, cls, text) => {
+  // Two labels at the same height are unreadable, and the case is common:
+  // an entrant following the plan exactly produces one line, not two.
+  const coincide = yours.length && plan.length
+    && Math.abs(yours[yours.length - 1].y - plan[plan.length - 1].y) < 11;
+  const endLabel = (points, cls, text, suppress = false) => {
     if (!points.length) return "";
     const last = points[points.length - 1];
-    return `<circle class="lineage-dot ${cls}" cx="${last.x}" cy="${last.y}" r="4.5"></circle>
-      <text class="lineage-end ${cls}" x="${last.x + 12}" y="${last.y + 4}">${escapeHtml(text)}</text>`;
+    const label = suppress ? "" :
+      `<text class="lineage-end ${cls}" x="${last.x + 12}" y="${last.y + 4}">${escapeHtml(text)}</text>`;
+    return `<circle class="lineage-dot ${cls}" cx="${last.x}" cy="${last.y}" r="4.5"></circle>${label}`;
   };
 
   const hotspots = steps.map((s, i) => {
@@ -404,8 +413,8 @@ function lineageChart(steps) {
     ${ticks}${xLabels}${splitMark}
     <path class="lineage-line plan" d="${lineagePath(plan)}"></path>
     <path class="lineage-line yours" d="${lineagePath(yours)}"></path>
-    ${endLabel(plan, "plan", "plan")}
-    ${endLabel(yours, "yours", "you")}
+    ${endLabel(plan, "plan", "plan", coincide)}
+    ${endLabel(yours, "yours", coincide ? "you = plan" : "you")}
     ${hotspots}
   </svg>`;
 }
@@ -430,7 +439,13 @@ function lineageRows(steps) {
   }).join("");
 }
 
-function lmsLineageCard(lineage) {
+function lmsGameweekLocked(gw) {
+  if (!gw?.deadline_at) return false;
+  const kickoff = Date.parse(gw.deadline_at);
+  return Number.isFinite(kickoff) && Date.now() >= kickoff;
+}
+
+function lmsLineageCard(lineage, isPreview = false, previewTeam = "") {
   if (!lineage?.steps?.length) return "";
   const steps = lineage.steps;
   if (!steps.some((s) => s.status === "BOOKED")) return "";
@@ -452,9 +467,13 @@ function lmsLineageCard(lineage) {
     verdict = `<p class="subtitle">Surviving the whole horizon on your path is <strong>${percent(yours)}</strong>, against <strong>${percent(plan)}</strong> for the recommended path — <strong>${gap.toFixed(1)}pp</strong>.${cause} Because survival multiplies, a single week's deficit is carried by every week after it.</p>`;
   }
 
-  return `<div class="stat-table-card lineage-card">
-    <p class="eyebrow">Pick lineage</p>
-    <h3>Your path against the plan</h3>
+  const heading = isPreview
+    ? `<p class="eyebrow">Preview — not saved</p>
+       <h3>If you picked ${escapeHtml(previewTeam)}</h3>
+       <p class="subtitle"><button class="text-button" data-lms-preview-clear>Back to your actual path</button></p>`
+    : `<p class="eyebrow">Pick lineage</p><h3>Your path against the plan</h3>`;
+  return `<div class="stat-table-card lineage-card${isPreview ? " lineage-preview" : ""}">
+    ${heading}
     <div class="lineage-figure">
       <p class="lineage-hero">${yours == null ? "—" : percent(yours)}</p>
       <p class="subtitle">chance of surviving all ${steps.length} gameweek${steps.length === 1 ? "" : "s"} on the picks you have made and the plan from here</p>
@@ -507,6 +526,9 @@ function lmsView() {
   const candidates = (lmsEntrant && lms.recommendations[lmsEntrant]) || lms.recommendations.__all__ || [];
   const plan = (lmsEntrant && lms.plans?.[lmsEntrant]) || lms.plans?.__all__ || null;
   const lineage = (lmsEntrant && lms.lineages?.[lmsEntrant]) || null;
+  const previewLineage = lmsPreview ? lms.previews?.[lmsEntrant]?.[lmsPreview] : null;
+  const switchCandidates = (lmsEntrant && lms.switch_candidates?.[lmsEntrant]) || candidates;
+  const decisionWeek = (lmsEntrant && lms.decision_weeks?.[lmsEntrant]) ?? gw?.number;
   const pendingPick = gw && state?.history.find((h) => h.gameweek === gw.number);
   const eliminated = state && !state.alive;
 
@@ -525,9 +547,16 @@ function lmsView() {
     const manualFallback = !settled && !lms.auto_settle?.ran
       ? `<span class="button-row" style="margin-top:.6rem">${["WIN", "DRAW", "LOSS"].map((r) => `<button class="button secondary-button" data-lms-result="${r}">${r}</button>`).join("")}</span><p class="subtitle" style="margin-top:.4rem">Manual override — logged as self-reported, not verified.</p>`
       : !settled ? `<p class="subtitle" style="margin-top:.4rem">Waiting for full time. This settles itself automatically once football-data.org has the result.</p>` : "";
-    pickSection = `<div class="callout muted"><strong>Gameweek ${gw.number}</strong><span>${escapeHtml(pendingPick.team)} ${pendingPick.is_home ? "v" : "@"} ${escapeHtml(pendingPick.opponent)} — ${pendingPick.result}${pendingPick.source ? ` (${pendingPick.source.toLowerCase()})` : ""}${manualFallback}</span></div>${lmsLineageCard(lineage)}${lmsPlanCard(plan)}`;
+    // A pending pick is provisional — the format allows a change right up
+    // until the round kicks off — so the club table stays on screen with
+    // the alternatives, rather than the callout replacing everything.
+    const locked = settled || lmsGameweekLocked(gw);
+    const lockNote = locked
+      ? `<p class="subtitle">This gameweek has started — ${escapeHtml(pendingPick.team)} is final.</p>`
+      : `<p class="subtitle">You can switch club until the first match kicks off${gw.deadline_at ? ` (${displayDate(gw.deadline_at)})` : ""}. Select any row below to see what it would do to your horizon.</p>`;
+    pickSection = `<div class="callout muted"><strong>Gameweek ${gw.number}</strong><span>${escapeHtml(pendingPick.team)} ${pendingPick.is_home ? "v" : "@"} ${escapeHtml(pendingPick.opponent)} — ${pendingPick.result}${pendingPick.source ? ` (${pendingPick.source.toLowerCase()})` : ""}${manualFallback}</span></div>${lockNote}${lmsLineageCard(previewLineage || lineage, !!previewLineage, lmsPreview)}${lmsPlanCard(plan)}${locked ? "" : `<div class="stat-table-card"><p class="eyebrow">Every eligible club — gameweek ${decisionWeek}</p><p class="subtitle">Select a row to see the horizon that club leads to.</p><table><thead><tr><th>Team</th><th>Fixture</th><th>P(Win)</th><th>P(Draw)</th><th>P(Loss)</th><th>Conf</th><th></th></tr></thead><tbody>${lmsRecommendationRows(switchCandidates, !!lmsEntrant, plan?.picks?.[0]?.team, pendingPick.team)}</tbody></table></div>`}`;
   } else {
-    pickSection = `${lmsLineageCard(lineage)}${lmsPlanCard(plan)}<div class="stat-table-card"><p class="eyebrow">Every eligible club</p><table><thead><tr><th>Team</th><th>Fixture</th><th>P(Win)</th><th>P(Draw)</th><th>P(Loss)</th><th>Conf</th><th></th></tr></thead><tbody>${lmsRecommendationRows(candidates, !!lmsEntrant, plan?.picks?.[0]?.team)}</tbody></table></div>${lmsEntrant ? "" : `<p class="subtitle">Enter an entrant name above to record a pick.</p>`}`;
+    pickSection = `${lmsLineageCard(previewLineage || lineage, !!previewLineage, lmsPreview)}${lmsPlanCard(plan)}<div class="stat-table-card"><p class="eyebrow">Every eligible club</p><p class="subtitle">Select a row to see the horizon that club leads to.</p><table><thead><tr><th>Team</th><th>Fixture</th><th>P(Win)</th><th>P(Draw)</th><th>P(Loss)</th><th>Conf</th><th></th></tr></thead><tbody>${lmsRecommendationRows(candidates, !!lmsEntrant, plan?.picks?.[0]?.team)}</tbody></table></div>${lmsEntrant ? "" : `<p class="subtitle">Enter an entrant name above to record a pick.</p>`}`;
   }
 
   const unknownNote = gw && lms.unknown_teams.length ? `<p class="subtitle">Not in the training corpus, using league-average strength: ${escapeHtml(lms.unknown_teams.join(", "))}.</p>` : "";
@@ -1135,16 +1164,29 @@ document.addEventListener("click", async (event) => {
       await post("/api/rounds", pendingRound); $("#round-dialog").close(); toast("Round saved and forecast refreshed."); await loadApp(); location.hash = "#home";
     } catch (error) { toast(error.message); }
   }
+  const previewClear = event.target.closest("[data-lms-preview-clear]");
+  if (previewClear) { lmsPreview = ""; renderPage(); return; }
+  const previewRow = event.target.closest("[data-lms-preview]");
+  // The row toggles the preview; the button inside it commits. Checked
+  // before the pick handler so a click on the button is not also read as
+  // a request to preview the row it sits in.
+  if (previewRow && !event.target.closest("[data-lms-pick]")) {
+    lmsPreview = lmsPreview === previewRow.dataset.team ? "" : previewRow.dataset.team;
+    renderPage();
+    return;
+  }
   const lmsPick = event.target.closest("[data-lms-pick]");
   if (lmsPick) {
     if (!lmsEntrant) { toast("Enter an entrant name first."); return; }
     try {
       appData.lms = await post("/api/lms/pick", {
-        entrant: lmsEntrant, gameweek: appData.lms.gameweek.number,
+        entrant: lmsEntrant,
+        gameweek: appData.lms.decision_weeks?.[lmsEntrant] ?? appData.lms.gameweek.number,
         team: lmsPick.dataset.team, opponent: lmsPick.dataset.opponent,
         is_home: lmsPick.dataset.home === "true",
       });
       toast(`${lmsPick.dataset.team} recorded as ${lmsEntrant}'s pick for gameweek ${appData.lms.gameweek.number}.`);
+      lmsPreview = "";
       renderPage();
     } catch (error) { toast(error.message); }
   }

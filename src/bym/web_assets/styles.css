@@ -214,3 +214,6 @@ input:focus, textarea:focus, select:focus { outline: 3px solid #dbeafe; border-c
 .lineage-down { color: var(--red); font-variant-numeric: tabular-nums; }
 .lineage-up { color: var(--green); font-variant-numeric: tabular-nums; }
 @media (max-width: 760px) { .lineage-hero { font-size: 2.2rem; } }
+.lineage-card.lineage-preview { border-left: 3px solid var(--series-plan, #eb6834); }
+.lineage-previewing > td { background: var(--blue-soft); }
+tr[data-lms-preview] { cursor: pointer; }

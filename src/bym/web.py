@@ -1627,6 +1627,69 @@ def _lms_lineage_dict(steps) -> dict:
     }
 
 
+def _lms_previews(
+    lms_mod, router, base_steps, gameweeks, outlooks, open_idx, candidates,
+    reference_plan,
+) -> dict:
+    """For each club eligible this week, the horizon it leads to.
+
+    Keyed by club name. The entrant's own state is copied per candidate
+    rather than mutated — a preview that left a club in `used_clubs`
+    would be a data-loss bug wearing a feature's clothes.
+    """
+    if not open_idx:
+        return {}
+    week_number = gameweeks[open_idx[0]].number
+    later_idx = open_idx[1:]
+    reference_by_gw = {p.gameweek: p for p in reference_plan.picks}
+    # Weeks already settled are identical under every candidate, so they
+    # are priced once here and reused. Calling `lineage` per candidate
+    # instead would rebuild a score matrix for each, which is the cost the
+    # "one model pass per gameweek" test exists to prevent.
+    settled = [
+        s for s in base_steps if s.status == "BOOKED" and s.gameweek != week_number
+    ]
+    spent = {s.team.lower() for s in settled if s.team}
+
+    out = {}
+    for candidate in candidates:
+        team = candidate["team"]
+        if team.lower() in spent:
+            continue
+        ref = reference_by_gw.get(week_number)
+        chosen = lms_mod.LineageStep(
+            gameweek=week_number,
+            status="BOOKED",
+            team=team,
+            p_win=candidate["p_win"],
+            plan_team=ref.candidate.team if ref else None,
+            plan_p_win=ref.candidate.p_win if ref else None,
+            result="PENDING",
+        )
+        rest = lms_mod.plan_horizon(
+            router,
+            [gameweeks[i] for i in later_idx],
+            spent | {team.lower()},
+            outlooks=[outlooks[i] for i in later_idx],
+        )
+        steps = settled + [chosen]
+        for pick in rest.picks:
+            later_ref = reference_by_gw.get(pick.gameweek)
+            steps.append(
+                lms_mod.LineageStep(
+                    gameweek=pick.gameweek,
+                    status="PLANNED",
+                    team=pick.candidate.team,
+                    p_win=pick.candidate.p_win,
+                    plan_team=later_ref.candidate.team if later_ref else pick.candidate.team,
+                    plan_p_win=later_ref.candidate.p_win if later_ref else pick.candidate.p_win,
+                )
+            )
+        steps.sort(key=lambda s: s.gameweek)
+        out[team] = _lms_lineage_dict(steps)
+    return out
+
+
 def _lms_plan_dict(plan) -> dict:
     """A horizon plan flattened for the UI, greedy comparison included.
 
@@ -1703,7 +1766,9 @@ def lms_payload(config: WebConfig, router=None, known_teams: set[str] | None = N
     if not gameweeks:
         return {
             "gameweek": None, "entrants": entrants, "recommendations": {}, "plans": {},
-            "lineages": {}, "unknown_teams": [], "auto_settle": auto_settle_info,
+            "lineages": {}, "previews": {}, "switch_candidates": {},
+            "decision_weeks": {}, "unknown_teams": [],
+            "auto_settle": auto_settle_info,
             "fixtures_source": fixtures_info,
         }
 
@@ -1713,6 +1778,23 @@ def lms_payload(config: WebConfig, router=None, known_teams: set[str] | None = N
     )
 
     outlooks = [lms_mod.fixture_outlooks(router, week) for week in gameweeks]
+
+    def decision_index(state) -> int | None:
+        """Which gameweek this entrant is actually deciding right now.
+
+        A booked pick is not a closed decision until the round kicks off,
+        so a changeable week is still the one being chosen — and offering
+        the NEXT week's clubs beside a Switch button that posts THIS week's
+        number would record a club against a gameweek it is not playing in.
+        """
+        booked = next(
+            (h for h in (state.history if state else []) if h["gameweek"] == gameweeks[0].number),
+            None,
+        )
+        if booked and not lms_mod.pick_is_locked(gameweeks[0], booked):
+            return 0
+        open_idx = lms_mod.open_gameweek_indices(gameweeks, state)
+        return open_idx[0] if open_idx else None
 
     def for_used(used: set[str], state=None) -> tuple[list[dict], dict]:
         # Slice gameweeks and their score matrices together: a gameweek
@@ -1736,6 +1818,9 @@ def lms_payload(config: WebConfig, router=None, known_teams: set[str] | None = N
     # so the only honest thing to compare a booked pick against.
     reference_plan = lms_mod.plan_horizon(router, gameweeks, set(), outlooks=outlooks)
     lineages = {}
+    previews = {}
+    switch_candidates = {}
+    decision_weeks = {}
     for name, state in states.items():
         if state.alive:
             recommendations[name], plans[name] = for_used(
@@ -1748,11 +1833,41 @@ def lms_payload(config: WebConfig, router=None, known_teams: set[str] | None = N
                 set(state.used_clubs),
                 outlooks=[outlooks[i] for i in open_idx],
             )
-            lineages[name] = _lms_lineage_dict(
-                lms_mod.lineage(
-                    router, state, gameweeks, entrant_plan, reference_plan
-                )
+            entrant_steps = lms_mod.lineage(
+                router, state, gameweeks, entrant_plan, reference_plan
             )
+            lineages[name] = _lms_lineage_dict(entrant_steps)
+            decision = decision_index(state)
+            if decision is not None:
+                booked_now = next(
+                    (h for h in state.history
+                     if h["gameweek"] == gameweeks[decision].number),
+                    None,
+                )
+                # The club currently booked for this week does not block
+                # its own week's ranking — switching away from it releases
+                # it, and switching back to it is a no-op, not a clash.
+                spent_elsewhere = {c.lower() for c in state.used_clubs} - (
+                    {booked_now["team"].lower()} if booked_now else set()
+                )
+                switch_candidates[name] = [
+                    _lms_candidate_dict(c)
+                    for c in lms_mod.rank_candidates(
+                        outlooks[decision], spent_elsewhere
+                    )
+                ]
+                decision_weeks[name] = gameweeks[decision].number
+                previews[name] = _lms_previews(
+                    lms_mod, router, entrant_steps, gameweeks, outlooks,
+                    [decision] + [i for i in open_idx if i > decision],
+                    switch_candidates[name], reference_plan,
+                )
+            # One re-plan per eligible club for the week being picked.
+            # "What do Hull cost me?" is a question about the horizon, not
+            # about Saturday, and the only honest answer re-solves the
+            # weeks after it with that club spent. Precomputed because the
+            # score matrices are already in hand — the assignment is the
+            # cheap part, and doing it here keeps the UI a pure render.
 
     return {
         "gameweek": {
@@ -1762,11 +1877,18 @@ def lms_payload(config: WebConfig, router=None, known_teams: set[str] | None = N
                 for f in gw.fixtures
             ],
             "horizon": [week.number for week in gameweeks],
+            # The kickoff that ends this gameweek's changeable window. The
+            # UI needs it to say whether a switch is still possible, not
+            # merely to be told no after trying.
+            "deadline_at": gw.deadline_at.isoformat() if gw.deadline_at else None,
         },
         "entrants": entrants,
         "recommendations": recommendations,
         "plans": plans,
         "lineages": lineages,
+        "previews": previews,
+        "switch_candidates": switch_candidates,
+        "decision_weeks": decision_weeks,
         "unknown_teams": unknown,
         "auto_settle": auto_settle_info,
         "fixtures_source": fixtures_info,
@@ -1819,7 +1941,9 @@ def _lms_current_gameweek(config: WebConfig, known_teams: set[str]):
     matches = None
     try:
         matches = fdo.fetch_matches("E0", _lms_fd_season(), api_key)
-        matchdays = fdo.upcoming_matchdays(matches, DEFAULT_LMS.horizon_gameweeks)
+        matchdays = fdo.upcoming_matchdays_with_kickoff(
+            matches, DEFAULT_LMS.horizon_gameweeks
+        )
         if not matchdays:
             note = "football-data.org has no upcoming Premier League fixtures right now."
             return fallback, {"mode": "manual" if cached else "none", "note": note}, matches
@@ -1833,8 +1957,10 @@ def _lms_current_gameweek(config: WebConfig, known_teams: set[str]):
                     )
                     for m in fdo.fixtures_for_matchday(matches, matchday)
                 ),
+                # The first kickoff closes this gameweek to changes.
+                deadline_at=_parse_kickoff(kickoff),
             )
-            for matchday in matchdays
+            for matchday, kickoff in matchdays
         ]
         _write_lms_gameweek(gameweeks[0], config.lms_gameweek_path)
         return gameweeks, {"mode": "auto", "note": None}, matches
@@ -1847,12 +1973,24 @@ def _lms_current_gameweek(config: WebConfig, known_teams: set[str]):
         return fallback, {"mode": "manual" if cached else "none", "note": note}, matches
 
 
+def _parse_kickoff(value):
+    """football-data.org's `utcDate` as an aware datetime, or None."""
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
 def _write_lms_gameweek(gw, path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         json.dumps(
             {
                 "gameweek": gw.number,
+                **({"deadline_at": gw.deadline_at.isoformat()}
+                   if gw.deadline_at else {}),
                 "fixtures": [
                     {
                         "home": f.home,
@@ -1956,7 +2094,19 @@ def save_lms_pick(payload: dict, config: WebConfig) -> dict:
         raise ValueError("entrant, gameweek, team and opponent are all required.")
     states = lms_mod.load_states(config.lms_state_path)
     state = states.get(entrant, lms_mod.LMSState(entrant=entrant))
-    lms_mod.record_pick(state, int(gameweek), team, opponent, bool(payload.get("is_home")))
+    gameweek = int(gameweek)
+    is_home = bool(payload.get("is_home"))
+    # An existing pick for this gameweek is a change, not a duplicate: the
+    # format allows one right up until the round kicks off, and refusing
+    # it left the state file as the only way to correct a mis-click.
+    if any(h["gameweek"] == gameweek for h in state.history):
+        weeks, _, _ = _lms_current_gameweek(config, set())
+        week = next((w for w in weeks if w.number == gameweek), None)
+        lms_mod.change_pick(
+            state, gameweek, team, opponent, is_home, gameweek_fixtures=week
+        )
+    else:
+        lms_mod.record_pick(state, gameweek, team, opponent, is_home)
     states[entrant] = state
     lms_mod.save_states(states, config.lms_state_path)
     return lms_payload(config)

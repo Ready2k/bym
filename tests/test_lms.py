@@ -780,3 +780,97 @@ def test_a_booked_week_outside_the_fixture_list_keeps_its_club(params):
     assert booked.team == "Middling A"
     assert booked.p_win is None
     assert booked.delta is None
+
+
+# --- A pick is provisional until the round kicks off --------------------
+#
+# record_pick refuses a second pick for a gameweek and calls it a caller
+# error. That is right for a new booking and wrong as a claim about the
+# format: Last Man Standing lets an entrant change club until the first
+# match starts. Without change_pick the only way back from a mis-click was
+# editing the state file, and doing that correctly means remembering to
+# pull the old club out of used_clubs.
+
+from datetime import datetime as _dt, timedelta as _td, timezone as _tz
+
+KICKOFF = _dt(2026, 8, 15, 14, 0, tzinfo=_tz.utc)
+
+
+def _booked(team="Man United", gameweek=1):
+    state = LMSState(entrant="James")
+    from bym.lms import record_pick
+
+    record_pick(state, gameweek, team, "Hull", False)
+    return state
+
+
+def test_changing_a_pick_releases_the_club_it_was_using():
+    """The step a hand-edit forgets, and the one that silently costs you a
+    club for the rest of the competition."""
+    from bym.lms import change_pick
+
+    state = _booked()
+    change_pick(state, 1, "Arsenal", "Coventry", True)
+    assert state.used_clubs == ["Arsenal"]
+    assert [h["team"] for h in state.history] == ["Arsenal"]
+    assert state.history[0]["opponent"] == "Coventry"
+    assert state.history[0]["is_home"] is True
+
+
+def test_a_club_spent_in_another_week_still_cannot_be_reused():
+    from bym.lms import change_pick, record_pick
+
+    state = _booked("Man United", gameweek=1)
+    record_pick(state, 2, "Arsenal", "Coventry", True)
+    with pytest.raises(ValueError, match="already been picked"):
+        change_pick(state, 2, "Man United", "Hull", False)
+
+
+def test_switching_back_to_the_club_already_booked_is_a_no_op():
+    from bym.lms import change_pick
+
+    state = _booked()
+    change_pick(state, 1, "Man United", "Hull", False)
+    assert state.used_clubs == ["Man United"]
+    assert len(state.history) == 1
+
+
+def test_a_pick_cannot_be_changed_once_the_round_has_kicked_off():
+    from bym.lms import PickLocked, change_pick
+
+    state = _booked()
+    gw = Gameweek(1, (GameweekFixture("Hull", "Man United"),), deadline_at=KICKOFF)
+    with pytest.raises(PickLocked, match="already started"):
+        change_pick(state, 1, "Arsenal", "Coventry", True,
+                    gameweek_fixtures=gw, now=KICKOFF + _td(minutes=1))
+
+
+def test_a_pick_can_be_changed_right_up_to_kickoff():
+    from bym.lms import change_pick
+
+    state = _booked()
+    gw = Gameweek(1, (GameweekFixture("Hull", "Man United"),), deadline_at=KICKOFF)
+    change_pick(state, 1, "Arsenal", "Coventry", True,
+                gameweek_fixtures=gw, now=KICKOFF - _td(seconds=1))
+    assert state.used_clubs == ["Arsenal"]
+
+
+def test_a_settled_pick_is_final_whatever_the_clock_says():
+    from bym.lms import PickLocked, change_pick, record_result
+
+    state = _booked()
+    record_result(state, 1, "WIN")
+    with pytest.raises(PickLocked):
+        change_pick(state, 1, "Arsenal", "Coventry", True)
+
+
+def test_a_gameweek_with_no_known_kickoff_stays_changeable():
+    """A manually written gameweek file has no kickoff. Locking what
+    cannot be timed would make it permanently unchangeable, which is worse
+    than trusting the entrant with a rule the competition already does."""
+    from bym.lms import change_pick
+
+    state = _booked()
+    gw = Gameweek(1, (GameweekFixture("Hull", "Man United"),))
+    change_pick(state, 1, "Arsenal", "Coventry", True, gameweek_fixtures=gw)
+    assert state.used_clubs == ["Arsenal"]

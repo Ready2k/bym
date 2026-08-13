@@ -184,6 +184,19 @@ def upcoming_matchdays(matches: list[Match], count: int) -> list[int]:
     in the order they will actually be *picked*, so kickoff order is the
     only ordering that means anything here.
     """
+    return [day for day, _ in upcoming_matchdays_with_kickoff(matches, count)]
+
+
+def upcoming_matchdays_with_kickoff(
+    matches: list[Match], count: int
+) -> list[tuple[int, str]]:
+    """As `upcoming_matchdays`, paired with each matchday's first kickoff.
+
+    The kickoff is what makes a gameweek's pick final — Last Man Standing
+    allows a change right up until the first match of the round starts —
+    so it has to survive the trip to the caller rather than being computed
+    for ordering and thrown away.
+    """
     upcoming: dict[int, str] = {}
     for m in matches:
         if m.matchday is None or m.status != FixtureStatus.SCHEDULED.value:
@@ -191,7 +204,7 @@ def upcoming_matchdays(matches: list[Match], count: int) -> list[int]:
         first = upcoming.get(m.matchday)
         if first is None or m.kickoff_at < first:
             upcoming[m.matchday] = m.kickoff_at
-    return [day for day, _ in sorted(upcoming.items(), key=lambda kv: kv[1])][:count]
+    return sorted(upcoming.items(), key=lambda kv: kv[1])[:count]
 
 
 def fixtures_for_matchday(

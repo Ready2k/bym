@@ -41,7 +41,7 @@ import json
 import math
 import os
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Iterable, Sequence
 
@@ -952,6 +952,79 @@ def alive_from_history(history: Sequence[dict]) -> bool:
     wins on record and no way back short of editing the JSON by hand.
     """
     return not any(h.get("result") in ELIMINATING_RESULTS for h in history)
+
+
+class PickLocked(ValueError):
+    """The gameweek has started, so its pick can no longer be changed."""
+
+
+def pick_is_locked(
+    gameweek: Gameweek | None, entry: dict | None, now: datetime | None = None
+) -> bool:
+    """Has this gameweek's pick stopped being changeable?
+
+    Last Man Standing lets an entrant change their club right up until the
+    first match of the round kicks off, so a booked pick is provisional,
+    not final. Two things end that: the round starting, and the pick being
+    settled.
+
+    A gameweek with no known kickoff is treated as still open. The
+    alternative — locking what cannot be timed — would make a manually
+    written gameweek file permanently unchangeable, which is worse than
+    trusting the entrant with a rule the competition already trusts them
+    with.
+    """
+    if entry is not None and entry.get("result") not in (None, "PENDING"):
+        return True
+    if gameweek is None or gameweek.deadline_at is None:
+        return False
+    now = now or datetime.now(timezone.utc)
+    deadline = gameweek.deadline_at
+    if deadline.tzinfo is None:
+        deadline = deadline.replace(tzinfo=timezone.utc)
+    return now >= deadline
+
+
+def change_pick(
+    state: LMSState,
+    gameweek: int,
+    team: str,
+    opponent: str,
+    is_home: bool,
+    gameweek_fixtures: Gameweek | None = None,
+    now: datetime | None = None,
+) -> LMSState:
+    """Replace a gameweek's pending pick, releasing the club it used.
+
+    `record_pick` refuses a second pick for a gameweek, which is right for
+    a *new* booking and wrong as a statement about the format: changing
+    before kickoff is a legal move, not a caller error. Without this the
+    only way back from a mis-click was editing the state file by hand —
+    and doing that correctly means remembering to pull the old club out of
+    `used_clubs`, which is exactly the step that gets forgotten.
+    """
+    entry = next((h for h in state.history if h["gameweek"] == gameweek), None)
+    if entry is None:
+        raise ValueError(f"no pick recorded for {state.entrant} in gameweek {gameweek}")
+    if pick_is_locked(gameweek_fixtures, entry, now):
+        raise PickLocked(
+            f"gameweek {gameweek} has already started — {entry['team']} is final"
+        )
+    previous = entry["team"]
+    if team.lower() == previous.lower():
+        return state
+    # Checked against the OTHER weeks' clubs: the one being replaced is
+    # about to be released, so it must not block its own replacement.
+    spent = {c.lower() for c in state.used_clubs} - {previous.lower()}
+    if team.lower() in spent:
+        raise ValueError(f"{team} has already been picked by {state.entrant}")
+
+    state.used_clubs = [c for c in state.used_clubs if c.lower() != previous.lower()]
+    state.used_clubs.append(team)
+    entry.update(team=team, opponent=opponent, is_home=is_home,
+                 result="PENDING", source=None)
+    state.alive = alive_from_history(state.history)
+    return state
 
 
 def record_result(
