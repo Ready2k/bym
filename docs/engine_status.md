@@ -398,7 +398,7 @@ KNOWLEDGE_RESEARCH  opt-in (--with-knowledge); costs search credits
 ```
 
 ```bash
-bym watch --round rounds/round_01.json --seasons 2021 2026 --data data --loop
+bym watch --round rounds/2026_27_round_01.json --seasons 2021 2026 --data data --loop
 ```
 
 **Event-driven investigation.** A MAJOR market move with no availability
@@ -440,7 +440,7 @@ no phrasing implies otherwise.
 ## Engine run
 
 ```bash
-bym engine-run --round rounds/round_01.json --seasons 2021 2026 --data data
+bym engine-run --round rounds/2026_27_round_01.json --seasons 2021 2026 --data data
 ```
 
 Produces a four-layer report — FORECAST INPUT, MARKET INTELLIGENCE,

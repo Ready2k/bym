@@ -49,7 +49,7 @@ export ODDS_API_KEY=your_key_here
 ```
 
 ```bash
-bym predict --round rounds/round_01.json --seasons 2021 2026 --data data --fetch-odds
+bym predict --round rounds/2026_27_round_01.json --seasons 2021 2026 --data data --fetch-odds
 ```
 
 Check spend at any time:

@@ -133,7 +133,7 @@ failing poll logs `POLL_FAILED`, records the error, and reschedules rather
 than killing the loop. Polling retires itself once the deadline passes.
 
 ```bash
-bym watch --round rounds/round_01.json --seasons 2021 2026 --data data --loop
+bym watch --round rounds/2026_27_round_01.json --seasons 2021 2026 --data data --loop
 ```
 
 ```bash

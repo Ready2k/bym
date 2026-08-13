@@ -37,7 +37,7 @@ MANIFEST.md.
 Before the deadline, with odds filled into the round file:
 
 ```bash
-bym record --round rounds/round_01.json --seasons 2021 2026 --data data --season 2026
+bym record --round rounds/2026_27_round_01.json --seasons 2021 2026 --data data --season 2026
 ```
 
 Then, once picks are actually entered in Super 6, record what was
@@ -45,7 +45,7 @@ submitted (which may differ from the recommendation — that difference is
 the point):
 
 ```bash
-bym record --round rounds/round_01.json --seasons 2021 2026 --data data --season 2026 --submitted 2-0 1-0 2-1 1-2 3-0 1-2
+bym record --round rounds/2026_27_round_01.json --seasons 2021 2026 --data data --season 2026 --submitted 2-0 1-0 2-1 1-2 3-0 1-2
 ```
 
 After the matches, with `null` for any VOID fixture (§2.2):
