@@ -63,12 +63,12 @@ def test_create_round_validates_before_persisting(tmp_path):
 
 
 def test_mark_entered_records_manual_confirmation_only(tmp_path):
-    round_path = tmp_path / "round.json"
-    round_path.write_text(json.dumps(payload()))
-    config = WebConfig(
-        round_path=round_path,
-        submissions_path=tmp_path / "submissions.json",
-    )
+    # configured_round, not a bare WebConfig: marking entered writes the
+    # SUBMITTED arm to ledger_path, and this test used to leave that at its
+    # default — so running the suite rewrote the project's real
+    # results/prospective_ledger.csv. It went unnoticed because the picks
+    # below happen to match what is already in that file byte for byte.
+    config = configured_round(tmp_path)
     result = mark_round_entered(
         {"picks": ["2-0", "1-0", "2-1", "1-2", "3-0", "1-2"], "golden_goal": 9},
         config,
@@ -79,9 +79,7 @@ def test_mark_entered_records_manual_confirmation_only(tmp_path):
 
 
 def test_mark_entered_requires_six_scorelines(tmp_path):
-    round_path = tmp_path / "round.json"
-    round_path.write_text(json.dumps(payload()))
-    config = WebConfig(round_path=round_path, submissions_path=tmp_path / "submissions.json")
+    config = configured_round(tmp_path)
     with pytest.raises(ValueError, match="Exactly six"):
         mark_round_entered({"picks": ["2-0"]}, config)
 
