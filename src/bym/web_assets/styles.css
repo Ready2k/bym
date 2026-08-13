@@ -176,3 +176,41 @@ input:focus, textarea:focus, select:focus { outline: 3px solid #dbeafe; border-c
 @media (max-width: 760px) { .nav-list:first-of-type .nav-link:nth-child(n+4):not(.mobile-more) { display: none; }.nav-link.mobile-more { display: flex; } }
 
 .source-group { margin-bottom: 1.6rem; }.source-group .section-heading { margin-bottom: .8rem; }.source-action { display: block; margin-top: .55rem; padding: .45rem .6rem; color: var(--ink); font-size: .76rem; background: #f2f4f7; border: 1px solid var(--line); border-radius: .4rem; overflow-x: auto; }
+
+/* Pick lineage ---------------------------------------------------------
+   Two cumulative-survival curves. Series hues are the validated
+   categorical slots 1 and 2 (blue/orange): worst-pair CVD ΔE 24.7,
+   normal-vision 33.6, both clear of the gates, and the pair is warm/cool
+   so it survives being printed or read by a protan/deutan eye. This UI
+   commits to a light surface throughout, so no dark steps are defined. */
+.lineage-card { --series-yours: #2a78d6; --series-plan: #eb6834; }
+.lineage-figure { margin: .5rem 0 .2rem; }
+.lineage-hero { margin: 0; font-size: 2.9rem; font-weight: 800; line-height: 1.05; color: var(--ink); letter-spacing: -.02em; }
+.lineage-legend { display: flex; gap: 1.1rem; margin: .55rem 0 .3rem; font-size: .78rem; color: var(--muted); }
+.lineage-legend span { display: inline-flex; gap: .4rem; align-items: center; }
+.lineage-swatch { width: .7rem; height: .18rem; border-radius: .1rem; }
+.lineage-swatch.yours { background: var(--series-yours); }
+.lineage-swatch.plan { background: var(--series-plan); }
+.lineage-scroll { overflow-x: auto; }
+.lineage-chart { width: 100%; min-width: 30rem; height: auto; }
+.lineage-grid { stroke: var(--line); stroke-width: 1; }
+.lineage-tick { font-size: .66rem; fill: var(--muted); }
+.lineage-split { stroke: var(--line); stroke-width: 1; }
+.lineage-split-label { font-size: .62rem; fill: var(--muted); }
+.lineage-line { fill: none; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.lineage-line.yours { stroke: var(--series-yours); }
+.lineage-line.plan { stroke: var(--series-plan); }
+/* 2px ring in the surface colour, so an overlapping pair still reads as two. */
+.lineage-dot { stroke: var(--surface); stroke-width: 2; }
+.lineage-dot.yours { fill: var(--series-yours); }
+.lineage-dot.plan { fill: var(--series-plan); }
+.lineage-end { font-size: .72rem; font-weight: 700; }
+.lineage-end.yours { fill: var(--series-yours); }
+.lineage-end.plan { fill: var(--series-plan); }
+.lineage-hit rect { cursor: crosshair; }
+.lineage-status { padding: .1rem .4rem; font-size: .66rem; font-weight: 700; border-radius: .25rem; }
+.lineage-status.booked { color: var(--ink); background: var(--line); }
+.lineage-status.planned { color: var(--muted); background: var(--canvas); }
+.lineage-down { color: var(--red); font-variant-numeric: tabular-nums; }
+.lineage-up { color: var(--green); font-variant-numeric: tabular-nums; }
+@media (max-width: 760px) { .lineage-hero { font-size: 2.2rem; } }

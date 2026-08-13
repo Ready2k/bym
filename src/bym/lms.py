@@ -754,6 +754,137 @@ def get_state(entrant: str, path: Path = DEFAULT_STATE_PATH) -> LMSState:
     return load_states(path).get(entrant, LMSState(entrant=entrant))
 
 
+@dataclass(frozen=True)
+class LineageStep:
+    """One gameweek of an entrant's path, beside the plan's pick for it.
+
+    `p_win` is None where it cannot be known rather than zero or omitted:
+    a booked week whose fixtures have rolled out of the horizon can still
+    name the club that was taken, and saying "unknown" is the honest
+    rendering. `plan_team` is likewise None once the week is behind the
+    fixture list — the plan for a week nobody can replay is not
+    reconstructible, and inventing one would make the comparison lie in
+    the direction that flatters the tool.
+    """
+
+    gameweek: int
+    status: str  # BOOKED | PLANNED
+    team: str | None
+    p_win: float | None
+    plan_team: str | None
+    plan_p_win: float | None
+    result: str | None = None
+
+    @property
+    def delta(self) -> float | None:
+        """Points of win probability given up against the plan's pick."""
+        if self.p_win is None or self.plan_p_win is None:
+            return None
+        return self.p_win - self.plan_p_win
+
+
+def pick_outlook(
+    params: DixonColesParams | ParamRouter,
+    team: str,
+    opponent: str,
+    is_home: bool,
+    cfg: ModelConfig = DEFAULT_MODEL,
+) -> float:
+    """P(this club wins) for one booked pick, from the club's own side.
+
+    Recomputed from the fixture rather than stored at pick time, so the
+    lineage always reflects the current model rather than a probability
+    frozen against whatever fit was loaded that week.
+    """
+    fixture = (
+        GameweekFixture(team, opponent) if is_home else GameweekFixture(opponent, team)
+    )
+    outlook = fixture_outlooks(params, Gameweek(0, (fixture,)), cfg)[0]
+    return outlook.p_home_win if is_home else outlook.p_away_win
+
+
+def lineage(
+    params: DixonColesParams | ParamRouter,
+    state: LMSState,
+    gameweeks: Sequence[Gameweek],
+    plan: HorizonPlan,
+    reference: HorizonPlan | None = None,
+    cfg: ModelConfig = DEFAULT_MODEL,
+) -> list[LineageStep]:
+    """An entrant's booked picks and remaining plan, as one ordered path.
+
+    `plan` covers the weeks still open to this entrant; `reference` is the
+    plan an entrant with nothing used would have been given over the whole
+    horizon, which is what "the recommendation" means for a week already
+    booked. Weeks appear in gameweek order regardless of which list they
+    came from, because the point of the view is the path, not the split.
+    """
+    by_number = {gw.number: gw for gw in gameweeks}
+    reference_by_gw = {p.gameweek: p for p in (reference.picks if reference else ())}
+    planned_by_gw = {p.gameweek: p for p in plan.picks}
+
+    steps: list[LineageStep] = []
+    for entry in state.history:
+        number = int(entry["gameweek"])
+        p_win = None
+        if number in by_number or entry.get("opponent"):
+            try:
+                p_win = pick_outlook(
+                    params, entry["team"], entry["opponent"], bool(entry["is_home"]), cfg
+                )
+            except (KeyError, TypeError, ValueError):
+                p_win = None
+        ref = reference_by_gw.get(number)
+        steps.append(
+            LineageStep(
+                gameweek=number,
+                status="BOOKED",
+                team=entry.get("team"),
+                p_win=p_win,
+                plan_team=ref.candidate.team if ref else None,
+                plan_p_win=ref.candidate.p_win if ref else None,
+                result=entry.get("result"),
+            )
+        )
+
+    booked = {s.gameweek for s in steps}
+    for pick in plan.picks:
+        if pick.gameweek in booked:
+            continue
+        ref = reference_by_gw.get(pick.gameweek)
+        steps.append(
+            LineageStep(
+                gameweek=pick.gameweek,
+                status="PLANNED",
+                team=pick.candidate.team,
+                p_win=pick.candidate.p_win,
+                plan_team=ref.candidate.team if ref else pick.candidate.team,
+                plan_p_win=ref.candidate.p_win if ref else pick.candidate.p_win,
+            )
+        )
+    steps.sort(key=lambda s: s.gameweek)
+    return steps
+
+
+def cumulative_survival(values: Sequence[float | None]) -> list[float | None]:
+    """Running ∏ p, stopping at the first unknown.
+
+    Survival is a product, so one missing week makes every later figure
+    unknowable rather than merely less precise — carrying on past it would
+    quietly report the product of the weeks that happened to be known.
+    """
+    out: list[float | None] = []
+    running = 1.0
+    for value in values:
+        if value is None or running is None:
+            out.append(None)
+            running = None
+            continue
+        running *= value
+        out.append(running)
+    return out
+
+
 def open_gameweek_indices(
     gameweeks: Sequence[Gameweek], state: LMSState | None
 ) -> list[int]:

@@ -708,3 +708,75 @@ def test_planning_from_the_open_week_scores_only_the_weeks_left(params):
     assert [p.gameweek for p in plan.picks] == [2]
     assert plan.this_week.gameweek == 2
     assert "Middling A" not in [p.candidate.team for p in plan.picks]
+
+
+# --- Pick lineage -------------------------------------------------------
+
+def test_cumulative_survival_is_a_running_product():
+    from bym.lms import cumulative_survival
+
+    out = cumulative_survival([0.5, 0.5, 0.5])
+    assert out == pytest.approx([0.5, 0.25, 0.125])
+
+
+def test_survival_stops_at_the_first_unknown_rather_than_skipping_it():
+    """A product with a missing term is unknown, not the product of the
+    terms that happened to be present — carrying on would quietly report a
+    figure for weeks it cannot actually price."""
+    from bym.lms import cumulative_survival
+
+    assert cumulative_survival([0.5, None, 0.5]) == [0.5, None, None]
+
+
+def test_pick_outlook_reads_the_probability_from_the_club_s_own_side(params):
+    from bym.lms import pick_outlook
+
+    home = pick_outlook(params, "Strong", "Weak", is_home=True)
+    away = pick_outlook(params, "Strong", "Weak", is_home=False)
+    assert home > away, "home advantage should survive the flip"
+    assert 0 < away < home < 1
+
+
+def test_lineage_places_booked_and_planned_weeks_on_one_path(params):
+    from bym.lms import lineage, plan_horizon
+
+    weeks = [
+        Gameweek(1, (GameweekFixture("Strong", "Weak"),
+                     GameweekFixture("Middling A", "Middling B"))),
+        Gameweek(2, (GameweekFixture("Strong", "Middling A"),
+                     GameweekFixture("Middling B", "Weak"))),
+    ]
+    state = LMSState(
+        entrant="James", used_clubs=["Middling A"],
+        history=[{"gameweek": 1, "team": "Middling A", "opponent": "Middling B",
+                  "is_home": True, "result": "PENDING", "source": None}],
+    )
+    reference = plan_horizon(params, weeks)
+    entrant_plan = plan_horizon(params, weeks[1:], {"Middling A"})
+    steps = lineage(params, state, weeks, entrant_plan, reference)
+
+    assert [s.gameweek for s in steps] == [1, 2]
+    assert [s.status for s in steps] == ["BOOKED", "PLANNED"]
+    assert steps[0].team == "Middling A"
+    # The booked week is compared against what an unused entrant was told,
+    # which is the only meaning "the recommendation" has for a spent week.
+    assert steps[0].plan_team == reference.picks[0].candidate.team
+    assert steps[0].delta == pytest.approx(steps[0].p_win - steps[0].plan_p_win)
+
+
+def test_a_booked_week_outside_the_fixture_list_keeps_its_club(params):
+    """Fixtures roll out of the horizon; the pick still happened. Naming
+    the club with an unknown probability beats dropping the week."""
+    from bym.lms import lineage, plan_horizon
+
+    weeks = [Gameweek(9, (GameweekFixture("Strong", "Weak"),))]
+    state = LMSState(
+        entrant="James", used_clubs=["Middling A"],
+        history=[{"gameweek": 1, "team": "Middling A", "opponent": None,
+                  "is_home": True, "result": "WIN", "source": "AUTO"}],
+    )
+    steps = lineage(params, state, weeks, plan_horizon(params, weeks, {"Middling A"}))
+    booked = [s for s in steps if s.status == "BOOKED"][0]
+    assert booked.team == "Middling A"
+    assert booked.p_win is None
+    assert booked.delta is None

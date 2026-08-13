@@ -317,6 +317,161 @@ function lmsPlanCard(plan) {
   </div>`;
 }
 
+// Pick lineage — the path taken against the path recommended.
+//
+// Survival is a product across gameweeks, so the cost of one deviation is
+// not the week it happened in: it multiplies through every week after it.
+// A per-week bar chart hides exactly that. Two cumulative curves show the
+// gap opening and, more importantly, show it never closing.
+const LINEAGE_GEOM = { w: 720, h: 240, top: 24, right: 96, bottom: 40, left: 52 };
+
+function lineagePoints(steps, key, geom) {
+  const usable = steps.filter((s) => s[key] !== null && s[key] !== undefined);
+  if (!usable.length) return [];
+  const span = Math.max(1, steps.length - 1);
+  const plotW = geom.w - geom.left - geom.right;
+  const plotH = geom.h - geom.top - geom.bottom;
+  return usable.map((s) => {
+    const i = steps.indexOf(s);
+    return {
+      step: s,
+      x: geom.left + (span === 0 ? 0 : (i / span) * plotW),
+      y: geom.top + plotH * (1 - s[key]),
+    };
+  });
+}
+
+function lineagePath(points) {
+  return points.map((p, i) => `${i ? "L" : "M"}${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ");
+}
+
+function lineageChart(steps) {
+  const g = LINEAGE_GEOM;
+  const yours = lineagePoints(steps, "survival_yours", g);
+  const plan = lineagePoints(steps, "survival_plan", g);
+  if (!yours.length && !plan.length) return "";
+
+  const plotH = g.h - g.top - g.bottom;
+  // Solid hairline gridlines, one shade off the surface — never dashed.
+  const ticks = [0, 0.25, 0.5, 0.75, 1].map((t) => {
+    const y = g.top + plotH * (1 - t);
+    return `<line class="lineage-grid" x1="${g.left}" y1="${y}" x2="${g.w - g.right}" y2="${y}"></line>
+      <text class="lineage-tick" x="${g.left - 8}" y="${y + 4}" text-anchor="end">${Math.round(t * 100)}%</text>`;
+  }).join("");
+
+  const span = Math.max(1, steps.length - 1);
+  const plotW = g.w - g.left - g.right;
+  const xLabels = steps.map((s, i) => {
+    const x = g.left + (i / span) * plotW;
+    return `<text class="lineage-tick" x="${x}" y="${g.h - g.bottom + 20}" text-anchor="middle">GW${s.gameweek}</text>`;
+  }).join("");
+
+  // The week the paths part. Marked because "where did this go wrong" is
+  // the first question the chart is asked, and hunting for it in the
+  // geometry is the reader doing work the chart should have done.
+  // Only worth marking when the paths run together first. A divergence at
+  // the opening week needs no pointer — the two lines already start apart,
+  // and a rule drawn on the axis reads as stray text.
+  const split = steps.findIndex((s) => s.delta !== null && s.delta !== undefined && Math.abs(s.delta) > 1e-9);
+  const splitMark = split > 0 ? (() => {
+    const x = g.left + (split / span) * plotW;
+    return `<line class="lineage-split" x1="${x}" y1="${g.top}" x2="${x}" y2="${g.h - g.bottom}"></line>
+      <text class="lineage-split-label" x="${x + 6}" y="${g.top + 12}">diverges here</text>`;
+  })() : "";
+
+  const endLabel = (points, cls, text) => {
+    if (!points.length) return "";
+    const last = points[points.length - 1];
+    return `<circle class="lineage-dot ${cls}" cx="${last.x}" cy="${last.y}" r="4.5"></circle>
+      <text class="lineage-end ${cls}" x="${last.x + 12}" y="${last.y + 4}">${escapeHtml(text)}</text>`;
+  };
+
+  const hotspots = steps.map((s, i) => {
+    const x = g.left + (i / span) * plotW;
+    const parts = [`GW${s.gameweek}`];
+    if (s.team) parts.push(`you: ${s.team}${s.p_win != null ? ` ${percent(s.p_win)}` : ""}`);
+    if (s.plan_team) parts.push(`plan: ${s.plan_team}${s.plan_p_win != null ? ` ${percent(s.plan_p_win)}` : ""}`);
+    if (s.survival_yours != null) parts.push(`alive ${percent(s.survival_yours)}`);
+    if (s.survival_plan != null) parts.push(`vs ${percent(s.survival_plan)}`);
+    // Hit target spans the whole band, not the 9px dot.
+    return `<g class="lineage-hit"><rect x="${x - plotW / (span * 2) - 2}" y="${g.top}"
+      width="${Math.max(24, plotW / span)}" height="${plotH}" fill="transparent"></rect>
+      <title>${escapeHtml(parts.join(" · "))}</title></g>`;
+  }).join("");
+
+  return `<svg class="lineage-chart" viewBox="0 0 ${g.w} ${g.h}" role="img"
+    aria-label="Cumulative survival probability by gameweek: your path against the recommended plan.">
+    ${ticks}${xLabels}${splitMark}
+    <path class="lineage-line plan" d="${lineagePath(plan)}"></path>
+    <path class="lineage-line yours" d="${lineagePath(yours)}"></path>
+    ${endLabel(plan, "plan", "plan")}
+    ${endLabel(yours, "yours", "you")}
+    ${hotspots}
+  </svg>`;
+}
+
+function lineageRows(steps) {
+  return steps.map((s) => {
+    const delta = s.delta === null || s.delta === undefined
+      ? "—"
+      : `${s.delta >= 0 ? "+" : ""}${(s.delta * 100).toFixed(1)}pp`;
+    const deltaClass = s.delta === null || s.delta === undefined || Math.abs(s.delta) < 1e-9
+      ? "" : (s.delta < 0 ? "lineage-down" : "lineage-up");
+    return `<tr>
+      <td>GW${s.gameweek}</td>
+      <td><span class="lineage-status ${s.status.toLowerCase()}">${s.status === "BOOKED" ? "Booked" : "Planned"}</span></td>
+      <td>${escapeHtml(s.team || "—")}</td>
+      <td>${s.p_win == null ? "—" : percent(s.p_win)}</td>
+      <td>${escapeHtml(s.plan_team || "—")}</td>
+      <td>${s.plan_p_win == null ? "—" : percent(s.plan_p_win)}</td>
+      <td class="${deltaClass}">${delta}</td>
+      <td>${s.survival_yours == null ? "—" : percent(s.survival_yours)}</td>
+    </tr>`;
+  }).join("");
+}
+
+function lmsLineageCard(lineage) {
+  if (!lineage?.steps?.length) return "";
+  const steps = lineage.steps;
+  if (!steps.some((s) => s.status === "BOOKED")) return "";
+  const yours = lineage.survival_yours;
+  const plan = lineage.survival_plan;
+  const gap = yours != null && plan != null ? (yours - plan) * 100 : null;
+  const booked = steps.filter((s) => s.status === "BOOKED");
+
+  let verdict;
+  if (gap === null) {
+    verdict = `<p class="subtitle">Some weeks in this path can no longer be priced, so the comparison stops where the fixtures run out.</p>`;
+  } else if (Math.abs(gap) < 0.05) {
+    verdict = `<p class="subtitle">Your picks match the plan — the two paths are the same line.</p>`;
+  } else {
+    const worst = booked.reduce((a, b) => ((b.delta ?? 0) < (a.delta ?? 0) ? b : a), booked[0]);
+    const cause = worst && worst.delta != null && worst.plan_team && worst.plan_team !== worst.team
+      ? ` The gap opens at GW${worst.gameweek}, where you took ${escapeHtml(worst.team)} over ${escapeHtml(worst.plan_team)}.`
+      : "";
+    verdict = `<p class="subtitle">Surviving the whole horizon on your path is <strong>${percent(yours)}</strong>, against <strong>${percent(plan)}</strong> for the recommended path — <strong>${gap.toFixed(1)}pp</strong>.${cause} Because survival multiplies, a single week's deficit is carried by every week after it.</p>`;
+  }
+
+  return `<div class="stat-table-card lineage-card">
+    <p class="eyebrow">Pick lineage</p>
+    <h3>Your path against the plan</h3>
+    <div class="lineage-figure">
+      <p class="lineage-hero">${yours == null ? "—" : percent(yours)}</p>
+      <p class="subtitle">chance of surviving all ${steps.length} gameweek${steps.length === 1 ? "" : "s"} on the picks you have made and the plan from here</p>
+    </div>
+    <div class="lineage-legend">
+      <span><i class="lineage-swatch yours"></i>Your path</span>
+      <span><i class="lineage-swatch plan"></i>Recommended plan</span>
+    </div>
+    <div class="lineage-scroll">${lineageChart(steps)}</div>
+    ${verdict}
+    <details class="disclosure"><summary>Week by week</summary>
+      <table><thead><tr><th>GW</th><th>Status</th><th>Your club</th><th>P(Win)</th><th>Plan's club</th><th>P(Win)</th><th>Delta</th><th>Still alive</th></tr></thead>
+      <tbody>${lineageRows(steps)}</tbody></table>
+    </details>
+  </div>`;
+}
+
 function lmsHistoryRows(entrants) {
   const names = Object.keys(entrants).sort();
   if (!names.length) return `<tr><td colspan="4">No entrants recorded yet — enter a name above and record a pick.</td></tr>`;
@@ -351,6 +506,7 @@ function lmsView() {
   const state = entrants[lmsEntrant];
   const candidates = (lmsEntrant && lms.recommendations[lmsEntrant]) || lms.recommendations.__all__ || [];
   const plan = (lmsEntrant && lms.plans?.[lmsEntrant]) || lms.plans?.__all__ || null;
+  const lineage = (lmsEntrant && lms.lineages?.[lmsEntrant]) || null;
   const pendingPick = gw && state?.history.find((h) => h.gameweek === gw.number);
   const eliminated = state && !state.alive;
 
@@ -369,9 +525,9 @@ function lmsView() {
     const manualFallback = !settled && !lms.auto_settle?.ran
       ? `<span class="button-row" style="margin-top:.6rem">${["WIN", "DRAW", "LOSS"].map((r) => `<button class="button secondary-button" data-lms-result="${r}">${r}</button>`).join("")}</span><p class="subtitle" style="margin-top:.4rem">Manual override — logged as self-reported, not verified.</p>`
       : !settled ? `<p class="subtitle" style="margin-top:.4rem">Waiting for full time. This settles itself automatically once football-data.org has the result.</p>` : "";
-    pickSection = `<div class="callout muted"><strong>Gameweek ${gw.number}</strong><span>${escapeHtml(pendingPick.team)} ${pendingPick.is_home ? "v" : "@"} ${escapeHtml(pendingPick.opponent)} — ${pendingPick.result}${pendingPick.source ? ` (${pendingPick.source.toLowerCase()})` : ""}${manualFallback}</span></div>`;
+    pickSection = `<div class="callout muted"><strong>Gameweek ${gw.number}</strong><span>${escapeHtml(pendingPick.team)} ${pendingPick.is_home ? "v" : "@"} ${escapeHtml(pendingPick.opponent)} — ${pendingPick.result}${pendingPick.source ? ` (${pendingPick.source.toLowerCase()})` : ""}${manualFallback}</span></div>${lmsLineageCard(lineage)}${lmsPlanCard(plan)}`;
   } else {
-    pickSection = `${lmsPlanCard(plan)}<div class="stat-table-card"><p class="eyebrow">Every eligible club</p><table><thead><tr><th>Team</th><th>Fixture</th><th>P(Win)</th><th>P(Draw)</th><th>P(Loss)</th><th>Conf</th><th></th></tr></thead><tbody>${lmsRecommendationRows(candidates, !!lmsEntrant, plan?.picks?.[0]?.team)}</tbody></table></div>${lmsEntrant ? "" : `<p class="subtitle">Enter an entrant name above to record a pick.</p>`}`;
+    pickSection = `${lmsLineageCard(lineage)}${lmsPlanCard(plan)}<div class="stat-table-card"><p class="eyebrow">Every eligible club</p><table><thead><tr><th>Team</th><th>Fixture</th><th>P(Win)</th><th>P(Draw)</th><th>P(Loss)</th><th>Conf</th><th></th></tr></thead><tbody>${lmsRecommendationRows(candidates, !!lmsEntrant, plan?.picks?.[0]?.team)}</tbody></table></div>${lmsEntrant ? "" : `<p class="subtitle">Enter an entrant name above to record a pick.</p>`}`;
   }
 
   const unknownNote = gw && lms.unknown_teams.length ? `<p class="subtitle">Not in the training corpus, using league-average strength: ${escapeHtml(lms.unknown_teams.join(", "))}.</p>` : "";

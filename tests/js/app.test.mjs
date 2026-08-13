@@ -7,7 +7,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { loadApp, appData, fixture, lmsPlan } from "./harness.mjs";
+import { loadApp, appData, fixture, lmsPlan , lmsLineage } from "./harness.mjs";
 
 const HOSTILE = '<img src=x onerror="alert(1)">';
 
@@ -381,4 +381,78 @@ test("the planned club is marked in the full eligible list", () => {
   // read the ranking as the recommendation.
   assert.match(html, /Brentford<span class="status-pill approved">PLAN<\/span>|Brentford <span class="status-pill approved">PLAN<\/span>/);
   assert.equal(html.match(/PLAN/g).length, 1);
+});
+
+// --- Pick lineage ------------------------------------------------------
+
+test("the lineage card leads with the number the reader came for", () => {
+  const app = loadApp(appData());
+  const html = app.lmsLineageCard(lmsLineage());
+  assert.match(html, /28\.5%/, "survival on the path actually taken is the headline");
+  assert.match(html, /37\.2%/, "and it is meaningless without the path not taken");
+  assert.match(html, /-8\.7pp/);
+});
+
+test("the lineage card names where the two paths parted", () => {
+  // "You are 8.7pp down" is not actionable. "You are down because GW1 took
+  // Man United over Arsenal" is.
+  const app = loadApp(appData());
+  const html = app.lmsLineageCard(lmsLineage());
+  assert.match(html, /GW1/);
+  assert.match(html, /Man United/);
+  assert.match(html, /Arsenal/);
+});
+
+test("an entrant with nothing booked gets no lineage card", () => {
+  // With no pick made there is no path to compare — the plan card already
+  // says everything, and an empty chart would be furniture.
+  const app = loadApp(appData());
+  const planned = lmsLineage();
+  planned.steps = planned.steps.map((s) => ({ ...s, status: "PLANNED" }));
+  assert.equal(app.lmsLineageCard(planned), "");
+  assert.equal(app.lmsLineageCard(null), "");
+  assert.equal(app.lmsLineageCard({ steps: [] }), "");
+});
+
+test("every gameweek in the chart is also in the table beneath it", () => {
+  // The chart is not allowed to be the only way to read a value.
+  const app = loadApp(appData());
+  const html = app.lmsLineageCard(lmsLineage());
+  for (const gw of ["GW1", "GW2", "GW3"]) {
+    assert.ok(html.includes(`<td>${gw}</td>`), `${gw} missing from the table view`);
+  }
+  assert.match(html, /71\.7%/);
+  assert.match(html, /81\.0%/);
+});
+
+test("both series are drawn, and identity is never colour alone", () => {
+  const app = loadApp(appData());
+  const html = app.lmsLineageCard(lmsLineage());
+  assert.match(html, /lineage-line yours/);
+  assert.match(html, /lineage-line plan/);
+  assert.match(html, /Your path/, "legend text, not just a hue");
+  assert.match(html, /Recommended plan/);
+  assert.match(html, /aria-label="Cumulative survival/);
+});
+
+test("a club name cannot inject markup through the lineage card", () => {
+  const app = loadApp(appData());
+  const hostile = lmsLineage();
+  hostile.steps[0].team = '<img src=x onerror=alert(1)>';
+  const html = app.lmsLineageCard(hostile);
+  assert.ok(!html.includes("<img src=x"), "club names must be escaped");
+  assert.match(html, /&lt;img/);
+});
+
+test("weeks that cannot be priced are shown as unknown, not as zero", () => {
+  // A booked week whose fixtures have rolled out of the horizon still has
+  // a club worth naming. Rendering its probability as 0% would say the
+  // entrant certainly died that week.
+  const app = loadApp(appData());
+  const unpriced = lmsLineage();
+  unpriced.steps[0] = { ...unpriced.steps[0], p_win: null, plan_team: null,
+    plan_p_win: null, delta: null, survival_yours: null, survival_plan: null };
+  const html = app.lmsLineageCard(unpriced);
+  assert.ok(!html.includes("0.0%"), "an unknown week must not read as certain death");
+  assert.match(html, /—/);
 });

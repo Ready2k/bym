@@ -28,8 +28,34 @@ const EXPOSED = [
   "heatmapGrid", "evBreakdown", "sourceFreshness", "surpriseNote",
   "strategyPanel", "submissionRecord", "leagueView", "homeView",
   "teamBadge", "activityItem", "emptyState", "markScrollableRegions",
-  "lmsPlanCard", "lmsRecommendationRows",
+  "lmsPlanCard", "lmsRecommendationRows", "lmsLineageCard", "lineageChart",
 ];
+
+/** An entrant's lineage as `_lms_lineage_dict` shapes it. */
+export function lmsLineage(overrides = {}) {
+  return {
+    survival_yours: 0.2852,
+    survival_plan: 0.3719,
+    steps: [
+      {
+        gameweek: 1, status: "BOOKED", team: "Man United", p_win: 0.7165,
+        plan_team: "Arsenal", plan_p_win: 0.8104, delta: -0.0939,
+        result: "PENDING", survival_yours: 0.7165, survival_plan: 0.8104,
+      },
+      {
+        gameweek: 2, status: "PLANNED", team: "Coventry", p_win: 0.62,
+        plan_team: "Man United", plan_p_win: 0.7154, delta: -0.0954,
+        result: null, survival_yours: 0.4442, survival_plan: 0.5798,
+      },
+      {
+        gameweek: 3, status: "PLANNED", team: "Man City", p_win: 0.8147,
+        plan_team: "Man City", plan_p_win: 0.8147, delta: 0,
+        result: null, survival_yours: 0.3619, survival_plan: 0.4723,
+      },
+    ],
+    ...overrides,
+  };
+}
 
 /** A Last Man Standing horizon plan as `lms_payload` shapes it. */
 export function lmsPlan(overrides = {}) {

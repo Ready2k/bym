@@ -1596,6 +1596,37 @@ def _lms_candidate_dict(candidate) -> dict:
     }
 
 
+def _lms_lineage_dict(steps) -> dict:
+    """An entrant's path plus both cumulative survival curves.
+
+    Both curves are computed here rather than in the browser so the chart
+    and the table it twins are guaranteed to be showing the same numbers.
+    """
+    from . import lms as lms_mod
+
+    yours = lms_mod.cumulative_survival([s.p_win for s in steps])
+    plan = lms_mod.cumulative_survival([s.plan_p_win for s in steps])
+    return {
+        "steps": [
+            {
+                "gameweek": s.gameweek,
+                "status": s.status,
+                "team": s.team,
+                "p_win": s.p_win,
+                "plan_team": s.plan_team,
+                "plan_p_win": s.plan_p_win,
+                "delta": s.delta,
+                "result": s.result,
+                "survival_yours": yours[i],
+                "survival_plan": plan[i],
+            }
+            for i, s in enumerate(steps)
+        ],
+        "survival_yours": yours[-1] if yours else None,
+        "survival_plan": plan[-1] if plan else None,
+    }
+
+
 def _lms_plan_dict(plan) -> dict:
     """A horizon plan flattened for the UI, greedy comparison included.
 
@@ -1672,7 +1703,7 @@ def lms_payload(config: WebConfig, router=None, known_teams: set[str] | None = N
     if not gameweeks:
         return {
             "gameweek": None, "entrants": entrants, "recommendations": {}, "plans": {},
-            "unknown_teams": [], "auto_settle": auto_settle_info,
+            "lineages": {}, "unknown_teams": [], "auto_settle": auto_settle_info,
             "fixtures_source": fixtures_info,
         }
 
@@ -1700,10 +1731,27 @@ def lms_payload(config: WebConfig, router=None, known_teams: set[str] | None = N
 
     recommendations, plans = {}, {}
     recommendations["__all__"], plans["__all__"] = for_used(set())
+    # The unconstrained plan over the whole horizon — what "the
+    # recommendation" meant for a week an entrant has already booked, and
+    # so the only honest thing to compare a booked pick against.
+    reference_plan = lms_mod.plan_horizon(router, gameweeks, set(), outlooks=outlooks)
+    lineages = {}
     for name, state in states.items():
         if state.alive:
             recommendations[name], plans[name] = for_used(
                 set(state.used_clubs), state
+            )
+            open_idx = lms_mod.open_gameweek_indices(gameweeks, state)
+            entrant_plan = lms_mod.plan_horizon(
+                router,
+                [gameweeks[i] for i in open_idx],
+                set(state.used_clubs),
+                outlooks=[outlooks[i] for i in open_idx],
+            )
+            lineages[name] = _lms_lineage_dict(
+                lms_mod.lineage(
+                    router, state, gameweeks, entrant_plan, reference_plan
+                )
             )
 
     return {
@@ -1718,6 +1766,7 @@ def lms_payload(config: WebConfig, router=None, known_teams: set[str] | None = N
         "entrants": entrants,
         "recommendations": recommendations,
         "plans": plans,
+        "lineages": lineages,
         "unknown_teams": unknown,
         "auto_settle": auto_settle_info,
         "fixtures_source": fixtures_info,
