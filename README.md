@@ -197,7 +197,11 @@ is why `lms-plan` — not `lms-recommend` — is the command to start from.
   club once" is the constraint that no club is used twice
   (`scipy.optimize.linear_sum_assignment`). Only the first pick is
   committed — the rest are re-planned every week as fixtures and form
-  move. Future gameweeks are shrunk toward their own mean before planning
+  move. With `--entrant`, planning starts at the first gameweek that
+  entrant has not already booked: a booked week has spent the week as well
+  as the club, so planning from it would name a pick for a passed deadline
+  and solve the weeks after it as though the club it suggested were still
+  to be spent. Future gameweeks are shrunk toward their own mean before planning
   (`LMSConfig.future_shrink_per_week`), because a fixture a month out is
   forecast from today's squads; the survival probabilities reported are
   the unshrunk ones, so the plan is chosen cautiously and scored honestly.
@@ -255,8 +259,16 @@ is why `lms-plan` — not `lms-recommend` — is the command to start from.
   gameweek is not a horizon, so the "plan" degenerates to the weekly
   favourite and says so.
 - `bym lms-pick --entrant <name> --gameweek <n> --team <club> --opponent <club> [--home]`
-  — records a pick. Refuses a club already used or a second pick logged for
-  the same gameweek.
+  — records a pick, or changes one already recorded for that gameweek. A
+  club is only spent once the round it was picked for kicks off, so
+  changing before then is a legal move rather than a correction: the
+  replaced club is released back to the entrant automatically, which is
+  the step editing `lms_state.json` by hand tends to miss. After the first
+  match of the gameweek starts, or once the pick has been settled, it is
+  final. A club already used in a *different* gameweek is still refused.
+  Gameweeks written by hand carry no kickoff time and so stay changeable —
+  locking what cannot be timed would be worse than trusting the rule the
+  competition already trusts you with.
 - `bym lms-settle [--fd-season 2026]` — fetches full-time results from
   football-data.org (needs `FOOTBALL_DATA_ORG_KEY`, same source `bym
   score` uses) and settles every PENDING pick that's finished. This is the
@@ -278,8 +290,20 @@ is why `lms-plan` — not `lms-recommend` — is the command to start from.
 It also has its own tab in the local dashboard (`bym serve`, see below) —
 the next few gameweeks' fixtures are fetched and planned automatically on
 every page load: type an entrant name, see the recommended pick with the
-plan behind it and what the weekly favourite would have cost, then the
-full list of eligible clubs with a **Pick** button. Every load also tries `lms-settle`'s result fetch; a
+plan behind it and what the weekly favourite would have cost, then every
+eligible club with a **Pick** (or **Switch**) button.
+
+Two things there answer questions the numbers alone don't. **Pick lineage**
+draws the path you have actually taken against the path the plan would
+have given, as cumulative survival across the horizon — survival is a
+product, so a week's deficit is not paid that week, it is carried by every
+week after it, and the curves show the gap opening and never closing.
+**Selecting any club** re-solves the remaining gameweeks with that club
+spent and redraws the same curves, so "what would picking Hull cost me"
+is answered over the whole horizon rather than by one week's win
+probability. Nothing is saved until a button is pressed.
+
+Every load also tries `lms-settle`'s result fetch; a
 pending pick only ever shows manual WIN/DRAW/LOSS buttons when no
 `FOOTBALL_DATA_ORG_KEY` is configured, and using them is logged as
 self-reported. Without a key the fixtures editor becomes the primary way
