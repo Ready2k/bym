@@ -26,12 +26,34 @@ Two odds sets, deliberately distinct (validation protocol):
 from __future__ import annotations
 
 import io
+import os
+import warnings
 from pathlib import Path
 
 import pandas as pd
 import requests
 
 from ..config import DEFAULT_DATA, DataConfig
+
+# The columns parse_season_csv cannot do without. Checked against the
+# response body BEFORE anything reaches the cache, because the failure
+# they cause otherwise is a bare pandas KeyError raised on a later run,
+# in a different function, about a file whose download nobody suspects.
+REQUIRED_COLUMNS = ("Date", "HomeTeam", "AwayTeam", "FTHG", "FTAG")
+
+
+class SeasonUnavailable(RuntimeError):
+    """The source publishes no data for this season/division yet.
+
+    Distinct from a download failure. Normal in the opening weeks of a
+    season — Football-Data creates a division's file when that division
+    has played — so callers may reasonably carry on without it, whereas
+    a genuine fetch error should stop them.
+    """
+
+
+class SeasonDownloadError(RuntimeError):
+    """The download returned something that is not a season CSV."""
 
 
 def season_code(start_year: int) -> str:
@@ -43,6 +65,18 @@ def csv_url(start_year: int, division: str, cfg: DataConfig = DEFAULT_DATA) -> s
     return f"{cfg.base_url}/{season_code(start_year)}/{division}.csv"
 
 
+def looks_like_season_csv(text: str) -> bool:
+    """Does this body carry a Football-Data header row?
+
+    A 300 Multiple Choices response is an HTML page, and an HTML page is
+    a perfectly parseable CSV of one nonsense column — so the check has
+    to be for the columns we actually need, not for parseability.
+    """
+    first_line = text.lstrip("﻿").split("\n", 1)[0]
+    fields = {field.strip().strip('"') for field in first_line.split(",")}
+    return all(column in fields for column in REQUIRED_COLUMNS)
+
+
 def fetch_season(
     start_year: int,
     division: str,
@@ -50,14 +84,50 @@ def fetch_season(
     force: bool = False,
     cfg: DataConfig = DEFAULT_DATA,
 ) -> Path:
-    """Download one season CSV into dest_dir, returning the cached path."""
+    """Download one season CSV into dest_dir, returning the cached path.
+
+    Raises SeasonUnavailable if the source has no file for this season
+    yet, and SeasonDownloadError if it returned something that is not a
+    season CSV. Neither leaves anything behind in dest_dir: a cached
+    file is only ever a body that passed validation, so a bad fetch
+    cannot poison every subsequent run.
+    """
     dest_dir.mkdir(parents=True, exist_ok=True)
     path = dest_dir / f"{start_year}_{division}.csv"
     if path.exists() and not force:
         return path
-    resp = requests.get(csv_url(start_year, division, cfg), timeout=30)
+
+    url = csv_url(start_year, division, cfg)
+    resp = requests.get(url, timeout=30)
+
+    # Not raise_for_status(): that passes on every 3xx, and this source
+    # answers a not-yet-published season with 300 Multiple Choices, which
+    # requests does not follow because there is no unambiguous Location.
+    # The HTML body then sails through as if it were match data.
+    if resp.status_code in (300, 404):
+        raise SeasonUnavailable(
+            f"{division} {start_year}/{str(start_year + 1)[2:]} is not published "
+            f"yet — {url} returned HTTP {resp.status_code}"
+        )
     resp.raise_for_status()
-    path.write_bytes(resp.content)
+    if resp.status_code != 200:
+        raise SeasonDownloadError(
+            f"{url} returned HTTP {resp.status_code}, expected 200"
+        )
+
+    body = resp.content
+    if not looks_like_season_csv(body.decode("utf-8-sig", errors="replace")):
+        raise SeasonDownloadError(
+            f"{url} returned HTTP {resp.status_code} but the body is not a "
+            f"Football-Data CSV (no {'/'.join(REQUIRED_COLUMNS)} header). "
+            f"Nothing was cached."
+        )
+
+    # Write beside the target and rename, so an interrupted download
+    # cannot leave a half-file that later runs treat as cached.
+    tmp = path.with_name(f".{path.name}.partial")
+    tmp.write_bytes(body)
+    os.replace(tmp, path)
     return path
 
 
@@ -137,8 +207,18 @@ def parse_season_csv(
 ) -> pd.DataFrame:
     """Parse one cached CSV into the canonical fixture frame."""
     raw = path.read_bytes().decode("utf-8-sig", errors="replace")
+    # Caches written before fetch_season validated response bodies can
+    # still hold an HTML error page. Say so, rather than letting dropna
+    # report a KeyError about columns the file was never going to have.
+    if not looks_like_season_csv(raw):
+        raise SeasonDownloadError(
+            f"{path} is not a Football-Data CSV (no "
+            f"{'/'.join(REQUIRED_COLUMNS)} header). It is most likely a "
+            f"cached error page from a failed download — delete it, or "
+            f"re-run `bym fetch` with --force, to replace it."
+        )
     df = pd.read_csv(io.StringIO(raw), on_bad_lines="skip")
-    df = df.dropna(subset=["Date", "HomeTeam", "AwayTeam", "FTHG", "FTAG"])
+    df = df.dropna(subset=list(REQUIRED_COLUMNS))
 
     out = pd.DataFrame(
         {
@@ -194,13 +274,29 @@ def load_matches(
     season start-years and divisions."""
     divisions = divisions or cfg.divisions
     frames = []
+    skipped = []
     for year in seasons:
         for div in divisions:
             path = data_dir / f"{year}_{div}.csv"
             if not path.exists():
                 if not fetch:
                     raise FileNotFoundError(f"{path} missing and fetch=False")
-                fetch_season(year, div, data_dir, cfg=cfg)
+                try:
+                    fetch_season(year, div, data_dir, cfg=cfg)
+                except SeasonUnavailable as exc:
+                    # A division with no published file yet is normal in
+                    # the opening weeks of a season, so this is not fatal
+                    # — but it is never silent. The corpus a model saw is
+                    # part of its result (§18), and a quietly narrower one
+                    # is exactly the drift DataConfig.divisions warns about.
+                    skipped.append(f"{year} {div}")
+                    warnings.warn(str(exc), stacklevel=2)
+                    continue
             frames.append(parse_season_csv(path, year, div, cfg))
+    if not frames:
+        raise SeasonUnavailable(
+            f"no season data available for {seasons} in "
+            f"{'/'.join(divisions)} — skipped: {', '.join(skipped) or 'none'}"
+        )
     matches = pd.concat(frames, ignore_index=True)
     return matches.sort_values("date").reset_index(drop=True)

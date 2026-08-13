@@ -21,12 +21,20 @@ def _season_range(args) -> list[int]:
 
 
 def cmd_fetch(args) -> int:
-    from .data.football_data import fetch_season
+    from .data.football_data import SeasonUnavailable, fetch_season
 
     for year in _season_range(args):
         for div in args.divisions:
-            path = fetch_season(year, div, Path(args.data), force=args.force)
-            print(f"  {year}/{str(year + 1)[2:]} {div}: {path}")
+            label = f"{year}/{str(year + 1)[2:]} {div}"
+            # A season the source has not published yet is reported and
+            # stepped over: asking for a range that runs to the current
+            # season should not abort the seasons behind it.
+            try:
+                path = fetch_season(year, div, Path(args.data), force=args.force)
+            except SeasonUnavailable as exc:
+                print(f"  {label}: not published yet ({exc})")
+                continue
+            print(f"  {label}: {path}")
     return 0
 
 
