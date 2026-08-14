@@ -556,3 +556,10 @@ actually unblock each of these — not just that they're missing — see
 The project source code is licensed under the [Apache License 2.0](LICENSE).
 See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for important exclusions
 and third-party terms.
+
+## Attribution
+
+The code in this repository was written with [Claude](https://claude.com)
+(Anthropic). The project's direction, specification, and documentation —
+including [SPEC.md](SPEC.md) and the design/rules records in `docs/` and
+`research/` — are the author's own.
