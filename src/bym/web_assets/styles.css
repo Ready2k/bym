@@ -35,6 +35,8 @@ button:focus-visible, a:focus-visible { outline: 3px solid #93c5fd; outline-offs
 .nav-list.secondary { padding-top: 1.3rem; margin-top: 1.3rem; border-top: 1px solid #374151; }
 .nav-link { display: flex; align-items: center; justify-content: space-between; padding: .75rem .7rem; color: #cbd5e1; text-decoration: none; border-radius: .45rem; }
 .nav-link.active { color: white; font-weight: 700; background: #273449; }
+.nav-link.nav-child { padding-left: 1.35rem; font-size: .82rem; color: #aebbd0; }
+.nav-link.nav-child.active { color: white; }
 .nav-link.disabled { color: #7c8798; cursor: not-allowed; }
 .nav-link small { padding: .1rem .35rem; font-size: .63rem; color: #94a3b8; background: #1f2937; border-radius: .25rem; }
 .sidebar-note { padding: 1rem .6rem 0; margin: auto 0 0; font-size: .73rem; line-height: 1.5; color: #94a3b8; }
@@ -244,6 +246,27 @@ tr[data-lms-preview] { cursor: pointer; }
 .lineage-focus span, .lineage-focus small { color: var(--muted); font-size: .7rem; }
 .lineage-focus strong { color: #1559a5; font-size: 1.35rem; line-height: 1; letter-spacing: -.04em; }
 @media (max-width: 760px) { .lineage-focus { grid-template-columns: 1fr; gap: .65rem; }.lineage-focus > div:last-child { min-width: 0; padding: .65rem 0 0; text-align: left; border-top: 1px solid #dce5f0; border-left: 0; } }
+.replay-tree { display: grid; justify-items: center; gap: 0; margin-top: 1.25rem; }
+.replay-tree-root { display: grid; justify-items: center; gap: .18rem; padding: .65rem 1rem; color: #e8f3ff; background: #173a65; border: 2px solid #0e2a4a; border-radius: 999px; box-shadow: 0 3px 8px rgb(15 39 69 / 18%); }
+.replay-tree-root span { font-size: .68rem; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+.replay-tree-root strong { font-size: .92rem; }
+.replay-tree-game { position: relative; display: grid; justify-items: center; width: min(100%, 66rem); padding: 1.65rem 1rem .4rem; }
+.replay-tree-game::before { position: absolute; top: 0; left: 50%; width: 2px; height: 1.45rem; content: ""; background: #aebfd3; }
+.replay-tree-game > .eyebrow { position: absolute; top: .45rem; left: calc(50% + .7rem); margin: 0; }
+.replay-tree-choice { position: relative; display: grid; gap: .15rem; min-width: min(18rem, 100%); padding: .7rem .85rem; border: 2px solid; border-radius: .65rem; box-shadow: 0 2px 5px rgb(16 24 40 / 8%); }
+.replay-tree-choice span, .replay-tree-choice small { color: var(--muted); font-size: .72rem; }
+.replay-tree-choice strong { font-size: 1.05rem; }
+.replay-tree-choice.yours { background: #eff8ff; border-color: #8fc8fb; }
+.replay-tree-choice.suggested { background: #fff8eb; border-color: #f2c567; }
+.replay-tree-choice.shared { min-width: min(23rem, 100%); color: #164a7c; background: linear-gradient(90deg, #eff8ff 0%, #eff8ff 48%, #fff8eb 52%, #fff8eb 100%); border-color: #99bddd; }
+.replay-tree-choice.out { border-color: #f3a2a2; opacity: .9; }
+.replay-tree-choice.out small { color: #a53737; }
+.replay-tree-choice.pending { border-color: #d9b45c; background: #fffbed; }
+.replay-tree-branches { position: relative; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: clamp(1rem, 7vw, 6rem); width: min(100%, 48rem); padding-top: .85rem; }
+.replay-tree-branches::before { position: absolute; top: 0; right: 25%; left: 25%; height: 2px; content: ""; background: #aebfd3; }
+.replay-tree-branches::after { position: absolute; top: 0; left: 50%; width: 2px; height: .85rem; content: ""; background: #aebfd3; }
+.replay-tree-branches > .replay-tree-choice::before { position: absolute; top: -.85rem; left: 50%; width: 2px; height: .85rem; content: ""; background: #aebfd3; }
+@media (max-width: 600px) { .replay-tree-game { justify-items: stretch; padding-top: 2rem; }.replay-tree-game::before { left: 1.5rem; }.replay-tree-game > .eyebrow { top: .55rem; left: 2.2rem; }.replay-tree-branches { grid-template-columns: 1fr; width: auto; padding-top: .7rem; }.replay-tree-branches::before { top: 0; right: auto; left: 1.5rem; width: 2px; height: calc(100% - .7rem); }.replay-tree-branches::after, .replay-tree-branches > .replay-tree-choice::before { display: none; }.replay-tree-choice { min-width: 0; margin-left: 1.5rem; }.replay-tree-choice.shared { min-width: 0; justify-self: stretch; margin-left: 1.5rem; } }
 .model-view, .health-view { display: grid; align-content: start; gap: 1rem; }
 .model-view .page-header, .health-view .page-header, .model-view .callout, .health-view .callout { margin: 0; }
 

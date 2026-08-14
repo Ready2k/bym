@@ -1,0 +1,5 @@
+arm,decisions,wins,win%,mean p(win)%,calibration pp,brier,logloss
+MODEL weekly (fresh entry),272,207,76.1,74.24,1.86,0.1809,0.5478
+MARKET-AVAILABLE weekly (price proxy),272,215,79.04,73.74,5.3,0.1652,0.5075
+MODEL plan (4-slate survival),254,54,21.26,27.17,-5.91,0.1752,0.5341
+LEGAL greedy (4-slate survival),254,61,24.02,24.98,-0.97,0.1954,0.5823

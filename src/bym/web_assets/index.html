@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="theme-color" content="#101828">
     <title>Beat Your Mates — Decision Centre</title>
+    <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml">
     <link rel="stylesheet" href="/assets/styles.css">
   </head>
   <body>
@@ -17,6 +18,7 @@
           <a class="nav-link" data-page-link="round" href="#round"><span>Round</span></a>
           <a class="nav-link" data-page-link="cup" href="#cup"><span>Cup Match</span></a>
           <a class="nav-link" data-page-link="lms" href="#lms"><span>Last Man Standing</span></a>
+          <a class="nav-link nav-child" data-page-link="lms-replay" href="#lms-replay"><span>↳ Replay a season</span></a>
           <a class="nav-link" data-page-link="league" href="#league"><span>League</span></a>
           <a class="nav-link" data-page-link="opponents" href="#opponents"><span>Opponents</span></a>
           <a class="nav-link" data-page-link="performance" href="#performance"><span>Performance</span></a>
@@ -55,6 +57,7 @@
     <dialog id="entry-dialog" class="dialog entry-dialog"><button class="close-button" data-close="entry-dialog" aria-label="Close confirmation">×</button><div id="entry-detail"></div></dialog>
     <dialog id="round-dialog" class="dialog entry-dialog"><button class="close-button" data-close="round-dialog" aria-label="Close deadline confirmation">×</button><div id="round-detail"></div></dialog>
     <dialog id="info-dialog" class="dialog info-dialog"><button class="close-button" data-close="info-dialog" aria-label="Close explanation">×</button><div id="info-detail"></div></dialog>
+    <dialog id="lms-replay-dialog" class="dialog entry-dialog"><button class="close-button" data-close="lms-replay-dialog" aria-label="Close replay path">×</button><div id="lms-replay-detail"></div></dialog>
     <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
     <script src="/assets/app.js" defer></script>
   </body>
