@@ -25,3 +25,6 @@ secrets/research/data/
 # tracked exception is the template a fresh clone copies to start.
 /rounds/*.json
 !/rounds/example_round.json
+
+# ingore the CLAUDE.md file, which is a personal note for the author and not relevant to the project
+CLAUDE.md
