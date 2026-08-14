@@ -543,3 +543,9 @@ actually unblock each of these — not just that they're missing — see
 - **FastAPI/Postgres** (§26) — the local UI runs on stdlib `http.server`
   and SQLite; the modelling core is plain Python modules precisely so a
   framework/database swap doesn't require a rewrite.
+
+## Licence
+
+The project source code is licensed under the [Apache License 2.0](LICENSE).
+See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for important exclusions
+and third-party terms.

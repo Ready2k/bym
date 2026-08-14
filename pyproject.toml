@@ -2,6 +2,7 @@
 name = "beat-your-mates"
 version = "0.1.0"
 description = "Beat Your Mates — always-on prediction agent for Super 6 and Last Man Standing (SPEC.md)"
+license = { text = "Apache-2.0" }
 requires-python = ">=3.12"
 dependencies = [
     "numpy>=2.0",
