@@ -207,6 +207,13 @@ is why `lms-plan` — not `lms-recommend` — is the command to start from.
   the unshrunk ones, so the plan is chosen cautiously and scored honestly.
   One request covers the whole horizon, so planning ahead costs no extra
   API quota.
+- `bym lms-backtest --seasons 2019 2025 --test-seasons 2025 --data data`
+  — leak-free replay of historical Premier League fixture slates. Reports
+  weekly win accuracy and calibration, plus actual four-slate survival for
+  the one-club-once planner versus its legal greedy alternative. Football-
+  Data has no official matchweek field, so the command labels its date and
+  club-repeat reconstruction as fixture *slates*; its market comparison is
+  the corpus's earlier-price proxy, not a claim about an exact LMS deadline.
 - `bym lms-recommend --seasons 2019 2025 --data data --entrant <name>`
   — every club still eligible this gameweek, ranked by P(win) (from the
   same score matrix Super 6 uses, just read as home/draw/away instead of

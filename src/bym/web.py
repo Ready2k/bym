@@ -1659,6 +1659,18 @@ def _lms_candidate_dict(candidate) -> dict:
     }
 
 
+def _lms_replay_seasons(config: WebConfig) -> list[int]:
+    """Seasons with an earlier local E0 corpus for a leak-free replay fit."""
+    cached = [
+        season
+        for season in range(config.seasons[0], config.seasons[1] + 1)
+        if (config.data_path / f"{season}_E0.csv").is_file()
+    ]
+    # The first local season has no preceding corpus, so its opening slate
+    # cannot be forecast without peeking at results from that same season.
+    return cached[1:]
+
+
 def _lms_lineage_dict(steps) -> dict:
     """An entrant's path plus both cumulative survival curves.
 
@@ -1839,6 +1851,7 @@ def lms_payload(config: WebConfig, router=None, known_teams: set[str] | None = N
             "decision_weeks": {}, "unknown_teams": [],
             "auto_settle": auto_settle_info,
             "fixtures_source": fixtures_info,
+            "replay_seasons": _lms_replay_seasons(config),
         }
 
     gw = gameweeks[0]
@@ -1961,7 +1974,47 @@ def lms_payload(config: WebConfig, router=None, known_teams: set[str] | None = N
         "unknown_teams": unknown,
         "auto_settle": auto_settle_info,
         "fixtures_source": fixtures_info,
+        "replay_seasons": _lms_replay_seasons(config),
     }
+
+
+def lms_replay(payload: dict, config: WebConfig) -> dict:
+    """Serve one historical LMS slate without touching live entrant state."""
+    from .backtest import lms as lms_backtest
+
+    try:
+        season = int(payload.get("season"))
+        slate = int(payload.get("game", payload.get("slate", 1)))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("season and game must be whole numbers") from exc
+    available = _lms_replay_seasons(config)
+    if season not in available:
+        choices = ", ".join(f"{year}/{str(year + 1)[2:]}" for year in available)
+        raise ValueError(f"season is not available for replay ({choices or 'no local seasons'})")
+
+    def club_list(name: str) -> list[str]:
+        clubs = payload.get(name, [])
+        if not isinstance(clubs, list) or len(clubs) > 20:
+            raise ValueError(f"{name} must be a list of at most 20 club names")
+        if not all(isinstance(team, str) and team.strip() for team in clubs):
+            raise ValueError(f"{name} must contain club names")
+        return clubs
+
+    used_clubs = club_list("used_clubs")
+    suggested_used_clubs = club_list("suggested_used_clubs")
+
+    history = [year for year in available if year <= season]
+    matches = load_matches(config.data_path, history, ("E0",), fetch=False)
+    return lms_backtest.replay_slate(
+        matches,
+        season,
+        slate,
+        used_clubs=used_clubs,
+        suggested_used_clubs=suggested_used_clubs,
+        xi=FROZEN_PHASE1_V1.xi,
+        cfg=FROZEN_PHASE1_V1,
+        lms_cfg=DEFAULT_LMS,
+    ).to_dict()
 
 
 def _lms_current_gameweek(config: WebConfig, known_teams: set[str]):
@@ -2152,6 +2205,44 @@ def save_lms_gameweek(payload: dict, config: WebConfig) -> dict:
     return lms_payload(config)
 
 
+def _lms_pick_snapshot(router, gameweeks, state, gameweek: int, team: str) -> dict:
+    """The entrant's pick probability and planned alternative at commitment.
+
+    This is written beside the live pick so the route modal can later show
+    what was available before the result, rather than retrofitting today's
+    model onto an old decision.  A provisional pick being changed releases
+    its previous club before the fresh plan is calculated.
+    """
+    from . import lms as lms_mod
+
+    index = next((i for i, week in enumerate(gameweeks) if week.number == gameweek), None)
+    if index is None:
+        return {}
+    existing = next((h for h in state.history if h["gameweek"] == gameweek), None)
+    used = {club.lower() for club in state.used_clubs}
+    if existing:
+        used.discard(existing["team"].lower())
+    outlooks = [
+        lms_mod.fixture_outlooks(router, week, FROZEN_PHASE1_V1)
+        for week in gameweeks[index:]
+    ]
+    candidates = lms_mod.rank_candidates(outlooks[0], used)
+    selected = next((candidate for candidate in candidates if candidate.team == team), None)
+    plan = lms_mod.plan_horizon(
+        router,
+        gameweeks[index:],
+        used,
+        cfg=FROZEN_PHASE1_V1,
+        outlooks=outlooks,
+    )
+    now = plan.this_week
+    return {
+        "picked_p_win": selected.p_win if selected else None,
+        "suggested_team": now.candidate.team if now else None,
+        "suggested_p_win": now.candidate.p_win if now else None,
+    }
+
+
 def save_lms_pick(payload: dict, config: WebConfig) -> dict:
     from . import lms as lms_mod
 
@@ -2165,17 +2256,25 @@ def save_lms_pick(payload: dict, config: WebConfig) -> dict:
     state = states.get(entrant, lms_mod.LMSState(entrant=entrant))
     gameweek = int(gameweek)
     is_home = bool(payload.get("is_home"))
+    try:
+        _, router, known_teams = _model_context(config)
+        weeks, _, _ = _lms_current_gameweek(config, known_teams)
+        snapshot = _lms_pick_snapshot(router, weeks, state, gameweek, team)
+    except OSError:
+        # Manual/offline LMS remains usable when the model corpus is absent;
+        # its route modal simply marks that pick as lacking a snapshot.
+        weeks, snapshot = [], {}
     # An existing pick for this gameweek is a change, not a duplicate: the
     # format allows one right up until the round kicks off, and refusing
     # it left the state file as the only way to correct a mis-click.
     if any(h["gameweek"] == gameweek for h in state.history):
-        weeks, _, _ = _lms_current_gameweek(config, set())
         week = next((w for w in weeks if w.number == gameweek), None)
         lms_mod.change_pick(
-            state, gameweek, team, opponent, is_home, gameweek_fixtures=week
+            state, gameweek, team, opponent, is_home, gameweek_fixtures=week,
+            **snapshot,
         )
     else:
-        lms_mod.record_pick(state, gameweek, team, opponent, is_home)
+        lms_mod.record_pick(state, gameweek, team, opponent, is_home, **snapshot)
     states[entrant] = state
     lms_mod.save_states(states, config.lms_state_path)
     return lms_payload(config)
@@ -2258,14 +2357,15 @@ class BymRequestHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def _send_file(self, path: Path) -> None:
+    def _send_file(self, path: Path, content_type: str | None = None) -> None:
         if not path.is_file():
             self.send_error(HTTPStatus.NOT_FOUND)
             return
         body = path.read_bytes()
         self.send_response(HTTPStatus.OK)
         self.send_header(
-            "Content-Type", mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+            "Content-Type",
+            content_type or mimetypes.guess_type(path.name)[0] or "application/octet-stream",
         )
         self.send_header("Content-Length", str(len(body)))
         # `no-cache` still let browsers reuse a stale script here, because
@@ -2296,6 +2396,10 @@ class BymRequestHandler(BaseHTTPRequestHandler):
                 self._send_json(HTTPStatus.OK, dashboard_payload(self.config)["health"])
             elif path in {"/", "/index.html"}:
                 self._send_file(ASSET_DIR / "index.html")
+            elif path == "/favicon.ico":
+                # Browsers and bookmarks may still ask for this conventional
+                # path even though the document links the SVG explicitly.
+                self._send_file(ASSET_DIR / "favicon.svg", "image/svg+xml")
             elif path.startswith("/assets/") and Path(path).name == path.removeprefix("/assets/"):
                 self._send_file(ASSET_DIR / Path(path).name)
             else:
@@ -2336,6 +2440,8 @@ class BymRequestHandler(BaseHTTPRequestHandler):
                 self._send_json(HTTPStatus.OK, save_lms_pick(payload, self.config))
             elif path == "/api/lms/result":
                 self._send_json(HTTPStatus.OK, save_lms_result(payload, self.config))
+            elif path == "/api/lms/replay":
+                self._send_json(HTTPStatus.OK, lms_replay(payload, self.config))
             else:
                 self.send_error(HTTPStatus.NOT_FOUND)
         except (ValueError, KeyError, json.JSONDecodeError) as exc:

@@ -12,7 +12,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from .config import DEFAULT_DATA, DEFAULT_LMS, DEFAULT_MODEL
+from .config import DEFAULT_DATA, DEFAULT_LMS, DEFAULT_MODEL, FROZEN_PHASE1_V1
 
 
 def _season_range(args) -> list[int]:
@@ -1351,6 +1351,56 @@ def cmd_lms_plan(args) -> int:
     return 0
 
 
+def cmd_lms_backtest(args) -> int:
+    """Replay historical Premier League fixture slates for Last Man Standing."""
+    from .backtest import lms as lms_backtest
+    from .config import FROZEN_PHASE1_V1
+    from .data.football_data import load_matches
+
+    seasons = _season_range(args)
+    test_seasons = args.test_seasons or seasons[1:]
+    outside = sorted(set(test_seasons) - set(seasons))
+    if outside:
+        print(
+            "--test-seasons must be inside --seasons: " + ", ".join(map(str, outside)),
+            file=sys.stderr,
+        )
+        return 1
+    if not test_seasons:
+        print("need at least one test season after the first training season", file=sys.stderr)
+        return 1
+
+    matches = load_matches(Path(args.data), seasons, ("E0",))
+    result = lms_backtest.run(
+        matches,
+        test_seasons,
+        horizon=args.horizon,
+        xi=args.xi,
+        cfg=FROZEN_PHASE1_V1,
+        refit_every_days=args.refit_days,
+    )
+    print(
+        "LMS walk-forward backtest — Premier League fixture slates\n"
+        f"Test seasons: {', '.join(map(str, sorted(test_seasons)))}\n"
+        f"Slates reconstructed: {result.slate_count}; skipped before {lms_backtest.MIN_TRAINING_MATCHES} training matches: {result.skipped_slates}\n"
+    )
+    print(result.summary().to_string(index=False))
+    print(
+        "\nInterpretation:\n"
+        "  • Weekly arms start fresh at each slate: this measures how often a recommendation wins.\n"
+        "  • Horizon arms measure surviving every planned slate, with one club used only once.\n"
+        "  • Fixture slates are inferred from dates and club repeats because Football-Data has no matchweek field.\n"
+        "  • MARKET-AVAILABLE uses Football-Data's earlier price as a Friday-price proxy, not an exact LMS-deadline snapshot.\n"
+        "  • No team news, lineups, or post-deadline odds are used."
+    )
+    if args.csv:
+        path = Path(args.csv)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        result.summary().to_csv(path, index=False)
+        print(f"\nSummary written to {path}")
+    return 0
+
+
 def cmd_lms_pick(args) -> int:
     """Book a Last Man Standing pick against an entrant's used-club list."""
     from . import lms
@@ -1877,6 +1927,28 @@ def main(argv: list[str] | None = None) -> int:
     )
     p.add_argument("--state", default="data/lms_state.json")
     p.set_defaults(func=cmd_lms_recommend)
+
+    p = sub.add_parser(
+        "lms-backtest",
+        help="Last Man Standing: leak-free historical replay of weekly picks and plans",
+    )
+    p.add_argument("--data", default="data", help="cache directory for CSVs")
+    p.add_argument(
+        "--seasons", nargs=2, type=int, metavar=("START", "END"), required=True,
+        help="season start-years available to training and test (e.g. 2019 2025)",
+    )
+    p.add_argument(
+        "--test-seasons", nargs="+", type=int,
+        help="season(s) to evaluate; default is every season after START",
+    )
+    p.add_argument("--horizon", type=int, default=DEFAULT_LMS.horizon_gameweeks)
+    p.add_argument("--xi", type=float, default=DEFAULT_MODEL.xi)
+    p.add_argument(
+        "--refit-days", type=int, default=FROZEN_PHASE1_V1.refit_every_days,
+        help="refit cadence, in days (default: %(default)s)",
+    )
+    p.add_argument("--csv", help="optional path for the summary CSV")
+    p.set_defaults(func=cmd_lms_backtest)
 
     p = sub.add_parser(
         "lms-plan",

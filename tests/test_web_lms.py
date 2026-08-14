@@ -8,7 +8,7 @@ from dataclasses import dataclass
 import pytest
 
 from bym import lms
-from bym.web import WebConfig, lms_payload
+from bym.web import WebConfig, lms_payload, lms_replay
 
 TEAMS = ("Strong", "Middling A", "Middling B", "Weak")
 
@@ -103,6 +103,38 @@ def test_plan_reports_what_the_weekly_favourite_would_have_given(tmp_path, route
     assert plan["survival_gain"] == pytest.approx(
         plan["survival_p"] - plan["greedy_survival_p"]
     )
+
+
+def test_replay_payload_is_transient_and_passes_the_used_clubs(tmp_path, monkeypatch):
+    (tmp_path / "2023_E0.csv").write_text("placeholder")
+    (tmp_path / "2024_E0.csv").write_text("placeholder")
+    config = WebConfig(data_path=tmp_path, seasons=(2023, 2024))
+    seen = {}
+
+    monkeypatch.setattr("bym.web.load_matches", lambda *args, **kwargs: "matches")
+
+    class Replay:
+        def to_dict(self):
+            return {"slate": 2, "candidates": []}
+
+    def fake_replay(matches, season, slate, **kwargs):
+        seen.update(matches=matches, season=season, slate=slate, **kwargs)
+        return Replay()
+
+    monkeypatch.setattr("bym.backtest.lms.replay_slate", fake_replay)
+
+    result = lms_replay(
+        {"season": 2024, "slate": 2, "used_clubs": ["Arsenal"]}, config
+    )
+
+    assert result == {"slate": 2, "candidates": []}
+    assert seen["matches"] == "matches"
+    assert seen["used_clubs"] == ["Arsenal"]
+
+
+def test_replay_rejects_unavailable_season(tmp_path):
+    with pytest.raises(ValueError, match="not available"):
+        lms_replay({"season": 2024, "slate": 1}, WebConfig(data_path=tmp_path))
 
 
 def test_eliminated_entrants_get_no_recommendation(tmp_path, router):
@@ -271,6 +303,34 @@ def test_switching_a_pick_through_the_endpoint_frees_the_old_club(tmp_path, rout
     state = lms.load_states(config.lms_state_path)["James"]
     assert state.used_clubs == ["Middling A"], "the old club must be released"
     assert [h["team"] for h in state.history] == ["Middling A"]
+
+
+def test_live_pick_keeps_its_probability_and_suggestion_snapshot(
+    tmp_path, router, monkeypatch
+):
+    """The live route tree must show the decision-time plan, not a refit."""
+    config = config_with(tmp_path, GAMEWEEK)
+    week = lms.gameweek_from_dict(GAMEWEEK)
+    monkeypatch.setattr(
+        "bym.web._model_context", lambda _config: (None, router, set(TEAMS))
+    )
+    monkeypatch.setattr(
+        "bym.web._lms_current_gameweek",
+        lambda _config, _known: ([week], {"mode": "manual", "note": None}, None),
+    )
+
+    from bym.web import save_lms_pick
+
+    save_lms_pick(
+        {"entrant": "James", "gameweek": 3, "team": "Strong",
+         "opponent": "Weak", "is_home": True},
+        config,
+    )
+
+    entry = lms.load_states(config.lms_state_path)["James"].history[0]
+    assert entry["picked_p_win"] > 0.5
+    assert entry["suggested_team"] == "Strong"
+    assert entry["suggested_p_win"] == pytest.approx(entry["picked_p_win"])
 
 
 def test_previews_cover_every_eligible_club_and_price_the_whole_horizon(

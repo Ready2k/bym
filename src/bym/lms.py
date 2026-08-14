@@ -917,7 +917,15 @@ def open_gameweek_indices(
 
 
 def record_pick(
-    state: LMSState, gameweek: int, team: str, opponent: str, is_home: bool
+    state: LMSState,
+    gameweek: int,
+    team: str,
+    opponent: str,
+    is_home: bool,
+    *,
+    picked_p_win: float | None = None,
+    suggested_team: str | None = None,
+    suggested_p_win: float | None = None,
 ) -> LMSState:
     """Book a pick against the entrant's used-club list.
 
@@ -934,16 +942,21 @@ def record_pick(
             f"{state.entrant} already has a pick recorded for gameweek {gameweek}"
         )
     state.used_clubs.append(team)
-    state.history.append(
-        {
-            "gameweek": gameweek,
-            "team": team,
-            "opponent": opponent,
-            "is_home": is_home,
-            "result": "PENDING",
-            "source": None,
-        }
-    )
+    entry = {
+        "gameweek": gameweek,
+        "team": team,
+        "opponent": opponent,
+        "is_home": is_home,
+        "result": "PENDING",
+        "source": None,
+    }
+    if picked_p_win is not None:
+        entry["picked_p_win"] = picked_p_win
+    if suggested_team is not None:
+        entry["suggested_team"] = suggested_team
+    if suggested_p_win is not None:
+        entry["suggested_p_win"] = suggested_p_win
+    state.history.append(entry)
     return state
 
 
@@ -1002,6 +1015,10 @@ def change_pick(
     is_home: bool,
     gameweek_fixtures: Gameweek | None = None,
     now: datetime | None = None,
+    *,
+    picked_p_win: float | None = None,
+    suggested_team: str | None = None,
+    suggested_p_win: float | None = None,
 ) -> LMSState:
     """Replace a gameweek's pending pick, releasing the club it used.
 
@@ -1032,6 +1049,15 @@ def change_pick(
     state.used_clubs.append(team)
     entry.update(team=team, opponent=opponent, is_home=is_home,
                  result="PENDING", source=None)
+    for key, value in {
+        "picked_p_win": picked_p_win,
+        "suggested_team": suggested_team,
+        "suggested_p_win": suggested_p_win,
+    }.items():
+        if value is None:
+            entry.pop(key, None)
+        else:
+            entry[key] = value
     state.alive = alive_from_history(state.history)
     return state
 
