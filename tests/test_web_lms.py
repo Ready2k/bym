@@ -71,6 +71,28 @@ def test_payload_carries_a_plan_per_entrant(tmp_path, router):
     assert "Strong" in {p["team"] for p in payload["plans"]["__all__"]["picks"]}
 
 
+def test_lineage_payload_keeps_fixture_context_for_graph_focus(tmp_path, router):
+    """A plotted point must be able to name the fixture it represents.
+
+    Reconstructing an opponent in the browser from a club name is ambiguous
+    once the model horizon has several gameweeks, so it belongs in the
+    server-produced lineage with the probability it explains.
+    """
+    payload = lms_payload(
+        config_with(
+            tmp_path, GAMEWEEK,
+            {"James": {"entrant": "James", "alive": True,
+                       "used_clubs": [], "history": []}},
+        ),
+        router=router,
+        known_teams=set(TEAMS),
+    )
+    step = payload["lineages"]["James"]["steps"][0]
+    assert step["team"] in TEAMS
+    assert step["opponent"] in TEAMS
+    assert isinstance(step["is_home"], bool)
+
+
 def test_plan_reports_what_the_weekly_favourite_would_have_given(tmp_path, router):
     payload = lms_payload(
         config_with(tmp_path, GAMEWEEK), router=router, known_teams=set(TEAMS)

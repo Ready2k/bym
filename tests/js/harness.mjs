@@ -29,6 +29,7 @@ const EXPOSED = [
   "strategyPanel", "submissionRecord", "leagueView", "homeView",
   "teamBadge", "activityItem", "emptyState", "markScrollableRegions",
   "lmsPlanCard", "lmsRecommendationRows", "lmsLineageCard", "lineageChart",
+  "healthView", "modelView",
 ];
 
 /** An entrant's lineage as `_lms_lineage_dict` shapes it. */
@@ -116,9 +117,11 @@ export function loadApp(appData = null) {
     },
     location: { hash: "#home" },
     navigator: { clipboard: { writeText: async () => {} } },
+    AbortController,
     setInterval: () => 0,
     clearInterval() {},
     setTimeout: () => 0,
+    clearTimeout() {},
     // Nothing under test performs I/O; a request means the test set
     // something up wrong, and should say so rather than hang.
     fetch: async () => { throw new Error("network access from a unit test"); },

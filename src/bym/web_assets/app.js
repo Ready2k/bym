@@ -9,13 +9,133 @@ let cupForecast;
 let ollamaModels = [];
 let lmsEntrant = "";
 let lmsPreview = "";
+let lmsGraphWeek = "";
+let appLoadController;
 
-// Football-Data crest IDs for the clubs in the supplied Super 6 round.
-// Unknown teams retain the accessible initials fallback inside teamBadge.
-const TEAM_CRESTS = {
-  "Arsenal": 57, "Aston Villa": 58, "Bournemouth": 1044, "Brentford": 402,
-  "Chelsea": 61, "Everton": 62, "Fulham": 63, "Leeds": 341,
-  "Man City": 65, "Newcastle": 67, "Tottenham": 73, "West Ham": 563,
+// The current English 92, taken from the same E0–E3 season data used by the
+// model. Cup Match can select any of those clubs, so the crest list cannot be
+// limited to the six clubs in the current Super 6 round. The public image URLs
+// are intentionally separated from the names the data provider abbreviates.
+// Unknown clubs still retain the accessible initials fallback in teamBadge.
+const TEAM_BADGES = {
+  "AFC Wimbledon": "https://assets.football-logos.cc/logos/england/256x256/afc-wimbledon.68931326.png",
+  "Accrington": "https://assets.football-logos.cc/logos/england/256x256/accrington.985a895a.png",
+  "Arsenal": "https://assets.football-logos.cc/logos/england/256x256/arsenal.e5528ede.png",
+  "Aston Villa": "https://assets.football-logos.cc/logos/england/256x256/aston-villa.07a2646c.png",
+  "Barnet": "https://assets.football-logos.cc/logos/england/256x256/barnet.0e3477dc.png",
+  "Barnsley": "https://assets.football-logos.cc/logos/england/256x256/barnsley.eeaac65d.png",
+  "Barrow": "https://assets.football-logos.cc/logos/england/256x256/barrow.6407ad23.png",
+  "Birmingham": "https://assets.football-logos.cc/logos/england/256x256/birmingham.1026e178.png",
+  "Blackburn": "https://assets.football-logos.cc/logos/england/256x256/blackburn-rovers.a6f1e611.png",
+  "Blackpool": "https://assets.football-logos.cc/logos/england/256x256/blackpool.05310153.png",
+  "Bolton": "https://assets.football-logos.cc/logos/england/256x256/bolton.4a68a472.png",
+  "Bournemouth": "https://assets.football-logos.cc/logos/england/256x256/bournemouth.1a237aee.png",
+  "Bradford": "https://assets.football-logos.cc/logos/england/256x256/bradford.019d7449.png",
+  "Brentford": "https://assets.football-logos.cc/logos/england/256x256/brentford.e3296e20.png",
+  "Brighton": "https://assets.football-logos.cc/logos/england/256x256/brighton.5da206a0.png",
+  "Bristol City": "https://assets.football-logos.cc/logos/england/256x256/bristol-city.32f1f82d.png",
+  "Bristol Rvs": "https://assets.football-logos.cc/logos/england/256x256/bristol-rovers.3396d3b9.png",
+  "Bromley": "https://assets.football-logos.cc/logos/england/256x256/bromley.70df050b.png",
+  "Burnley": "https://assets.football-logos.cc/logos/england/256x256/burnley.7baea7d7.png",
+  "Burton": "https://assets.football-logos.cc/logos/england/256x256/burton.c4e07845.png",
+  "Cambridge": "https://assets.football-logos.cc/logos/england/256x256/cambridge-united.ce4c866e.png",
+  "Cardiff": "https://assets.football-logos.cc/logos/england/256x256/cardiff-city.f164becb.png",
+  "Charlton": "https://assets.football-logos.cc/logos/england/256x256/charlton.68457b55.png",
+  "Chelsea": "https://assets.football-logos.cc/logos/england/256x256/chelsea.ede8a2a7.png",
+  "Cheltenham": "https://assets.football-logos.cc/logos/england/256x256/cheltenham.b8c84bf8.png",
+  "Chesterfield": "https://assets.football-logos.cc/logos/england/256x256/chesterfield.c6832531.png",
+  "Colchester": "https://assets.football-logos.cc/logos/england/256x256/colchester.fba7369a.png",
+  "Coventry": "https://assets.football-logos.cc/logos/england/256x256/coventry-city.0d74fc5a.png",
+  "Crawley Town": "https://assets.football-logos.cc/logos/england/256x256/crawley-town.4c72af78.png",
+  "Crewe": "https://assets.football-logos.cc/logos/england/256x256/crewe.21e8c9f5.png",
+  "Crystal Palace": "https://assets.football-logos.cc/logos/england/256x256/crystal-palace.53067b96.png",
+  "Derby": "https://assets.football-logos.cc/logos/england/256x256/derby-county.ba26b540.png",
+  "Doncaster": "https://assets.football-logos.cc/logos/england/256x256/doncaster-rovers.b36ecd25.png",
+  "Everton": "https://assets.football-logos.cc/logos/england/256x256/everton.6b635cd7.png",
+  "Exeter": "https://assets.football-logos.cc/logos/england/256x256/exeter.48c0a951.png",
+  "Fleetwood Town": "https://assets.football-logos.cc/logos/england/256x256/fleetwood-town.84ce757f.png",
+  "Fulham": "https://assets.football-logos.cc/logos/england/256x256/fulham.4c7ce48b.png",
+  "Gillingham": "https://assets.football-logos.cc/logos/england/256x256/gillingham.d39bc314.png",
+  "Grimsby": "https://assets.football-logos.cc/logos/england/256x256/grimsby.c8994bb0.png",
+  "Harrogate": "https://assets.football-logos.cc/logos/england/256x256/harrogate-town.8d7f79d7.png",
+  "Huddersfield": "https://assets.football-logos.cc/logos/england/256x256/huddersfield.944e6a57.png",
+  "Hull": "https://assets.football-logos.cc/logos/england/256x256/hull-city.28918662.png",
+  "Ipswich": "https://assets.football-logos.cc/logos/england/256x256/ipswich.bb8ea176.png",
+  "Leeds": "https://assets.football-logos.cc/logos/england/256x256/leeds-united.26dba8f5.png",
+  "Leicester": "https://assets.football-logos.cc/logos/england/256x256/leicester.9c13bc7c.png",
+  "Leyton Orient": "https://assets.football-logos.cc/logos/england/256x256/leyton-orient.c7c4a14e.png",
+  "Lincoln": "https://assets.football-logos.cc/logos/england/256x256/lincoln-city.d7003a2c.png",
+  "Liverpool": "https://assets.football-logos.cc/logos/england/256x256/liverpool.99c48ae3.png",
+  "Luton": "https://assets.football-logos.cc/logos/england/256x256/luton-town.b918012a.png",
+  "Man City": "https://assets.football-logos.cc/logos/england/256x256/manchester-city.62f9d1f2.png",
+  "Man United": "https://assets.football-logos.cc/logos/england/256x256/manchester-united.7ab9d343.png",
+  "Mansfield": "https://assets.football-logos.cc/logos/england/256x256/mansfield.93b6fc2f.png",
+  "Middlesbrough": "https://assets.football-logos.cc/logos/england/256x256/middlesbrough.b9f845aa.png",
+  "Millwall": "https://assets.football-logos.cc/logos/england/256x256/millwall.07c9fbfe.png",
+  "Milton Keynes Dons": "https://assets.football-logos.cc/logos/england/256x256/mk-dons.661a7209.png",
+  "Newcastle": "https://assets.football-logos.cc/logos/england/256x256/newcastle.53b65b3d.png",
+  "Newport County": "https://assets.football-logos.cc/logos/england/256x256/newport.5139ecec.png",
+  "Northampton": "https://assets.football-logos.cc/logos/england/256x256/northampton.5a5f9731.png",
+  "Norwich": "https://assets.football-logos.cc/logos/england/256x256/norwich-city.5cf24a54.png",
+  "Nott'm Forest": "https://assets.football-logos.cc/logos/england/256x256/nottingham-forest.43b53a26.png",
+  "Notts County": "https://assets.football-logos.cc/logos/england/256x256/notts-county.b135f072.png",
+  "Oldham": "https://assets.football-logos.cc/logos/england/256x256/oldham.8e568e90.png",
+  "Oxford": "https://assets.football-logos.cc/logos/england/256x256/oxford-united.881849cd.png",
+  "Peterboro": "https://assets.football-logos.cc/logos/england/256x256/peterborough.c708671d.png",
+  "Plymouth": "https://assets.football-logos.cc/logos/england/256x256/plymouth-argyle.be2526a7.png",
+  "Port Vale": "https://assets.football-logos.cc/logos/england/256x256/port-vale.b1ba14a7.png",
+  "Portsmouth": "https://assets.football-logos.cc/logos/england/256x256/portsmouth.1007a222.png",
+  "Preston": "https://assets.football-logos.cc/logos/england/256x256/preston-north-end.c8495ff2.png",
+  "QPR": "https://assets.football-logos.cc/logos/england/256x256/queens-park-rangers.520a466e.png",
+  "Reading": "https://assets.football-logos.cc/logos/england/256x256/reading.97e75826.png",
+  "Rotherham": "https://assets.football-logos.cc/logos/england/256x256/rotherham.8002b756.png",
+  "Salford": "https://assets.football-logos.cc/logos/england/256x256/salford-city.b6285922.png",
+  "Sheffield United": "https://assets.football-logos.cc/logos/england/256x256/sheffield-united.1c8f00ec.png",
+  "Sheffield Weds": "https://assets.football-logos.cc/logos/england/256x256/sheffield-wednesday.41a8f439.png",
+  "Shrewsbury": "https://assets.football-logos.cc/logos/england/256x256/shrewsbury.12fdf1c9.png",
+  "Southampton": "https://assets.football-logos.cc/logos/england/256x256/southampton.2a25d8e7.png",
+  "Stevenage": "https://assets.football-logos.cc/logos/england/256x256/stevenage.cb1c36fa.png",
+  "Stockport": "https://assets.football-logos.cc/logos/england/256x256/stockport-county.82cbdd72.png",
+  "Stoke": "https://assets.football-logos.cc/logos/england/256x256/stoke-city.d394721d.png",
+  "Sunderland": "https://assets.football-logos.cc/logos/england/256x256/sunderland.2f55baea.png",
+  "Swansea": "https://assets.football-logos.cc/logos/england/256x256/swansea-city.af33720d.png",
+  "Swindon": "https://assets.football-logos.cc/logos/england/256x256/swindon-town.244d3daa.png",
+  "Tottenham": "https://assets.football-logos.cc/logos/england/256x256/tottenham.f192bf50.png",
+  "Tranmere": "https://assets.football-logos.cc/logos/england/256x256/tranmere.7f26ba66.png",
+  "Walsall": "https://assets.football-logos.cc/logos/england/256x256/walsall.573843c4.png",
+  "Watford": "https://assets.football-logos.cc/logos/england/256x256/watford.99d74158.png",
+  "West Brom": "https://assets.football-logos.cc/logos/england/256x256/west-bromwich-albion.bc428244.png",
+  "West Ham": "https://assets.football-logos.cc/logos/england/256x256/west-ham.c86eebf5.png",
+  "Wigan": "https://assets.football-logos.cc/logos/england/256x256/wigan.9339b194.png",
+  "Wolves": "https://assets.football-logos.cc/logos/england/256x256/wolves.2c773758.png",
+  "Wrexham": "https://assets.football-logos.cc/logos/england/256x256/wrexham.8faea20f.png",
+  "Wycombe": "https://assets.football-logos.cc/logos/england/256x256/wycombe.b55b5638.png",
+};
+
+const TEAM_BADGE_ALIASES = {
+  "Accrington Stanley": "Accrington", "AFC Bournemouth": "Bournemouth",
+  "Birmingham City": "Birmingham",
+  "Blackburn Rovers": "Blackburn", "Bolton Wanderers": "Bolton",
+  "Brighton and Hove Albion": "Brighton", "Brighton & Hove Albion": "Brighton",
+  "Bristol Rovers": "Bristol Rvs", "Cambridge United": "Cambridge",
+  "Cardiff City": "Cardiff", "Charlton Athletic": "Charlton", "Coventry City": "Coventry",
+  "Derby County": "Derby", "Doncaster Rovers": "Doncaster", "Harrogate Town": "Harrogate",
+  "Huddersfield Town": "Huddersfield", "Hull City": "Hull", "Ipswich Town": "Ipswich",
+  "Leeds United": "Leeds", "Leeds Utd": "Leeds", "Leicester City": "Leicester",
+  "Lincoln City": "Lincoln", "Luton Town": "Luton", "Man. City": "Man City",
+  "Manchester City": "Man City", "Manchester United": "Man United", "Manchester Utd": "Man United",
+  "Man Utd": "Man United", "Middlesbrough FC": "Middlesbrough", "Millwall FC": "Millwall",
+  "MK Dons": "Milton Keynes Dons", "Newcastle United": "Newcastle", "Newcastle Utd": "Newcastle",
+  "Newport": "Newport County", "Norwich City": "Norwich", "Nottingham Forest": "Nott'm Forest",
+  "Notts Forest": "Nott'm Forest", "Oxford United": "Oxford", "Peterborough United": "Peterboro",
+  "Plymouth Argyle": "Plymouth", "Portsmouth FC": "Portsmouth", "Preston North End": "Preston",
+  "Queens Park Rangers": "QPR", "Rotherham United": "Rotherham", "Salford City": "Salford",
+  "Sheffield Utd": "Sheffield United", "Sheffield Wednesday": "Sheffield Weds",
+  "Stockport County": "Stockport", "Stoke City": "Stoke", "Swansea City": "Swansea",
+  "Swindon Town": "Swindon", "Tottenham Hotspur": "Tottenham", "Spurs": "Tottenham",
+  "West Bromwich Albion": "West Brom", "West Bromwich": "West Brom",
+  "West Ham United": "West Ham", "West Ham Utd": "West Ham", "Wolverhampton": "Wolves",
+  "Wolverhampton Wanderers": "Wolves", "Wrexham AFC": "Wrexham", "Wycombe Wanderers": "Wycombe",
 };
 
 const $ = (selector) => document.querySelector(selector);
@@ -44,8 +164,8 @@ function shortTeam(team) {
 }
 
 function teamBadge(team, size = "") {
-  const crest = TEAM_CRESTS[team];
-  const image = crest ? `<img src="https://crests.football-data.org/${crest}.png" alt="" loading="lazy" onerror="this.hidden=true">` : "";
+  const badge = TEAM_BADGES[TEAM_BADGE_ALIASES[team] || team];
+  const image = badge ? `<img src="${badge}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.hidden=true">` : "";
   // The initials are a visual fallback for a crest that failed to load, not
   // content: the team's full name is always rendered as real text beside the
   // badge. role="img" already makes descendants presentational, and
@@ -129,6 +249,40 @@ function submissionMessage(round) {
   return [titleCase(round.submission_state), messages[round.submission_state] || "Review your picks"];
 }
 
+function confidenceMeaning(fixture) {
+  if (fixture.confidence === "HIGH") return "Strongest call";
+  if (fixture.confidence === "MEDIUM") return "Steadier pick";
+  return "Close call";
+}
+
+function nextRoundAction(round) {
+  if (round.submission_state === "MARKED_AS_SUBMITTED") {
+    return {
+      eyebrow: "Entry recorded",
+      title: "Your manual entry is saved here",
+      copy: "We will flag any material recommendation change before the deadline.",
+      action: "Review all details",
+      actionName: "edit-picks",
+    };
+  }
+  if (round.submission_state === "CHANGED_AFTER_SUBMISSION" || round.submission_state === "CHANGED_SINCE_REVIEW") {
+    return {
+      eyebrow: "Action needed",
+      title: "A recommendation changed after your review",
+      copy: "Check the changed fixture, then update Super 6 yourself if you want to follow the new pick.",
+      action: "Review changes",
+      actionName: "edit-picks",
+    };
+  }
+  return {
+    eyebrow: "Next step",
+    title: "Review, copy, then enter your six picks",
+    copy: "Super 6 stays outside this app. Once you have entered them, record that here.",
+    action: "Mark as entered",
+    actionName: "mark-entered",
+  };
+}
+
 function pageHeader(eyebrow, title, copy, actions = "") {
   return `<header class="page-header"><div><p class="eyebrow">${escapeHtml(eyebrow)}</p><h1>${escapeHtml(title)}</h1><p class="subtitle">${escapeHtml(copy)}</p></div>${actions}</header>`;
 }
@@ -150,7 +304,7 @@ function fixtureCard(fixture, index, compact = false) {
     <div class="card-topline"><div class="teams"><span class="team-line">${teamBadge(fixture.home_team)}${escapeHtml(fixture.home_team)}</span><span class="team-line">${teamBadge(fixture.away_team)}${escapeHtml(fixture.away_team)}</span></div>${overridden ? '<span class="status-pill neutral">YOUR PICK</span>' : '<span class="versus">v</span>'}</div>
     <div class="score" aria-label="Recommended score ${pick}"><strong>${pick.split("-")[0]}</strong><span>–</span><strong>${pick.split("-")[1]}</strong></div>
     <div class="metric-row"><div class="metric"><span>Result</span><strong>${percent(fixture.result_probability)}</strong></div><div class="metric"><span>Score</span><strong>${percent(fixture.score_probability)}</strong></div><div class="metric"><span>EV</span><strong>${fixture.expected_points.toFixed(2)}</strong></div></div>
-    <div class="card-footer"><span>${isMarketOnly(fixture) ? `Market pick: ${escapeHtml(fixture.pick)}` : overridden ? `Model: ${fixture.pick}` : `Model pick: ${fixture.model_pick}`}</span><span class="confidence ${fixture.confidence.toLowerCase()}">${fixture.confidence}</span></div>${changedCopy}
+    <div class="card-footer"><span>${isMarketOnly(fixture) ? `Market pick: ${escapeHtml(fixture.pick)}` : overridden ? `Model: ${fixture.pick}` : `Model pick: ${fixture.model_pick}`}</span><span class="confidence ${fixture.confidence.toLowerCase()}">${confidenceMeaning(fixture)} · ${fixture.confidence}</span></div>${changedCopy}
     ${isMarketOnly(fixture) ? `<p class="basis-note">Market-derived — outside the model's corpus. Not PHASE1_MODEL_V1.</p>` : ""}
     <div class="card-footer"><span class="card-link">Why this pick?</span><span aria-hidden="true">›</span></div>
   </button>`;
@@ -178,7 +332,7 @@ function monitorCard() {
   const nextCheck = health?.next_scheduled_check;
   const refreshed = `Forecast refreshed ${displayDate(round.meta.generated_at)}`;
   if (!pending) {
-    return `<div class="monitor-card idle"><span class="monitor-dot idle"></span><span>Monitoring not scheduled</span><small>${refreshed}. This page refreshes only when you load it — run <code>bym watch</code> for automatic polling.</small></div>`;
+    return `<div class="monitor-card idle"><span class="monitor-dot idle"></span><span>Monitoring not scheduled</span><small>${refreshed}. Refresh this page for the latest forecast, or run <code>bym watch</code> to enable automatic polling.</small></div>`;
   }
   const when = nextCheck ? ` · next check ${displayDate(nextCheck)}` : "";
   return `<div class="monitor-card"><span class="monitor-dot"></span><span>Monitoring active</span><small>${refreshed}${escapeHtml(when)}</small></div>`;
@@ -198,15 +352,17 @@ function homeView() {
     blank.length ? `<div class="change-alert danger"><strong>${blank.length} fixture${blank.length === 1 ? "" : "s"} cannot be forecast</strong> ${escapeHtml(blank.map(name).join("; "))} — outside the ${escapeHtml(corpus)} corpus with no odds to fall back on. No pick is shown. The expected round score above still counts ${blank.length === 1 ? "this fixture" : "these fixtures"}, so it is overstated.</div>` : "",
     marketOnly.length ? `<div class="change-alert notice"><strong>${marketOnly.length} market-derived pick${marketOnly.length === 1 ? "" : "s"}</strong> ${escapeHtml(marketOnly.map(name).join("; "))} — outside the ${escapeHtml(corpus)} corpus, so the market supplied the result probabilities instead of the model. Usable, but not PHASE1_MODEL_V1.</div>` : "",
   ].join("");
-  return `${pageHeader(`Super 6 — Round ${round.round_number}`, "Your round, in one view.", `Deadline ${displayDate(round.deadline_at)}`, monitorCard())}
-    <section class="command-strip" aria-label="Round status"><div class="deadline-card"><span class="eyebrow">Time to deadline</span><strong id="countdown">—</strong><span>${displayDate(round.deadline_at)}</span></div><div class="round-kpi"><span>Expected round score <button class="info" data-info="ev" aria-label="Explain expected points">?</button></span><strong>${round.expected_round_score.toFixed(2)}</strong><small>Across all six picks</small></div><div class="round-kpi submission-kpi"><span>Entry status</span><strong>${submissionState}</strong><small>${submissionDetail}</small></div></section>
-    ${leagueSummary()}
+  const action = nextRoundAction(round);
+  const confidenceCounts = round.fixtures.reduce((counts, fixture) => ({ ...counts, [fixture.confidence]: (counts[fixture.confidence] || 0) + 1 }), {});
+  return `${pageHeader(`Super 6 — Round ${round.round_number}`, "Your picks are ready.", `Deadline ${displayDate(round.deadline_at)}`, "")}
+    <section class="round-hero" aria-label="Round status"><div class="hero-deadline"><span class="eyebrow">Time to deadline</span><strong id="countdown">—</strong><span>${displayDate(round.deadline_at)}</span></div><div class="hero-action"><p class="eyebrow">${escapeHtml(action.eyebrow)}</p><h2>${escapeHtml(action.title)}</h2><p>${escapeHtml(action.copy)}</p><div class="button-row"><button class="button" data-action="${action.actionName}">${escapeHtml(action.action)}</button>${round.submission_state !== "MARKED_AS_SUBMITTED" ? '<button class="button secondary-button" data-action="copy-picks">Copy picks</button>' : ''}</div></div><div class="hero-meta"><div><span>Expected round score <button class="info" data-info="ev" aria-label="Explain expected points">?</button></span><strong>${round.expected_round_score.toFixed(2)}</strong><small>Across all six picks</small></div><div><span>Forecast quality</span><strong>${dataQuality}</strong><small>${qualityCopy}</small></div></div></section>
+    ${monitorCard()}
     ${alerts.length ? `<button class="alert-strip" data-page="activity"><strong>${alerts.length} material update${alerts.length === 1 ? "" : "s"}</strong><span>${escapeHtml(alerts[0].summary)}</span><b>Review ›</b></button>` : ""}
-    <section class="section-heading"><div><p class="eyebrow">Recommended picks</p><h2>Six scores to enter</h2></div><div class="button-row"><button class="button secondary-button" data-action="edit-picks">Edit picks</button><button class="button secondary-button" data-action="copy-picks">Copy picks</button></div></section>
+    <section class="section-heading picks-heading"><div><p class="eyebrow">Recommended picks</p><h2>Six scores to enter</h2></div><div class="pick-summary"><span>${confidenceCounts.HIGH || 0} strong</span><span>${confidenceCounts.MEDIUM || 0} steadier</span><span>${confidenceCounts.LOW || 0} close calls</span></div></section>
     ${changed ? `<div class="change-alert"><strong>Action needed</strong> ${escapeHtml(submissionDetail)}. This app does not update Super 6 for you.</div>` : ""}
     ${unmodellableBanner}
     <div class="fixture-grid">${round.fixtures.map((fixture, index) => fixtureCard(fixture, index)).join("")}</div>
-    <section class="lower-grid"><article class="golden-card"><p class="eyebrow">Golden Goal</p><div class="golden-value">${round.golden_goal.minute}</div><p>Sky minute ${round.golden_goal.minute} = goal between ${round.golden_goal.sky_interval}.</p><button class="text-button" data-action="golden-detail">Why this minute?</button></article><article class="action-card"><p class="eyebrow">Next action</p><h2>${round.submission_state === "MARKED_AS_SUBMITTED" ? "Your picks are recorded" : "Ready to enter?"}</h2><p>${round.submission_state === "MARKED_AS_SUBMITTED" ? "You told us these scores were entered in Super 6. Any later recommendation change will be clearly flagged." : "Enter these predictions in Super 6 yourself, then record that action here."}</p><button class="button" data-action="mark-entered">${round.submission_state === "MARKED_AS_SUBMITTED" ? "Update entered picks" : "Mark as entered in Super 6"}</button></article><article class="quality-card"><p class="eyebrow">Data quality</p><h2>${dataQuality}</h2><p>${qualityCopy}</p><button class="text-button" data-page="health">View source status</button></article></section>`;
+    <section class="lower-grid"><article class="golden-card"><p class="eyebrow">Golden Goal</p><div class="golden-value">${round.golden_goal.minute}</div><p>Sky minute ${round.golden_goal.minute} = goal between ${round.golden_goal.sky_interval}.</p><button class="text-button" data-action="golden-detail">Why this minute?</button></article>${leagueSummary()}<article class="quality-card"><p class="eyebrow">Need a deeper review?</p><h2>Round detail</h2><p>Compare alternatives, investigate evidence or manage this round from one place.</p><button class="text-button" data-page="round">Open round control</button></article></section>`;
 }
 
 function intelligenceView() {
@@ -312,13 +468,15 @@ function lmsPlanCard(plan) {
   const unplannable = plan.unplannable?.length
     ? `<p class="subtitle">No legal pick left for ${plan.unplannable.map((n) => `GW${n}`).join(", ")} — every club playing has been used.</p>`
     : "";
-  return `<div class="stat-table-card">
-    <p class="eyebrow">Recommended pick</p>
+  return `<section class="lms-plan-card">
+    <p class="eyebrow">Model allocation</p>
     <h3>${escapeHtml(now.team)} ${now.is_home ? "v" : "@"} ${escapeHtml(now.opponent)} — ${percent(now.p_win)} to win</h3>
     <p class="subtitle">Surviving all ${plan.picks.length} planned gameweek${plan.picks.length === 1 ? "" : "s"}: ${percent(plan.survival_p)}. Later gameweeks are advisory and re-planned every week.</p>
-    <table><thead><tr><th>Gameweek</th><th>Club</th><th>Fixture</th><th>P(Win)</th><th>Conf</th></tr></thead><tbody>${rows}</tbody></table>
     ${comparison}${unplannable}
-  </div>`;
+    <details class="disclosure"><summary>Show planned-picks table</summary>
+      <div class="stat-table-card"><table><thead><tr><th>Gameweek</th><th>Club</th><th>Fixture</th><th>P(Win)</th><th>Conf</th></tr></thead><tbody>${rows}</tbody></table></div>
+    </details>
+  </section>`;
 }
 
 // Pick lineage — the path taken against the path recommended.
@@ -349,7 +507,7 @@ function lineagePath(points) {
   return points.map((p, i) => `${i ? "L" : "M"}${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ");
 }
 
-function lineageChart(steps) {
+function lineageChart(steps, selectedWeek, currentLabel = "Your modeled path") {
   const g = LINEAGE_GEOM;
   const yours = lineagePoints(steps, "survival_yours", g);
   const plan = lineagePoints(steps, "survival_plan", g);
@@ -397,24 +555,28 @@ function lineageChart(steps) {
 
   const hotspots = steps.map((s, i) => {
     const x = g.left + (i / span) * plotW;
-    const parts = [`GW${s.gameweek}`];
+    const parts = [`GW${s.gameweek}`, s.status.toLowerCase()];
     if (s.team) parts.push(`you: ${s.team}${s.p_win != null ? ` ${percent(s.p_win)}` : ""}`);
     if (s.plan_team) parts.push(`plan: ${s.plan_team}${s.plan_p_win != null ? ` ${percent(s.plan_p_win)}` : ""}`);
     if (s.survival_yours != null) parts.push(`alive ${percent(s.survival_yours)}`);
     if (s.survival_plan != null) parts.push(`vs ${percent(s.survival_plan)}`);
-    // Hit target spans the whole band, not the 9px dot.
-    return `<g class="lineage-hit"><rect x="${x - plotW / (span * 2) - 2}" y="${g.top}"
-      width="${Math.max(24, plotW / span)}" height="${plotH}" fill="transparent"></rect>
+    // Hit target spans the whole band, not the 9px dot. It is a real
+    // control: selecting a week updates the model explanation below.
+    const width = span === 0 ? plotW : Math.max(24, plotW / span);
+    const left = span === 0 ? g.left : x - width / 2;
+    return `<g class="lineage-hit ${String(s.gameweek) === String(selectedWeek) ? "selected" : ""}"><rect data-lms-graph-week="${s.gameweek}" x="${left}" y="${g.top}"
+      width="${width}" height="${plotH}" fill="transparent" role="button" tabindex="0"
+      aria-label="Show model detail for gameweek ${s.gameweek}"></rect>
       <title>${escapeHtml(parts.join(" · "))}</title></g>`;
   }).join("");
 
   return `<svg class="lineage-chart" viewBox="0 0 ${g.w} ${g.h}" role="img"
-    aria-label="Cumulative survival probability by gameweek: your path against the recommended plan.">
+    aria-label="Interactive cumulative survival probability graph by gameweek: ${escapeHtml(currentLabel)} against the recommended plan.">
     ${ticks}${xLabels}${splitMark}
     <path class="lineage-line plan" d="${lineagePath(plan)}"></path>
     <path class="lineage-line yours" d="${lineagePath(yours)}"></path>
     ${endLabel(plan, "plan", "plan", coincide)}
-    ${endLabel(yours, "yours", coincide ? "you = plan" : "you")}
+    ${endLabel(yours, "yours", coincide ? "same path" : "your path")}
     ${hotspots}
   </svg>`;
 }
@@ -445,50 +607,93 @@ function lmsGameweekLocked(gw) {
   return Number.isFinite(kickoff) && Date.now() >= kickoff;
 }
 
+function lmsFixtureLabel(step) {
+  if (!step?.team) return "No club selected";
+  if (!step.opponent) return step.team;
+  return `${step.team} ${step.is_home === false ? "@" : "v"} ${step.opponent}`;
+}
+
+function lmsPlanLineage(plan) {
+  if (!plan?.picks?.length) return null;
+  let survival = 1;
+  return {
+    steps: plan.picks.map((pick) => {
+      survival *= pick.p_win;
+      return {
+        gameweek: pick.gameweek, status: "PLANNED", team: pick.team,
+        opponent: pick.opponent, is_home: pick.is_home, p_win: pick.p_win,
+        plan_team: pick.team, plan_p_win: pick.p_win, delta: 0,
+        survival_yours: survival, survival_plan: survival,
+      };
+    }),
+    survival_yours: survival,
+    survival_plan: survival,
+  };
+}
+
+function lmsGraphFocus(step) {
+  if (!step) return "";
+  const delta = step.delta == null ? "No comparable baseline" :
+    `${step.delta >= 0 ? "+" : ""}${(step.delta * 100).toFixed(1)}pp against the unconstrained plan`;
+  const survival = step.survival_yours == null ? "Not currently priceable" : percent(step.survival_yours);
+  const plan = step.survival_plan == null ? "—" : percent(step.survival_plan);
+  return `<section class="lineage-focus" aria-live="polite"><div><p class="eyebrow">FOCUSED WEEK · GW${step.gameweek}</p><h3>${escapeHtml(lmsFixtureLabel(step))}</h3><p>${step.status === "BOOKED" ? "Booked choice" : "Modeled future choice"} · ${step.p_win == null ? "Win probability unavailable" : `${percent(step.p_win)} to win`}</p></div><div><span>Survival to this point</span><strong>${survival}</strong><small>Plan ${plan} · ${delta}</small></div></section>`;
+}
+
 function lmsLineageCard(lineage, isPreview = false, previewTeam = "") {
   if (!lineage?.steps?.length) return "";
   const steps = lineage.steps;
-  if (!steps.some((s) => s.status === "BOOKED")) return "";
+  if (!steps.some((step) => String(step.gameweek) === String(lmsGraphWeek))) {
+    lmsGraphWeek = String(steps[0].gameweek);
+  }
+  const focused = steps.find((step) => String(step.gameweek) === String(lmsGraphWeek)) || steps[0];
   const yours = lineage.survival_yours;
   const plan = lineage.survival_plan;
   const gap = yours != null && plan != null ? (yours - plan) * 100 : null;
   const booked = steps.filter((s) => s.status === "BOOKED");
+  const hasBooked = booked.length > 0;
 
   let verdict;
   if (gap === null) {
     verdict = `<p class="subtitle">Some weeks in this path can no longer be priced, so the comparison stops where the fixtures run out.</p>`;
   } else if (Math.abs(gap) < 0.05) {
-    verdict = `<p class="subtitle">Your picks match the plan — the two paths are the same line.</p>`;
+    verdict = hasBooked
+      ? `<p class="subtitle">Your picks match the plan — the two paths are the same line.</p>`
+      : `<p class="subtitle">This is the model's current best use of your remaining clubs across the full horizon. It will be re-planned as fixtures and availability change.</p>`;
   } else {
-    const worst = booked.reduce((a, b) => ((b.delta ?? 0) < (a.delta ?? 0) ? b : a), booked[0]);
+    const comparable = hasBooked ? booked : steps;
+    const worst = comparable.reduce((a, b) => ((b.delta ?? 0) < (a.delta ?? 0) ? b : a), comparable[0]);
     const cause = worst && worst.delta != null && worst.plan_team && worst.plan_team !== worst.team
-      ? ` The gap opens at GW${worst.gameweek}, where you took ${escapeHtml(worst.team)} over ${escapeHtml(worst.plan_team)}.`
+      ? ` The biggest trade-off is GW${worst.gameweek}, where ${escapeHtml(worst.team)} is used instead of ${escapeHtml(worst.plan_team)}.`
       : "";
-    verdict = `<p class="subtitle">Surviving the whole horizon on your path is <strong>${percent(yours)}</strong>, against <strong>${percent(plan)}</strong> for the recommended path — <strong>${gap.toFixed(1)}pp</strong>.${cause} Because survival multiplies, a single week's deficit is carried by every week after it.</p>`;
+    verdict = `<p class="subtitle">Surviving the whole horizon on this path is <strong>${percent(yours)}</strong>, against <strong>${percent(plan)}</strong> for the reference plan — <strong>${gap.toFixed(1)}pp</strong>.${cause} Because survival multiplies, a single week's deficit is carried by every week after it.</p>`;
   }
 
   const heading = isPreview
     ? `<p class="eyebrow">Preview — not saved</p>
        <h3>If you picked ${escapeHtml(previewTeam)}</h3>
        <p class="subtitle"><button class="text-button" data-lms-preview-clear>Back to your actual path</button></p>`
-    : `<p class="eyebrow">Pick lineage</p><h3>Your path against the plan</h3>`;
-  return `<div class="stat-table-card lineage-card${isPreview ? " lineage-preview" : ""}">
+    : `<p class="eyebrow">Interactive horizon graph</p><h3>${hasBooked ? "Your path against the plan" : "Your modeled path across future gameweeks"}</h3>`;
+  const graphLabel = hasBooked ? "Your path" : "Your modeled path";
+  return `<section class="stat-table-card lineage-card${isPreview ? " lineage-preview" : ""}">
     ${heading}
     <div class="lineage-figure">
       <p class="lineage-hero">${yours == null ? "—" : percent(yours)}</p>
-      <p class="subtitle">chance of surviving all ${steps.length} gameweek${steps.length === 1 ? "" : "s"} on the picks you have made and the plan from here</p>
+      <p class="subtitle">modeled chance of surviving all ${steps.length} gameweek${steps.length === 1 ? "" : "s"} on this path</p>
     </div>
     <div class="lineage-legend">
-      <span><i class="lineage-swatch yours"></i>Your path</span>
+      <span><i class="lineage-swatch yours"></i>${graphLabel}</span>
       <span><i class="lineage-swatch plan"></i>Recommended plan</span>
     </div>
-    <div class="lineage-scroll">${lineageChart(steps)}</div>
+    <div class="lineage-week-selector" role="group" aria-label="Focus a gameweek">${steps.map((step) => `<button class="lineage-week ${String(step.gameweek) === String(focused.gameweek) ? "active" : ""}" data-lms-graph-week="${step.gameweek}" type="button">GW${step.gameweek}</button>`).join("")}</div>
+    <div class="lineage-scroll">${lineageChart(steps, focused.gameweek, graphLabel)}</div>
+    ${lmsGraphFocus(focused)}
     ${verdict}
     <details class="disclosure"><summary>Week by week</summary>
       <table><thead><tr><th>GW</th><th>Status</th><th>Your club</th><th>P(Win)</th><th>Plan's club</th><th>P(Win)</th><th>Delta</th><th>Still alive</th></tr></thead>
       <tbody>${lineageRows(steps)}</tbody></table>
     </details>
-  </div>`;
+  </section>`;
 }
 
 function lmsHistoryRows(entrants) {
@@ -525,7 +730,7 @@ function lmsView() {
   const state = entrants[lmsEntrant];
   const candidates = (lmsEntrant && lms.recommendations[lmsEntrant]) || lms.recommendations.__all__ || [];
   const plan = (lmsEntrant && lms.plans?.[lmsEntrant]) || lms.plans?.__all__ || null;
-  const lineage = (lmsEntrant && lms.lineages?.[lmsEntrant]) || null;
+  const lineage = (lmsEntrant && lms.lineages?.[lmsEntrant]) || lmsPlanLineage(plan);
   const previewLineage = lmsPreview ? lms.previews?.[lmsEntrant]?.[lmsPreview] : null;
   const switchCandidates = (lmsEntrant && lms.switch_candidates?.[lmsEntrant]) || candidates;
   const decisionWeek = (lmsEntrant && lms.decision_weeks?.[lmsEntrant]) ?? gw?.number;
@@ -554,9 +759,9 @@ function lmsView() {
     const lockNote = locked
       ? `<p class="subtitle">This gameweek has started — ${escapeHtml(pendingPick.team)} is final.</p>`
       : `<p class="subtitle">You can switch club until the first match kicks off${gw.deadline_at ? ` (${displayDate(gw.deadline_at)})` : ""}. Select any row below to see what it would do to your horizon.</p>`;
-    pickSection = `<div class="callout muted"><strong>Gameweek ${gw.number}</strong><span>${escapeHtml(pendingPick.team)} ${pendingPick.is_home ? "v" : "@"} ${escapeHtml(pendingPick.opponent)} — ${pendingPick.result}${pendingPick.source ? ` (${pendingPick.source.toLowerCase()})` : ""}${manualFallback}</span></div>${lockNote}${lmsLineageCard(previewLineage || lineage, !!previewLineage, lmsPreview)}${lmsPlanCard(plan)}${locked ? "" : `<div class="stat-table-card"><p class="eyebrow">Every eligible club — gameweek ${decisionWeek}</p><p class="subtitle">Select a row to see the horizon that club leads to.</p><table><thead><tr><th>Team</th><th>Fixture</th><th>P(Win)</th><th>P(Draw)</th><th>P(Loss)</th><th>Conf</th><th></th></tr></thead><tbody>${lmsRecommendationRows(switchCandidates, !!lmsEntrant, plan?.picks?.[0]?.team, pendingPick.team)}</tbody></table></div>`}`;
+    pickSection = `<div class="callout muted"><strong>Gameweek ${gw.number}</strong><span>${escapeHtml(pendingPick.team)} ${pendingPick.is_home ? "v" : "@"} ${escapeHtml(pendingPick.opponent)} — ${pendingPick.result}${pendingPick.source ? ` (${pendingPick.source.toLowerCase()})` : ""}${manualFallback}</span></div>${lockNote}${lmsLineageCard(previewLineage || lineage, !!previewLineage, lmsPreview)}${lmsPlanCard(plan)}${locked ? "" : `<div class="stat-table-card lms-candidate-card"><div class="table-intro"><p class="eyebrow">Every eligible club — gameweek ${decisionWeek}</p><p class="subtitle">Select a row to see the horizon that club leads to.</p></div><table><thead><tr><th>Team</th><th>Fixture</th><th>P(Win)</th><th>P(Draw)</th><th>P(Loss)</th><th>Conf</th><th></th></tr></thead><tbody>${lmsRecommendationRows(switchCandidates, !!lmsEntrant, plan?.picks?.[0]?.team, pendingPick.team)}</tbody></table></div>`}`;
   } else {
-    pickSection = `${lmsLineageCard(previewLineage || lineage, !!previewLineage, lmsPreview)}${lmsPlanCard(plan)}<div class="stat-table-card"><p class="eyebrow">Every eligible club</p><p class="subtitle">Select a row to see the horizon that club leads to.</p><table><thead><tr><th>Team</th><th>Fixture</th><th>P(Win)</th><th>P(Draw)</th><th>P(Loss)</th><th>Conf</th><th></th></tr></thead><tbody>${lmsRecommendationRows(candidates, !!lmsEntrant, plan?.picks?.[0]?.team)}</tbody></table></div>${lmsEntrant ? "" : `<p class="subtitle">Enter an entrant name above to record a pick.</p>`}`;
+    pickSection = `${lmsLineageCard(previewLineage || lineage, !!previewLineage, lmsPreview)}${lmsPlanCard(plan)}<div class="stat-table-card lms-candidate-card"><div class="table-intro"><p class="eyebrow">Every eligible club</p><p class="subtitle">Select a row to see the horizon that club leads to.</p></div><table><thead><tr><th>Team</th><th>Fixture</th><th>P(Win)</th><th>P(Draw)</th><th>P(Loss)</th><th>Conf</th><th></th></tr></thead><tbody>${lmsRecommendationRows(candidates, !!lmsEntrant, plan?.picks?.[0]?.team)}</tbody></table></div>${lmsEntrant ? "" : `<p class="subtitle">Enter an entrant name above to record a pick.</p>`}`;
   }
 
   const unknownNote = gw && lms.unknown_teams.length ? `<p class="subtitle">Not in the training corpus, using league-average strength: ${escapeHtml(lms.unknown_teams.join(", "))}.</p>` : "";
@@ -571,7 +776,7 @@ function lmsView() {
 
   const historySection = `<section class="section-heading"><div><p class="eyebrow">Entrants</p><h2>Survival status</h2></div></section><div class="stat-table-card"><table><thead><tr><th>Entrant</th><th>Status</th><th>Clubs used</th><th>Last result</th></tr></thead><tbody>${lmsHistoryRows(entrants)}</tbody></table></div>`;
 
-  return `${pageHeader("Last Man Standing", "Survivor picks", "Pick one club per gameweek. Win to survive — a draw eliminates too, same as a loss. A club can only be picked once for the whole competition.")}
+  return `<div class="lms-view">${pageHeader("Last Man Standing", "Survivor picks", "Pick one club per gameweek. Win to survive — a draw eliminates too, same as a loss. A club can only be picked once for the whole competition.")}
     ${entrantSection}
     ${lmsFixturesSourceBanner(lms.fixtures_source)}
     ${gw ? lmsAutoSettleBanner(lms.auto_settle) : ""}
@@ -579,7 +784,7 @@ function lmsView() {
     ${pickSection}
     ${unknownNote}
     ${setupSection}
-    ${historySection}`;
+    ${historySection}</div>`;
 }
 
 // What you told us you entered, and when. The reconciler already records
@@ -755,7 +960,7 @@ function modelView() {
   const config = appData.model.frozen_config;
   const transparency = appData.model.transparency;
   const values = [["Model version", appData.model.version], ["Training config", "Frozen Phase 1"], ["Time decay ξ", config.xi], ["Market blend", config.market_blend_weight], ["Tail tolerance", config.tail_tolerance], ["Goal grid", `${config.min_goals_grid}–${config.max_goals_cap}`], ["Promoted-team priors", config.use_promoted_priors ? "Enabled" : "Disabled"]];
-  return `${pageHeader("Expert", "Model Lab", "Technical detail is available here without competing with the weekly decision.")}<section class="callout muted"><strong>Frozen evaluation model</strong><span>${escapeHtml(appData.model.note)} ${escapeHtml(transparency.evaluation_reason || "")}</span></section><section class="spec-grid">${values.map(([label, value]) => `<article><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></article>`).join("")}</section><section class="form-card"><h2>How a pick is selected</h2><p>The scoreline with the highest expected Super 6 value is recommended. Expected points uses the probability of the selected match result plus the probability of the exact score; confidence remains a separate category.</p><p class="subtitle">Open any fixture for its expected-value breakdown, and expand “Score matrix &amp; provenance” there for the full scoreline distribution and source freshness.</p></section>`;
+  return `<div class="model-view">${pageHeader("Expert", "Model Lab", "Technical detail is available here without competing with the weekly decision.")}<section class="callout muted"><strong>Frozen evaluation model</strong><span>${escapeHtml(appData.model.note)} ${escapeHtml(transparency.evaluation_reason || "")}</span></section><section class="spec-grid">${values.map(([label, value]) => `<article><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></article>`).join("")}</section><section class="form-card"><h2>How a pick is selected</h2><p>The scoreline with the highest expected Super 6 value is recommended. Expected points uses the probability of the selected match result plus the probability of the exact score; confidence remains a separate category.</p><p class="subtitle">Open any fixture for its expected-value breakdown, and expand “Score matrix &amp; provenance” there for the full scoreline distribution and source freshness.</p></section></div>`;
 }
 
 // §18.1's registry answers three different questions, and showing them as
@@ -802,7 +1007,8 @@ function healthView() {
   const health = appData.health;
   const ollama = health.ollama || {};
   const ollamaLabel = ollama.configured ? health.ollama_reachable : "Not configured";
-  return `${pageHeader("Operational status", "System Health", "Health is visible when needed but stays out of the weekly decision flow.")}<section class="health-grid"><article><span>Scheduler</span><strong>${health.scheduler_jobs_pending ? `${health.scheduler_jobs_pending} pending` : "Ready"}</strong></article><article><span>Database</span><strong>Healthy · schema ${health.database_schema_version}</strong></article><article><span>Knowledge extractor</span><strong>${escapeHtml(health.extractor)} · ${escapeHtml(health.extractor_mode)}</strong><small>Research runs on a schedule, six sweeps a round.${health.extraction_recent_total ? ` Last ${health.extraction_recent_total} extractions: ${health.extraction_recent_total - health.extraction_recent_failed} ok, ${health.extraction_recent_failed} failed.` : ""}</small>${health.extractor === "NullExtractor" ? "" : `<button class="plain-button" type="button" data-action="research-now">Research now</button>`}</article><article><span>Ollama</span><strong>${escapeHtml(ollamaLabel)}</strong><small>${escapeHtml(ollama.detail || "")}</small></article></section>${health.warnings.length ? `<section class="warning-list">${health.warnings.map((warning) => `<p>${escapeHtml(warning)}</p>`).join("")}</section>` : ""}<section class="stat-table-card"><table><thead><tr><th>Source</th><th>Status</th><th>Quota</th></tr></thead><tbody>${health.sources.map((source) => `<tr><td>${escapeHtml(source.source_id)}</td><td>${escapeHtml(titleCase(source.usage_status))}</td><td>${source.quota_limit ? `${source.quota_used}/${source.quota_limit} per ${escapeHtml(source.quota_period)}` : "Not metered"}</td></tr>`).join("")}</tbody></table></section>`;
+  const extractorName = String(health.extractor || "").replace(/([a-z])([A-Z])/g, "$1 $2");
+  return `<div class="health-view">${pageHeader("Operational status", "System Health", "Health is visible when needed but stays out of the weekly decision flow.")}<section class="health-grid"><article><span>Scheduler</span><strong>${health.scheduler_jobs_pending ? `${health.scheduler_jobs_pending} pending` : "Ready"}</strong></article><article><span>Database</span><strong>Healthy · schema ${health.database_schema_version}</strong></article><article><span>Knowledge extractor</span><strong>${escapeHtml(extractorName)} · ${escapeHtml(health.extractor_mode)}</strong><small>Research runs on a schedule, six sweeps a round.${health.extraction_recent_total ? ` Last ${health.extraction_recent_total} extractions: ${health.extraction_recent_total - health.extraction_recent_failed} ok, ${health.extraction_recent_failed} failed.` : ""}</small>${health.extractor === "NullExtractor" ? "" : `<button class="plain-button" type="button" data-action="research-now">Research now</button>`}</article><article><span>Ollama</span><strong>${escapeHtml(ollamaLabel)}</strong><small>${escapeHtml(ollama.detail || "")}</small></article></section>${health.warnings.length ? `<section class="warning-list">${health.warnings.map((warning) => `<p>${escapeHtml(warning)}</p>`).join("")}</section>` : ""}<section class="stat-table-card"><table><thead><tr><th>Source</th><th>Status</th><th>Quota</th></tr></thead><tbody>${health.sources.map((source) => `<tr><td>${escapeHtml(source.source_id)}</td><td>${escapeHtml(titleCase(source.usage_status))}</td><td>${source.quota_limit ? `${source.quota_used}/${source.quota_limit} per ${escapeHtml(source.quota_period)}` : "Not metered"}</td></tr>`).join("")}</tbody></table></section></div>`;
 }
 
 function settingsView() {
@@ -816,8 +1022,8 @@ function settingsView() {
 }
 
 function moreView() {
-  const pages = [["Activity", "activity", "Material forecast and intelligence history"], ["Model Lab", "model", "Frozen model and technical detail"], ["Sources", "sources", "Source approval and provenance"], ["System Health", "health", "Operational status and data warnings"], ["Settings", "settings", "League, notification and budget preferences"]];
-  return `${pageHeader("More", "Everything else", "Expert detail stays out of the quick, final prediction review.")}<div class="more-list">${pages.map(([title, page, copy]) => `<button class="more-link" data-page="${page}"><span><strong>${title}</strong><small>${copy}</small></span><b>›</b></button>`).join("")}</div>`;
+  const pages = [["Round control", "round", "Changes, setup and results"], ["Opponents", "opponents", "Import picks for your private league"], ["Performance", "performance", "Measure recorded results"], ["Cup Match", "cup", "One-off match forecast"], ["Activity", "activity", "Material forecast and intelligence history"], ["Model Lab", "model", "Frozen model and technical detail"], ["Sources", "sources", "Source approval and provenance"], ["System Health", "health", "Operational status and data warnings"], ["Settings", "settings", "League, notification and budget preferences"]];
+  return `${pageHeader("More", "More tools", "Everything outside the quick weekly review is still one tap away.")}<div class="more-list">${pages.map(([title, page, copy]) => `<button class="more-link" data-page="${page}"><span><strong>${title}</strong><small>${copy}</small></span><b>›</b></button>`).join("")}</div>`;
 }
 
 function renderPage() {
@@ -989,7 +1195,8 @@ function openFixture(index) {
   const headlineNote = unmodellable
     ? `Model returned ${escapeHtml(fixture.pick)} from the league-average prior${fixture.user_pick ? ` · your pick ${escapeHtml(fixture.user_pick)}` : ""}`
     : `Model ${escapeHtml(fixture.pick)}${fixture.user_pick ? ` · your pick ${escapeHtml(fixture.user_pick)}` : ""}`;
-  $("#fixture-detail").innerHTML = `<div class="detail-header"><p class="eyebrow">Fixture recommendation</p><div class="detail-teams"><span>${teamBadge(fixture.home_team, "large")}${escapeHtml(fixture.home_team)}</span><b>v</b><span>${teamBadge(fixture.away_team, "large")}${escapeHtml(fixture.away_team)}</span></div><div class="detail-score ${unmodellable ? "no-pick" : ""}">${headlineScore}</div><p class="subtitle">${headlineNote}</p></div>${unmodellableBanner}<div class="detail-grid"><div class="detail-metric"><span>Result probability</span><strong>${percent(fixture.result_probability)}</strong></div><div class="detail-metric"><span>Exact-score probability</span><strong>${percent(fixture.score_probability)}</strong></div><div class="detail-metric"><span>Expected Super 6 points</span><strong>${fixture.expected_points.toFixed(2)}</strong></div><div class="detail-metric"><span>Confidence</span><strong class="confidence ${unmodellable ? "" : fixture.confidence.toLowerCase()}">${unmodellable ? `${fixture.confidence} — of the wrong distribution` : fixture.confidence}</strong></div></div><section class="why-card"><p class="eyebrow">${unmodellable ? `Why no pick?` : `Why ${fixture.pick}?`}</p><h3>${unmodellable ? "The distribution below is not about these two teams." : `${escapeHtml(reason.result)} is the highest-value result.`}</h3><p>${unmodellable ? "It is the highest-expected-value score under a distribution built from a league-average stand-in, so it describes an average team, not the one actually playing." : "This score produces the highest expected Super 6 score from the current probability distribution. It is a recommendation, not a certainty."}</p><ul><li>${escapeHtml(reason.market)}</li>${marketNotes(fixture).map((note) => `<li>${escapeHtml(note)}</li>`).join("")}<li>Data quality: ${escapeHtml(fixture.availability?.data_quality || "LIMITED")}.</li><li>Confidence is separate from both probability figures.</li></ul></section><section class="alternatives"><p class="eyebrow">Meaningful alternatives</p><table><thead><tr><th>Score</th><th>Score probability</th><th>Super 6 EV</th></tr></thead><tbody>${alternatives}</tbody></table></section>${evBreakdown(fixture.explanation)}<details class="disclosure"><summary>Score matrix &amp; provenance</summary>${heatmapGrid(fixture.explanation)}${sourceFreshness(fixture.explanation)}</details><details class="disclosure"><summary>Evidence &amp; prediction history</summary>${surpriseNote(fixture)}<h3>Current evidence</h3><ul>${evidence}</ul><h3>Prediction history</h3><ul>${history}</ul></details><form id="override-form" data-index="${index}" class="inline-score-form"><p class="eyebrow">Your pick</p><label>Home goals<input aria-label="${escapeHtml(fixture.home_team)} goals" name="home" min="0" max="20" type="number" value="${home}"></label><span>–</span><label>Away goals<input aria-label="${escapeHtml(fixture.away_team)} goals" name="away" min="0" max="20" type="number" value="${away}"></label><button class="button" type="submit">Use this score</button></form>`;
+  const overrideForm = `<form id="override-form" data-index="${index}" class="inline-score-form"><p class="eyebrow">Your pick</p><label>Home goals<input aria-label="${escapeHtml(fixture.home_team)} goals" name="home" min="0" max="20" type="number" value="${home}"></label><span>–</span><label>Away goals<input aria-label="${escapeHtml(fixture.away_team)} goals" name="away" min="0" max="20" type="number" value="${away}"></label><button class="button" type="submit">Use this score</button></form>`;
+  $("#fixture-detail").innerHTML = `<div class="detail-header"><p class="eyebrow">Fixture recommendation</p><div class="detail-teams"><span>${teamBadge(fixture.home_team, "large")}${escapeHtml(fixture.home_team)}</span><b>v</b><span>${teamBadge(fixture.away_team, "large")}${escapeHtml(fixture.away_team)}</span></div><div class="detail-score ${unmodellable ? "no-pick" : ""}">${headlineScore}</div><p class="subtitle">${headlineNote}</p></div>${unmodellableBanner}<section class="fixture-decision"><div><p class="eyebrow">${unmodellable ? "Your decision" : "Recommended score"}</p><strong>${headlineScore}</strong><span>${unmodellable ? "Choose a score yourself" : `${confidenceMeaning(fixture)} · ${fixture.confidence} confidence`}</span></div>${overrideForm}</section><div class="detail-grid"><div class="detail-metric"><span>Result probability</span><strong>${percent(fixture.result_probability)}</strong></div><div class="detail-metric"><span>Exact-score probability</span><strong>${percent(fixture.score_probability)}</strong></div><div class="detail-metric"><span>Expected Super 6 points</span><strong>${fixture.expected_points.toFixed(2)}</strong></div><div class="detail-metric"><span>Confidence</span><strong class="confidence ${unmodellable ? "" : fixture.confidence.toLowerCase()}">${unmodellable ? `${fixture.confidence} — of the wrong distribution` : `${confidenceMeaning(fixture)} · ${fixture.confidence}`}</strong></div></div><section class="why-card"><p class="eyebrow">${unmodellable ? `Why no pick?` : `Why ${fixture.pick}?`}</p><h3>${unmodellable ? "The distribution below is not about these two teams." : `${escapeHtml(reason.result)} is the highest-value result.`}</h3><p>${unmodellable ? "It is the highest-expected-value score under a distribution built from a league-average stand-in, so it describes an average team, not the one actually playing." : "This score produces the highest expected Super 6 score from the current probability distribution. It is a recommendation, not a certainty."}</p><ul><li>${escapeHtml(reason.market)}</li>${marketNotes(fixture).map((note) => `<li>${escapeHtml(note)}</li>`).join("")}<li>Data quality: ${escapeHtml(fixture.availability?.data_quality || "LIMITED")}.</li><li>Confidence is separate from both probability figures.</li></ul></section><details class="disclosure"><summary>Alternatives &amp; trade-offs</summary><section class="alternatives"><table><thead><tr><th>Score</th><th>Score probability</th><th>Super 6 EV</th></tr></thead><tbody>${alternatives}</tbody></table>${evBreakdown(fixture.explanation)}</section></details><details class="disclosure"><summary>Score matrix &amp; provenance</summary>${heatmapGrid(fixture.explanation)}${sourceFreshness(fixture.explanation)}</details><details class="disclosure"><summary>Evidence &amp; prediction history</summary>${surpriseNote(fixture)}<h3>Current evidence</h3><ul>${evidence}</ul><h3>Prediction history</h3><ul>${history}</ul></details>`;
   $("#fixture-dialog").showModal();
 }
 
@@ -1048,20 +1255,37 @@ function toast(message) { const node = $("#toast"); node.textContent = message; 
 
 async function loadApp() {
   $("#error").hidden = true;
+  const initialLoad = !appData;
+  const loading = $("#loading");
+  const loadingCopy = $("#loading-copy");
+  if (initialLoad) loading.hidden = false;
+  appLoadController?.abort();
+  appLoadController = new AbortController();
+  const slowNotice = setTimeout(() => {
+    loadingCopy.textContent = "Building the local forecast model. The first load after a restart can take a few seconds.";
+  }, 2500);
+  const timeout = setTimeout(() => appLoadController.abort(), 30000);
   try {
-    const response = await fetch("/api/app", { cache: "no-store" });
+    const response = await fetch("/api/app", { cache: "no-store", signal: appLoadController.signal });
     const payload = await response.json();
     if (!response.ok) throw new Error(payload.error || "Could not build the decision centre.");
     appData = payload;
     clearInterval(countdownTimer);
     countdownTimer = setInterval(updateCountdown, 30_000);
-    $("#loading").hidden = true;
+    loading.hidden = true;
     $("#app").hidden = false;
     renderPage();
   } catch (error) {
-    $("#loading").hidden = true;
-    $("#error").textContent = `The decision centre could not load: ${error.message}`;
+    loading.hidden = true;
+    const message = error.name === "AbortError"
+      ? "The forecast took longer than 30 seconds to load. Check that the local service is running, then try again."
+      : `The decision centre could not load: ${error.message}`;
+    $("#error").innerHTML = `<p>${escapeHtml(message)}</p><button class="button" data-action="retry-load">Try again</button>`;
     $("#error").hidden = false;
+  } finally {
+    clearTimeout(slowNotice);
+    clearTimeout(timeout);
+    appLoadController = undefined;
   }
 }
 
@@ -1083,6 +1307,8 @@ document.addEventListener("change", (event) => {
   }
   if (event.target.id === "lms-entrant-input") {
     lmsEntrant = event.target.value.trim();
+    lmsPreview = "";
+    lmsGraphWeek = "";
     renderPage();
   }
 });
@@ -1096,6 +1322,7 @@ document.addEventListener("click", async (event) => {
   const activityTab = event.target.closest("[data-activity-filter]");
   if (activityTab) { activityFilter = activityTab.dataset.activityFilter; renderPage(); }
   const action = event.target.closest("[data-action]")?.dataset.action;
+  if (action === "retry-load") { loadApp(); return; }
   if (action === "mark-entered") openEntryDialog();
   if (action === "research-now") {
     const button = event.target.closest("[data-action]");
@@ -1164,6 +1391,12 @@ document.addEventListener("click", async (event) => {
       await post("/api/rounds", pendingRound); $("#round-dialog").close(); toast("Round saved and forecast refreshed."); await loadApp(); location.hash = "#home";
     } catch (error) { toast(error.message); }
   }
+  const graphWeek = event.target.closest("[data-lms-graph-week]");
+  if (graphWeek) {
+    lmsGraphWeek = graphWeek.dataset.lmsGraphWeek;
+    renderPage();
+    return;
+  }
   const previewClear = event.target.closest("[data-lms-preview-clear]");
   if (previewClear) { lmsPreview = ""; renderPage(); return; }
   const previewRow = event.target.closest("[data-lms-preview]");
@@ -1201,6 +1434,18 @@ document.addEventListener("click", async (event) => {
       renderPage();
     } catch (error) { toast(error.message); }
   }
+});
+
+// The labelled week buttons above the graph provide the primary keyboard
+// route. The chart's larger hit areas mirror that interaction for people
+// exploring the plotted line directly.
+document.addEventListener("keydown", (event) => {
+  if (event.key !== "Enter" && event.key !== " ") return;
+  const graphWeek = event.target.closest?.("rect[data-lms-graph-week]");
+  if (!graphWeek) return;
+  event.preventDefault();
+  lmsGraphWeek = graphWeek.dataset.lmsGraphWeek;
+  renderPage();
 });
 
 document.addEventListener("submit", async (event) => {

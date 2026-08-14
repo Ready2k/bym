@@ -13,7 +13,7 @@
       <aside class="sidebar" aria-label="Primary navigation">
         <a class="brand" href="#home" aria-label="Beat Your Mates home"><span class="brand-mark">BYM</span><span>Beat Your Mates</span></a>
         <nav class="nav-list" aria-label="Main">
-          <a class="nav-link" data-page-link="home" href="#home"><span>Home</span></a>
+          <a class="nav-link" data-page-link="home" href="#home"><span>This round</span></a>
           <a class="nav-link" data-page-link="round" href="#round"><span>Round</span></a>
           <a class="nav-link" data-page-link="cup" href="#cup"><span>Cup Match</span></a>
           <a class="nav-link" data-page-link="lms" href="#lms"><span>Last Man Standing</span></a>
@@ -33,10 +33,22 @@
         <p class="sidebar-note">We recommend. You enter predictions in Super 6 yourself.</p>
       </aside>
       <main id="main" class="main-content" tabindex="-1">
-        <div id="loading" class="loading-panel" role="status">Building your decision centre…</div>
+        <div id="loading" class="loading-panel loading-experience" role="status">
+          <p class="eyebrow">SUPER 6 · PREPARING THIS ROUND</p>
+          <h1>Getting your latest picks ready</h1>
+          <p id="loading-copy">We are checking the current forecast for all six fixtures. Your recommendations will appear here shortly.</p>
+          <div class="loading-cards" aria-hidden="true"><span></span><span></span><span></span></div>
+        </div>
         <div id="error" class="error-panel" role="alert" hidden></div>
         <div id="app" hidden></div>
       </main>
+      <nav class="mobile-nav" aria-label="Mobile navigation">
+        <a data-page-link="home" href="#home"><span aria-hidden="true">●</span>This round</a>
+        <a data-page-link="league" href="#league"><span aria-hidden="true">◔</span>League</a>
+        <a data-page-link="lms" href="#lms"><span aria-hidden="true">★</span>LMS</a>
+        <a data-page-link="activity" href="#activity"><span aria-hidden="true">◷</span>Activity</a>
+        <a data-page-link="more" href="#more"><span aria-hidden="true">☰</span>More</a>
+      </nav>
     </div>
 
     <dialog id="fixture-dialog" class="dialog fixture-dialog"><button class="close-button" data-close="fixture-dialog" aria-label="Close fixture detail">×</button><div id="fixture-detail"></div></dialog>

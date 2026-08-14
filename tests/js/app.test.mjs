@@ -319,6 +319,28 @@ test("badge initials are hidden from assistive tech, not just styled small", () 
   assert.match(html, /aria-label="Arsenal badge"/);
 });
 
+test("badges cover current league clubs and Cup Match's full team names", () => {
+  const app = loadApp(appData());
+
+  assert.match(app.teamBadge("Brighton & Hove Albion"), /brighton\.5da206a0\.png/);
+  assert.match(app.teamBadge("Nott'm Forest"), /nottingham-forest\.43b53a26\.png/);
+  assert.match(app.teamBadge("Nottingham Forest"), /nottingham-forest\.43b53a26\.png/);
+  assert.match(app.teamBadge("Bristol Rovers"), /bristol-rovers\.3396d3b9\.png/);
+  assert.match(app.teamBadge("Oldham"), /oldham\.8e568e90\.png/);
+});
+
+test("System Health separates camel-cased extractor names for readability", () => {
+  const app = loadApp(appData({
+    health: {
+      scheduler_jobs_pending: 0, database_schema_version: 6, warnings: [], sources: [],
+      extractor: "OllamaClaimExtractor", extractor_mode: "active",
+      ollama: { configured: false, detail: "" },
+    },
+  }));
+
+  assert.match(app.healthView(), /Ollama Claim Extractor · active/);
+});
+
 // ---- Last Man Standing ---------------------------------------------------
 
 test("the plan card leads with the pick to make now, not the horizon", () => {
@@ -403,13 +425,16 @@ test("the lineage card names where the two paths parted", () => {
   assert.match(html, /Arsenal/);
 });
 
-test("an entrant with nothing booked gets no lineage card", () => {
-  // With no pick made there is no path to compare — the plan card already
-  // says everything, and an empty chart would be furniture.
+test("an entrant with nothing booked gets a future-model horizon", () => {
+  // A new entrant still needs to see why the model saves clubs for later;
+  // the planned path is itself a useful prediction, not empty furniture.
   const app = loadApp(appData());
   const planned = lmsLineage();
   planned.steps = planned.steps.map((s) => ({ ...s, status: "PLANNED" }));
-  assert.equal(app.lmsLineageCard(planned), "");
+  const html = app.lmsLineageCard(planned);
+  assert.match(html, /Your modeled path across future gameweeks/);
+  assert.match(html, /Modeled future choice/);
+  assert.match(html, /data-lms-graph-week/);
   assert.equal(app.lmsLineageCard(null), "");
   assert.equal(app.lmsLineageCard({ steps: [] }), "");
 });
@@ -432,7 +457,7 @@ test("both series are drawn, and identity is never colour alone", () => {
   assert.match(html, /lineage-line plan/);
   assert.match(html, /Your path/, "legend text, not just a hue");
   assert.match(html, /Recommended plan/);
-  assert.match(html, /aria-label="Cumulative survival/);
+  assert.match(html, /aria-label="Interactive cumulative survival/);
 });
 
 test("a club name cannot inject markup through the lineage card", () => {

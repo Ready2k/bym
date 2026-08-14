@@ -773,6 +773,11 @@ class LineageStep:
     p_win: float | None
     plan_team: str | None
     plan_p_win: float | None
+    # The graph is a decision surface, not just a probability trace. Keep
+    # enough fixture context for the UI to explain each future point without
+    # trying to reverse-engineer an opponent from a club name.
+    opponent: str | None = None
+    is_home: bool | None = None
     result: str | None = None
 
     @property
@@ -843,6 +848,8 @@ def lineage(
                 p_win=p_win,
                 plan_team=ref.candidate.team if ref else None,
                 plan_p_win=ref.candidate.p_win if ref else None,
+                opponent=entry.get("opponent"),
+                is_home=bool(entry.get("is_home")),
                 result=entry.get("result"),
             )
         )
@@ -860,6 +867,8 @@ def lineage(
                 p_win=pick.candidate.p_win,
                 plan_team=ref.candidate.team if ref else pick.candidate.team,
                 plan_p_win=ref.candidate.p_win if ref else pick.candidate.p_win,
+                opponent=pick.candidate.opponent,
+                is_home=pick.candidate.is_home,
             )
         )
     steps.sort(key=lambda s: s.gameweek)

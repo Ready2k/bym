@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from bym import web
 from bym.round import load_round, round_from_dict, round_to_dict
 from bym.web import (
     WebConfig,
@@ -235,6 +236,43 @@ def test_ollama_is_not_probed_when_the_optional_extractor_is_disabled(monkeypatc
     assert config.kind == "null"
 
 
+def test_configured_ollama_is_not_probed_on_the_page_load_path(monkeypatch):
+    """A sleeping optional home-server extractor cannot hold up forecasts."""
+    from bym.knowledge.config import ExtractorConfig
+
+    config = ExtractorConfig(kind="ollama", base_url="http://ollama.local:11434")
+    monkeypatch.setattr(
+        "bym.knowledge.ollama.check_health",
+        lambda *args, **kwargs: pytest.fail("page load must not probe Ollama"),
+    )
+    health, effective = ollama_status(config, probe=False)
+    assert health is None
+    assert effective is config
+
+
+def test_model_context_reuses_a_fit_until_the_local_data_changes(tmp_path, monkeypatch):
+    """Refreshing the UI must not re-fit the static historical corpus."""
+    source = tmp_path / "2025_E0.csv"
+    source.write_text("first")
+    config = WebConfig(data_path=tmp_path, seasons=(2025, 2025), divisions=("E0",))
+    calls = []
+    matches = object()
+    router = object()
+    monkeypatch.setattr(web, "load_matches", lambda *args, **kwargs: (calls.append("load"), matches)[1])
+    monkeypatch.setattr(web, "_fit_router", lambda value: (calls.append("fit"), router)[1])
+    monkeypatch.setattr(web, "_known_teams", lambda value: {"Arsenal"})
+    web._MODEL_CONTEXT.clear()
+
+    assert web._model_context(config)[1] is router
+    assert web._model_context(config)[1] is router
+    assert calls == ["load", "fit"]
+
+    source.write_text("updated source")
+    assert web._model_context(config)[1] is router
+    assert calls == ["load", "fit", "load", "fit"]
+    web._MODEL_CONTEXT.clear()
+
+
 def test_ollama_can_be_configured_and_disabled_from_web_settings(tmp_path):
     config = configured_round(tmp_path)
     saved = save_settings(
@@ -375,6 +413,16 @@ def test_cup_prediction_marks_a_two_known_team_tie_modellable():
     assert forecast["fixture"]["modellability"]["modellable"] is True
     assert forecast["fixture"]["modellability"]["unknown_teams"] == []
     assert forecast["extended"] is False
+
+
+def test_cup_prediction_resolves_supporter_facing_club_names():
+    forecast = cup_prediction(
+        {"home": "Brighton & Hove Albion", "away": "Nottingham Forest"}, CUP_CONFIG
+    )
+
+    assert forecast["fixture"]["modellability"]["modellable"] is True
+    assert forecast["fixture"]["home_team"] == "Brighton & Hove Albion"
+    assert forecast["fixture"]["away_team"] == "Nottingham Forest"
 
 
 def test_cup_prediction_extended_corpus_models_lower_division_teams_but_drops_the_frozen_label():

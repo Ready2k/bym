@@ -14,6 +14,7 @@ import os
 import re
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
+from threading import RLock
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -32,6 +33,7 @@ from .round import (
     round_to_dict,
 )
 from .sources.registry import load_registry
+from .sources.teams import resolve as resolve_team_name
 
 
 ASSET_DIR = Path(__file__).with_name("web_assets")
@@ -63,6 +65,53 @@ def _fit_router(matches):
     from .cli import _fit_router
 
     return _fit_router(matches, FROZEN_PHASE1_V1.xi, FROZEN_PHASE1_V1)
+
+
+# A fitted router is deterministic for a particular local data snapshot, but
+# expensive: a full fit involves one pooled and one per-division optimisation.
+# The web server used to repeat that work for the round and LMS payloads on
+# every page load. Keep the current local snapshot warm, and invalidate it
+# whenever one of its source CSVs changes.
+_MODEL_CONTEXT: dict[tuple, tuple[object, object, set[str]]] = {}
+_MODEL_CONTEXT_LOCK = RLock()
+
+
+def _model_data_fingerprint(config: WebConfig) -> tuple:
+    entries = []
+    for season in range(config.seasons[0], config.seasons[1] + 1):
+        for division in config.divisions:
+            path = config.data_path / f"{season}_{division}.csv"
+            try:
+                stat = path.stat()
+                entries.append((str(path.resolve()), stat.st_mtime_ns, stat.st_size))
+            except OSError:
+                entries.append((str(path.resolve()), None, None))
+    return tuple(entries)
+
+
+def _model_context(config: WebConfig) -> tuple[object, object, set[str]]:
+    """Load and fit the current local model snapshot once per server process."""
+    key = (
+        str(config.data_path.resolve()), config.seasons, config.divisions,
+        _model_data_fingerprint(config),
+    )
+    with _MODEL_CONTEXT_LOCK:
+        cached = _MODEL_CONTEXT.get(key)
+        if cached is not None:
+            return cached
+        matches = load_matches(
+            config.data_path,
+            list(range(config.seasons[0], config.seasons[1] + 1)),
+            config.divisions,
+            fetch=False,
+        )
+        context = (matches, _fit_router(matches), _known_teams(matches))
+        # There is only one active data snapshot in the local server. Dropping
+        # stale entries prevents a long-running process from retaining every
+        # historical download after a refresh.
+        _MODEL_CONTEXT.clear()
+        _MODEL_CONTEXT[key] = context
+        return context
 
 
 def _season_for(rnd: Round) -> int:
@@ -262,8 +311,8 @@ def available_ollama_models(payload: dict, session=None) -> dict:
     return {"models": names[:100]}
 
 
-def ollama_status(extractor_config=None) -> tuple[object | None, object]:
-    """Return configured extractor health without probing an unused host.
+def ollama_status(extractor_config=None, *, probe: bool = True) -> tuple[object | None, object]:
+    """Return configured extractor health without blocking routine page loads.
 
     A default/null extractor has no Ollama dependency at all. Calling a
     network probe in that state would both slow normal page loads and turn
@@ -272,7 +321,7 @@ def ollama_status(extractor_config=None) -> tuple[object | None, object]:
     from .knowledge.config import ExtractorKind, from_env
 
     config = extractor_config or from_env()
-    if config.kind != ExtractorKind.OLLAMA.value:
+    if config.kind != ExtractorKind.OLLAMA.value or not probe:
         return None, config
     from .knowledge.ollama import check_health
 
@@ -439,16 +488,14 @@ def _dashboard(config: WebConfig):
     cost of every page load.
     """
     rnd = load_round(config.round_path)
-    matches = load_matches(
-        config.data_path,
-        list(range(config.seasons[0], config.seasons[1] + 1)),
-        config.divisions,
-        fetch=False,
-    )
-    router = _fit_router(matches)
-    known_teams = _known_teams(matches)
+    matches, router, known_teams = _model_context(config)
     extractor_config = web_extractor_config(config)
-    ollama_health, extractor_config = ollama_status(extractor_config)
+    # A configured local extractor may be on a laptop or a home server that
+    # is asleep. Its status is operational information, not a prerequisite to
+    # rendering football forecasts; probing it here could leave the UI on its
+    # loading screen behind a slow DNS lookup. Explicit settings actions still
+    # use the live endpoint.
+    ollama_health, extractor_config = ollama_status(extractor_config, probe=False)
     season = _season_for(rnd)
     generated_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
     with db.connect(config.database_path) as conn:
@@ -568,7 +615,9 @@ def _dashboard(config: WebConfig):
         "host": extractor_config.host if extractor_config.kind == "ollama" else None,
         "model": extractor_config.model if extractor_config.kind == "ollama" else None,
         "detail": getattr(ollama_health, "detail", "") if ollama_health else (
-            "Ollama is not configured. The knowledge extractor is intentionally disabled."
+            "Ollama status is checked when you request its models."
+            if extractor_config.kind == "ollama"
+            else "Ollama is not configured. The knowledge extractor is intentionally disabled."
         ),
     }
     return {
@@ -634,6 +683,12 @@ def cup_prediction(payload: dict, config: WebConfig) -> dict:
     matches = load_matches(config.data_path, seasons, divisions, fetch=False)
     router = _fit_router(matches)
     known_teams = _known_teams(matches)
+    # Cup Match accepts the names supporters actually type (for example,
+    # "Nottingham Forest") as well as Football-Data's compact canonical
+    # names ("Nott'm Forest"). Resolution is explicit and returns None on
+    # ambiguity, so this never turns a genuinely unknown club into a guess.
+    model_home = resolve_team_name(home, known_teams) or home
+    model_away = resolve_team_name(away, known_teams) or away
     corpus = _corpus_label(divisions)
     # Widening the corpus changes the pooled cross-division fallback, so the
     # result is no longer the frozen, holdout-tested model and must not claim
@@ -642,11 +697,19 @@ def cup_prediction(payload: dict, config: WebConfig) -> dict:
     from .recommend import recommend_fixture
     from .transparency import SourceFreshness, fixture_transparency
 
-    recommendation = recommend_fixture(router(home, away), home, away, FROZEN_PHASE1_V1)
-    modellability = service.build_modellability(home, away, known_teams, corpus)
+    recommendation = recommend_fixture(
+        router(model_home, model_away), model_home, model_away, FROZEN_PHASE1_V1
+    )
+    modellability = service.build_modellability(
+        model_home, model_away, known_teams, corpus
+    )
     fixture = service.build_fixture_forecast(
         recommendation, modellability=modellability
     ).to_dict()
+    # The recommendation uses canonical data names, but the result should
+    # reflect the club name the user selected in the Cup Match form.
+    fixture["home_team"] = home
+    fixture["away_team"] = away
     fixture["explanation"] = fixture_transparency(
         recommendation,
         generated_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
@@ -1613,6 +1676,8 @@ def _lms_lineage_dict(steps) -> dict:
                 "status": s.status,
                 "team": s.team,
                 "p_win": s.p_win,
+                "opponent": s.opponent,
+                "is_home": s.is_home,
                 "plan_team": s.plan_team,
                 "plan_p_win": s.plan_p_win,
                 "delta": s.delta,
@@ -1664,6 +1729,8 @@ def _lms_previews(
             p_win=candidate["p_win"],
             plan_team=ref.candidate.team if ref else None,
             plan_p_win=ref.candidate.p_win if ref else None,
+            opponent=candidate["opponent"],
+            is_home=candidate["is_home"],
             result="PENDING",
         )
         rest = lms_mod.plan_horizon(
@@ -1683,6 +1750,8 @@ def _lms_previews(
                     p_win=pick.candidate.p_win,
                     plan_team=later_ref.candidate.team if later_ref else pick.candidate.team,
                     plan_p_win=later_ref.candidate.p_win if later_ref else pick.candidate.p_win,
+                    opponent=pick.candidate.opponent,
+                    is_home=pick.candidate.is_home,
                 )
             )
         steps.sort(key=lambda s: s.gameweek)
@@ -2131,6 +2200,7 @@ def save_lms_result(payload: dict, config: WebConfig) -> dict:
 def app_payload(config: WebConfig) -> dict:
     """One truthful payload for all UI phases; absent evidence remains absent."""
     payload, engine_result = _dashboard(config)
+    _, router, known_teams = _model_context(config)
     rnd = load_round(config.round_path)
     state = load_ui_state(config.ui_state_path)
     registry = load_registry(config.registry_path)
@@ -2160,7 +2230,13 @@ def app_payload(config: WebConfig) -> dict:
                 "note": "The quantitative core is frozen as PHASE1_MODEL_V1. Later layers are shown separately until prospective evidence promotes them.",
                 "transparency": model.to_dict(),
             },
-            "lms": lms_payload(config),
+            # Reuse the fit that built the main round rather than spending a
+            # second model fit just to project the LMS horizon.
+            "lms": lms_payload(
+                config,
+                router=router,
+                known_teams=known_teams,
+            ),
         }
     )
     return payload
@@ -2296,6 +2372,10 @@ def missing_state_warnings(config: WebConfig) -> list[str]:
 
 def serve(config: WebConfig, host: str = "127.0.0.1", port: int = 8000) -> None:
     """Run the local UI. Press Ctrl-C to stop it."""
+    # Do the one expensive historical-model fit before opening the browser
+    # endpoint. The service's ready message then means a first page visit can
+    # render immediately instead of leaving the user on a loading panel.
+    _model_context(config)
     handler = type("ConfiguredBymHandler", (BymRequestHandler,), {"config": config})
     server = ThreadingHTTPServer((host, port), handler)
     print(f"Beat Your Mates UI running at http://{host}:{port}")
