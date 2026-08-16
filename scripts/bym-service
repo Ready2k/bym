@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Manage the local Beat Your Mates decision UI without relying on a terminal window.
-# Optional environment overrides: BYM_PORT, BYM_DB, BYM_SUBMISSIONS,
-# BYM_ROUND, BYM_DATA, BYM_SEASONS.
+# Manage the local Beat Your Mates decision UI and its always-on worker
+# without relying on a terminal window. Optional environment overrides:
+# BYM_PORT, BYM_DB, BYM_SUBMISSIONS, BYM_ROUND, BYM_DATA, BYM_SEASONS,
+# BYM_WORKER (set to 0 to skip the worker and run the UI only).
 
 set -euo pipefail
 
@@ -19,6 +20,8 @@ cd "$ROOT_DIR"
 RUNTIME_DIR="$ROOT_DIR/.run"
 PID_FILE="$RUNTIME_DIR/bym-ui.pid"
 LOG_FILE="$RUNTIME_DIR/bym-ui.log"
+WORKER_PID_FILE="$RUNTIME_DIR/bym-worker.pid"
+WORKER_LOG_FILE="$RUNTIME_DIR/bym-worker.log"
 PORT="${BYM_PORT:-8000}"
 ROUND_FILE="${BYM_ROUND:-$ROOT_DIR/rounds/2026_27_round_01.json}"
 DATA_DIR="${BYM_DATA:-$ROOT_DIR/data}"
@@ -30,6 +33,7 @@ DATA_DIR="${BYM_DATA:-$ROOT_DIR/data}"
 DATABASE="${BYM_DB:-$ROOT_DIR/data/bym.db}"
 SUBMISSIONS="${BYM_SUBMISSIONS:-$ROOT_DIR/data/submissions.json}"
 SEASONS="${BYM_SEASONS:-2019 2025}"
+RUN_WORKER="${BYM_WORKER:-1}"
 
 if [[ -x "$ROOT_DIR/.venv/bin/python" ]]; then
   PYTHON="$ROOT_DIR/.venv/bin/python"
@@ -41,22 +45,24 @@ usage() {
   echo "Usage: $0 {start|stop|restart|status|logs}"
 }
 
-pid_is_running() {
-  [[ -f "$PID_FILE" ]] || return 1
+pid_file_is_running() {
+  local pid_file="$1"
+  [[ -f "$pid_file" ]] || return 1
   local pid
-  pid="$(<"$PID_FILE")"
+  pid="$(<"$pid_file")"
   [[ "$pid" =~ ^[0-9]+$ ]] && kill -0 "$pid" 2>/dev/null
 }
 
 clear_stale_pid() {
-  if [[ -f "$PID_FILE" ]] && ! pid_is_running; then
-    rm -f "$PID_FILE"
+  local pid_file="$1"
+  if [[ -f "$pid_file" ]] && ! pid_file_is_running "$pid_file"; then
+    rm -f "$pid_file"
   fi
 }
 
-start() {
-  clear_stale_pid
-  if pid_is_running; then
+start_ui() {
+  clear_stale_pid "$PID_FILE"
+  if pid_file_is_running "$PID_FILE"; then
     echo "Beat Your Mates UI is already running (PID $(<"$PID_FILE")) at http://127.0.0.1:$PORT"
     return
   fi
@@ -96,33 +102,94 @@ start() {
   echo "Beat Your Mates UI started (PID $pid): http://127.0.0.1:$PORT"
 }
 
-stop() {
-  clear_stale_pid
-  if ! pid_is_running; then
-    echo "Beat Your Mates UI is not running from this service script."
+# Scheduling a job (Round → Setup → "Confirm & start monitoring", or
+# `bym sources approve`) only ever writes a row saying "poll this at time
+# X" — nothing executes it unless something is actually running `bym
+# tick` on a loop. `bym serve` never did that itself, so a deployment
+# with only the UI running could look fully configured (sources
+# APPROVED, keys saved) and still never poll anything. This is the local
+# equivalent of docker-compose.yml's `worker` service: the same `bym
+# tick` loop, not `bym watch --loop` (that command is scoped to one round
+# and exits once its jobs finish — built for a foreground session, not a
+# daemon). A `bash -c '...'` child does not inherit this script's `set -e`,
+# so `bym tick` exiting 1 (no ODDS_API_KEY yet) ends that one iteration,
+# not the loop — matching the container's plain `sh -c` loop, which never
+# had `set -e` to begin with.
+start_worker() {
+  if [[ "$RUN_WORKER" != "1" ]]; then
+    echo "Worker skipped (BYM_WORKER=$RUN_WORKER)."
+    return
+  fi
+  clear_stale_pid "$WORKER_PID_FILE"
+  if pid_file_is_running "$WORKER_PID_FILE"; then
+    echo "Beat Your Mates worker is already running (PID $(<"$WORKER_PID_FILE"))"
+    return
+  fi
+  mkdir -p "$RUNTIME_DIR"
+  nohup env PYTHON="$PYTHON" DATA_DIR="$DATA_DIR" DATABASE="$DATABASE" SEASONS="$SEASONS" \
+    bash -c 'while true; do "$PYTHON" -u -m bym.cli tick --data "$DATA_DIR" --db "$DATABASE" --seasons $SEASONS; sleep 60; done' \
+    >"$WORKER_LOG_FILE" 2>&1 &
+  local pid=$!
+  echo "$pid" >"$WORKER_PID_FILE"
+  sleep 1
+  if ! kill -0 "$pid" 2>/dev/null; then
+    rm -f "$WORKER_PID_FILE"
+    echo "Beat Your Mates worker did not start. See $WORKER_LOG_FILE" >&2
+    return 1
+  fi
+  echo "Beat Your Mates worker started (PID $pid), polling every 60s"
+}
+
+start() {
+  start_ui
+  start_worker
+}
+
+stop_pid_file() {
+  local pid_file="$1" label="$2"
+  clear_stale_pid "$pid_file"
+  if ! pid_file_is_running "$pid_file"; then
+    echo "Beat Your Mates $label is not running from this service script."
     return
   fi
   local pid
-  pid="$(<"$PID_FILE")"
-  kill "$pid"
+  pid="$(<"$pid_file")"
+  # The worker's PID is its `while` loop's bash wrapper, not the `bym
+  # tick` invocation running inside it — killing only the wrapper would
+  # leave a mid-run `bym tick` orphaned and still running to completion.
+  # -P targets its direct children first; harmless no-op for the UI,
+  # which has none.
+  pkill -P "$pid" 2>/dev/null || true
+  kill "$pid" 2>/dev/null || true
   for _ in {1..20}; do
     kill -0 "$pid" 2>/dev/null || break
     sleep 0.25
   done
   if kill -0 "$pid" 2>/dev/null; then
-    echo "Beat Your Mates UI is still stopping (PID $pid)." >&2
+    echo "Beat Your Mates $label is still stopping (PID $pid)." >&2
     return 1
   fi
-  rm -f "$PID_FILE"
-  echo "Beat Your Mates UI stopped."
+  rm -f "$pid_file"
+  echo "Beat Your Mates $label stopped."
+}
+
+stop() {
+  stop_pid_file "$PID_FILE" "UI"
+  stop_pid_file "$WORKER_PID_FILE" "worker"
 }
 
 status() {
-  clear_stale_pid
-  if pid_is_running; then
+  clear_stale_pid "$PID_FILE"
+  clear_stale_pid "$WORKER_PID_FILE"
+  if pid_file_is_running "$PID_FILE"; then
     echo "Beat Your Mates UI is running (PID $(<"$PID_FILE")): http://127.0.0.1:$PORT"
   else
     echo "Beat Your Mates UI is stopped."
+  fi
+  if pid_file_is_running "$WORKER_PID_FILE"; then
+    echo "Beat Your Mates worker is running (PID $(<"$WORKER_PID_FILE"))"
+  else
+    echo "Beat Your Mates worker is stopped."
   fi
 }
 
@@ -131,6 +198,12 @@ case "${1:-}" in
   stop) stop ;;
   restart) stop; start ;;
   status) status ;;
-  logs) tail -n 80 "$LOG_FILE" 2>/dev/null || echo "No service log yet." ;;
+  logs)
+    echo "=== UI ($LOG_FILE) ==="
+    tail -n 40 "$LOG_FILE" 2>/dev/null || echo "No UI log yet."
+    echo
+    echo "=== Worker ($WORKER_LOG_FILE) ==="
+    tail -n 40 "$WORKER_LOG_FILE" 2>/dev/null || echo "No worker log yet."
+    ;;
   *) usage; exit 2 ;;
 esac

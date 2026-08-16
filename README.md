@@ -91,9 +91,13 @@ To keep the local UI running outside a terminal, use:
 ./scripts/bym-service stop
 ```
 
-`restart` and `logs` are also available. The script uses `.venv` when it is
-present; set `BYM_PORT`, `BYM_DB`, or `BYM_SUBMISSIONS` to override
-its local defaults.
+`start` also launches a worker — a looped `bym tick` — alongside the UI,
+so scheduling a job from the browser (Round → Setup →
+"Confirm & start monitoring", or approving a source) actually gets
+polled without a second terminal command. Set `BYM_WORKER=0` to run the
+UI only. `restart` and `logs` are also available (`logs` shows both
+processes); the script uses `.venv` when it is present, and `BYM_PORT`,
+`BYM_DB`, or `BYM_SUBMISSIONS` override its local defaults.
 
 Walk-forward backtest against the §16/§28 baselines — MARKET-AVAILABLE
 (early odds — the fair target), MARKET-ORACLE (closing odds — theoretical
