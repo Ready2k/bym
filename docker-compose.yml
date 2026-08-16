@@ -1,0 +1,53 @@
+# Two services from one image (see Dockerfile), matching bym-service's own
+# argument shapes. `web` and `worker` share a database on purpose — jobs
+# the browser schedules (Phase 1's create_round -> schedule_all_layers)
+# are only ever polled if both point at the same --db, which is why both
+# commands below pass --db data/bym.db explicitly rather than relying on
+# `bym tick`'s own default (data/scheduler.db — a different file).
+#
+# All five directories are bind-mounted from the host, not named volumes,
+# so they're visible and backupable through a NAS file manager rather than
+# hidden inside Docker's own storage.
+
+services:
+  web:
+    build: .
+    command: >
+      bym serve
+      --round rounds/round_01.json
+      --data data
+      --db data/bym.db
+      --submissions data/submissions.json
+      --registry config/source_registry.json
+      --seasons 2019 2025
+      --host 0.0.0.0
+      --port 8000
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data
+      - ./rounds:/app/rounds
+      - ./config:/app/config
+      - ./secrets:/app/secrets
+      - ./results:/app/results
+    restart: unless-stopped
+
+  worker:
+    build: .
+    # Not `bym watch --loop`: that command is scoped to one round and
+    # exits once its jobs finish — built for a foreground terminal
+    # session, not a permanent daemon. `bym tick` is the stateless,
+    # cron-shaped call already documented for unattended use; looping it
+    # is the correct way to keep it always-on. It exits 1 cleanly if
+    # ODDS_API_KEY isn't configured yet (via Settings' API keys, or a
+    # file under ./secrets) — the loop treats that as a routine skip, not
+    # a crash, so this container stays up before and after that happens.
+    command: >
+      sh -c "while true; do bym tick --data data --db data/bym.db --seasons 2019 2025; sleep 60; done"
+    volumes:
+      - ./data:/app/data
+      - ./rounds:/app/rounds
+      - ./config:/app/config
+      - ./secrets:/app/secrets
+      - ./results:/app/results
+    restart: unless-stopped

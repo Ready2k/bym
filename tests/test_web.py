@@ -1,6 +1,7 @@
 """Local web UI actions keep the same round and submission rules as the CLI."""
 
 import json
+import os
 from dataclasses import fields
 from pathlib import Path
 
@@ -10,6 +11,7 @@ from bym import web
 from bym.round import load_round, round_from_dict, round_to_dict
 from bym.web import (
     WebConfig,
+    app_payload,
     approve_source,
     available_ollama_models,
     create_round,
@@ -22,6 +24,7 @@ from bym.web import (
     run_final_test,
     save_pick_overrides,
     save_results,
+    save_secret,
     save_settings,
     web_extractor_config,
 )
@@ -95,6 +98,34 @@ def test_active_round_path_prefers_the_ui_state_pointer(tmp_path):
     ui_state_path.write_text(json.dumps({"active_round_path": str(other)}))
     config = WebConfig(round_path=tmp_path / "active.json", ui_state_path=ui_state_path)
     assert _active_round_path(config) == other
+
+
+# --- first-run onboarding --------------------------------------------------
+#
+# A NAS/Docker deployment has no shell to `cp rounds/example_round.json
+# ...` before ever starting the server, so app_payload() must degrade to
+# a browser-completable onboarding state instead of the FileNotFoundError
+# every other page's `load_round` call would raise.
+
+
+def test_app_payload_is_onboarding_when_no_round_file_exists(tmp_path):
+    config = WebConfig(
+        round_path=tmp_path / "rounds" / "round_01.json",
+        data_path=Path("data"),
+        seasons=(2024, 2024),
+        divisions=("E0",),
+        ui_state_path=tmp_path / "ui_state.json",
+    )
+    result = app_payload(config)
+    assert result == {"onboarding": True, "teams": result["teams"]}
+    assert "Arsenal" in result["teams"]
+
+
+def test_app_payload_is_the_normal_shape_once_a_round_exists(tmp_path):
+    config = configured_round(tmp_path)
+    result = app_payload(config)
+    assert "onboarding" not in result
+    assert result["round"]["round_number"] == 14
 
 
 def test_create_round_editing_the_same_round_number_overwrites_in_place(tmp_path):
@@ -251,6 +282,67 @@ def test_run_final_test_succeeds_for_a_genuinely_unspent_season(tmp_path):
     # The endpoint only displays the result — recording it is still a
     # deliberate, separate human act, exactly as it is for the CLI.
     assert not (tmp_path / "final_test_2024_25.md").exists()
+
+
+# --- browser-based secrets entry --------------------------------------------
+#
+# A NAS/Docker deployment has no shell to create files under secrets/ by
+# hand, so save_secret is the only way in. It must land on exactly the
+# storage secrets.py's own get_key/describe_available already read.
+
+
+def test_save_secret_writes_the_primary_filename(tmp_path, monkeypatch):
+    # save_secret also sets os.environ[key] (see the process-immediacy
+    # test below) — every test that calls it must undo that, or a later,
+    # unrelated test asserting a key is unset (test_orchestration.py,
+    # test_secrets.py) can fail depending on run order.
+    monkeypatch.delenv("ODDS_API_KEY", raising=False)
+    result = save_secret(
+        {"key": "ODDS_API_KEY", "value": "abc123"}, WebConfig(secrets_path=tmp_path)
+    )
+    assert result == {"key": "ODDS_API_KEY", "configured": True}
+    assert (tmp_path / "theoddsapi").read_text() == "abc123\n"
+
+
+def test_save_secret_response_never_contains_the_value(tmp_path, monkeypatch):
+    monkeypatch.delenv("TAVILY_API_KEY", raising=False)
+    result = save_secret(
+        {"key": "TAVILY_API_KEY", "value": "super-secret-value"},
+        WebConfig(secrets_path=tmp_path),
+    )
+    assert "super-secret-value" not in json.dumps(result)
+
+
+def test_save_secret_rejects_an_unknown_key(tmp_path):
+    with pytest.raises(ValueError, match="Unknown key"):
+        save_secret({"key": "NOT_A_REAL_KEY", "value": "x"}, WebConfig(secrets_path=tmp_path))
+
+
+def test_save_secret_requires_a_value(tmp_path):
+    with pytest.raises(ValueError, match="value"):
+        save_secret({"key": "ODDS_API_KEY"}, WebConfig(secrets_path=tmp_path))
+
+
+def test_save_secret_takes_effect_for_the_current_process_immediately(tmp_path, monkeypatch):
+    """Not just the next `bym tick` — research_now() reads
+    os.environ["TAVILY_API_KEY"] directly in the same long-running
+    `serve` process, so a saved key must be live without a restart."""
+    monkeypatch.delenv("ODDS_API_KEY", raising=False)
+    save_secret({"key": "ODDS_API_KEY", "value": "abc123"}, WebConfig(secrets_path=tmp_path))
+    assert os.environ["ODDS_API_KEY"] == "abc123"
+
+
+def test_describe_available_reflects_a_freshly_saved_key(tmp_path, monkeypatch):
+    from bym.secrets import describe_available
+
+    monkeypatch.delenv("API_FOOTBALL_KEY", raising=False)
+    monkeypatch.delenv("TAVILY_API_KEY", raising=False)
+    before = describe_available(tmp_path)
+    assert before["API_FOOTBALL_KEY"] is False
+    save_secret({"key": "API_FOOTBALL_KEY", "value": "xyz"}, WebConfig(secrets_path=tmp_path))
+    after = describe_available(tmp_path)
+    assert after["API_FOOTBALL_KEY"] is True
+    assert after["TAVILY_API_KEY"] is False
 
 
 def test_mark_entered_records_manual_confirmation_only(tmp_path):

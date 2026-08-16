@@ -20,7 +20,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
 
-from . import db, events, prediction_history, strategy_history, submission
+from . import db, events, prediction_history, secrets, strategy_history, submission
 from .api import service
 from .config import DEFAULT_LMS, FROZEN_PHASE1_V1
 from .data.football_data import load_matches
@@ -51,6 +51,7 @@ class WebConfig:
     event_log_path: Path = Path("data/events/activity.jsonl")
     ledger_path: Path = Path("results/prospective_ledger.csv")
     results_path: Path = Path("results")
+    secrets_path: Path = Path("secrets")
     ui_state_path: Path = Path("data/ui_state.json")
     prediction_history_path: Path = Path("data/prediction_history.json")
     strategy_history_path: Path = Path("data/strategy_history.json")
@@ -1746,6 +1747,36 @@ def approve_source(payload: dict, config: WebConfig) -> dict:
     return {"source_id": record.source_id, "usage_status": record.usage_status}
 
 
+def save_secret(payload: dict, config: WebConfig) -> dict:
+    """Write one API key to the gitignored secrets/ directory (§22).
+
+    A NAS/Docker deployment has no shell to create these files by hand,
+    so this is the browser path onto exactly the storage `secrets.py`
+    already reads (`get_key`, `describe_available`) — same directory,
+    same filenames, same "environment always wins" contract. Never
+    returns the value: the response is presence-only, matching
+    `describe_available`'s own stated policy.
+    """
+    key = str(payload.get("key") or "").strip()
+    if key not in secrets.KEY_SOURCES:
+        raise ValueError(f"Unknown key '{key}'.")
+    value = str(payload.get("value") or "").strip()
+    if not value:
+        raise ValueError("value is required.")
+
+    config.secrets_path.mkdir(parents=True, exist_ok=True)
+    config.secrets_path.chmod(0o700)
+    filename = secrets.KEY_SOURCES[key][0]
+    path = config.secrets_path / filename
+    path.write_text(value + "\n")
+    path.chmod(0o600)
+    # Takes effect immediately for this process too (e.g. research_now's
+    # direct os.environ read), not just the next `bym tick` invocation,
+    # which re-applies secrets/ from scratch on every call regardless.
+    os.environ[key] = value
+    return {"key": key, "configured": True}
+
+
 def run_final_test(payload: dict, config: WebConfig) -> dict:
     """The browser equivalent of `bym final-test` (VALIDATION.md).
 
@@ -2487,6 +2518,18 @@ def save_lms_result(payload: dict, config: WebConfig) -> dict:
 
 def app_payload(config: WebConfig) -> dict:
     """One truthful payload for all UI phases; absent evidence remains absent."""
+    if not _active_round_path(config).exists():
+        # A fresh deployment has no round file yet, and nothing else in
+        # this payload can be built without one — `_dashboard` reads it
+        # unconditionally. On a NAS with no shell there is no way to seed
+        # one by hand (the documented local workflow is `cp
+        # rounds/example_round.json ...` before ever starting the
+        # server), so the browser has to be able to create the first one
+        # itself. `_model_context` is the same cached, round-independent
+        # corpus fit the round-setup form's team picker already reads
+        # from, so this costs nothing extra once the app is running.
+        _, _, known_teams = _model_context(config)
+        return {"onboarding": True, "teams": sorted(known_teams)}
     payload, engine_result = _dashboard(config)
     _, router, known_teams = _model_context(config)
     rnd = load_round(_active_round_path(config))
@@ -2512,6 +2555,7 @@ def app_payload(config: WebConfig) -> dict:
                 rnd, state, config, engine_result.recommendation
             ),
             "sources": sources,
+            "secrets": secrets.describe_available(config.secrets_path),
             "model": {
                 "version": payload["round"]["model_version"],
                 "frozen_config": asdict(FROZEN_PHASE1_V1),
@@ -2621,6 +2665,8 @@ class BymRequestHandler(BaseHTTPRequestHandler):
                 self._send_json(HTTPStatus.OK, research_now(payload, self.config))
             elif path == "/api/sources/approve":
                 self._send_json(HTTPStatus.OK, approve_source(payload, self.config))
+            elif path == "/api/secrets":
+                self._send_json(HTTPStatus.OK, save_secret(payload, self.config))
             elif path == "/api/final-test":
                 self._send_json(HTTPStatus.OK, run_final_test(payload, self.config))
             elif path == "/api/ollama/models":
@@ -2675,6 +2721,19 @@ def missing_state_warnings(config: WebConfig) -> list[str]:
 
 def serve(config: WebConfig, host: str = "127.0.0.1", port: int = 8000) -> None:
     """Run the local UI. Press Ctrl-C to stop it."""
+    # Fetch first, explicitly. _model_context always reads with
+    # fetch=False (an unexpected background fetch mid-request would be a
+    # bad surprise on an ordinary page load), which is fine once data/
+    # has ever been populated — but a NAS/Docker deployment starts from a
+    # completely empty data/ with no separate `bym fetch` step ever
+    # available to run by hand. This one, deliberately slow, startup
+    # warm-up is exactly the place a first-ever fetch belongs.
+    load_matches(
+        config.data_path,
+        list(range(config.seasons[0], config.seasons[1] + 1)),
+        config.divisions,
+        fetch=True,
+    )
     # Do the one expensive historical-model fit before opening the browser
     # endpoint. The service's ready message then means a first page visit can
     # render immediately instead of leaving the user on a loading panel.

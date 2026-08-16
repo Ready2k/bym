@@ -315,7 +315,7 @@ function fixtureCard(fixture, index, compact = false) {
 }
 
 function updateCountdown() {
-  if (!appData) return;
+  if (!appData || !appData.round) return;
   const deadline = new Date(appData.round.deadline_at).getTime();
   const delta = deadline - Date.now();
   const node = $("#countdown");
@@ -926,6 +926,19 @@ function teamPickerField(index, side, value, teams) {
   return `<label><span class="sr-only">Fixture ${index + 1} ${label.toLowerCase()} team</span><select data-team-select data-target="${side}_${index}">${options}<option value="__other__" ${known ? "" : "selected"}>Other (cup game, etc.)</option></select><input required name="${side}_${index}" value="${escapeHtml(value)}" placeholder="${label} team" ${known ? "hidden" : ""}></label>`;
 }
 
+function onboardingView() {
+  // No round file exists yet — every other page needs one to render
+  // around (fixtures, deadline, picks), so this is a deliberately
+  // self-contained first-run screen rather than the normal app shell.
+  // Submits to the same #round-form id and the same POST /api/rounds
+  // path the ordinary round-setup form uses, so nothing downstream of
+  // the submit handler needs to know this was the very first round.
+  const teams = (appData.teams || []).slice().sort();
+  const fixtures = Array.from({ length: 6 }, () => ({ home_team: "", away_team: "" }));
+  const header = pageHeader("Welcome", "Set up your first Super 6 round", "Sky stays outside the system boundary. Add the six fixtures and the UK deadline to get started — sources and API keys can be configured afterwards, in Settings.");
+  return `<div class="model-view">${header}<section class="form-card"><form id="round-form"><div class="form-grid"><label>Round number<input required name="round_number" type="number" min="1" value="1"></label><label>Deadline (UK time)<input required name="deadline_at" type="datetime-local"></label></div><div class="fixture-form-list">${fixtures.map((fixture, index) => `<div class="fixture-form-row"><span>${index + 1}</span>${teamPickerField(index, "home", fixture.home_team, teams)}<b>v</b>${teamPickerField(index, "away", fixture.away_team, teams)}</div>`).join("")}</div><div class="form-actions"><button class="button" type="submit">Create round &amp; start</button></div></form></section></div>`;
+}
+
 function roundSetupView() {
   const { round } = appData;
   const teams = (appData.teams || []).slice().sort();
@@ -1149,6 +1162,19 @@ function healthView() {
   return `<div class="health-view">${pageHeader("Operational status", "System Health", "Health is visible when needed but stays out of the weekly decision flow.")}<section class="health-grid"><article><span>Scheduler</span><strong>${health.scheduler_jobs_pending ? `${health.scheduler_jobs_pending} pending` : "Ready"}</strong></article><article><span>Database</span><strong>Healthy · schema ${health.database_schema_version}</strong></article><article><span>Knowledge extractor</span><strong>${escapeHtml(extractorName)} · ${escapeHtml(health.extractor_mode)}</strong><small>Research runs on a schedule, six sweeps a round.${health.extraction_recent_total ? ` Last ${health.extraction_recent_total} extractions: ${health.extraction_recent_total - health.extraction_recent_failed} ok, ${health.extraction_recent_failed} failed.` : ""}</small>${health.extractor === "NullExtractor" ? "" : `<button class="plain-button" type="button" data-action="research-now">Research now</button>`}</article><article><span>Ollama</span><strong>${escapeHtml(ollamaLabel)}</strong><small>${escapeHtml(ollama.detail || "")}</small></article></section>${health.warnings.length ? `<section class="warning-list">${health.warnings.map((warning) => `<p>${escapeHtml(warning)}</p>`).join("")}</section>` : ""}<section class="stat-table-card"><table><thead><tr><th>Source</th><th>Status</th><th>Quota</th></tr></thead><tbody>${health.sources.map((source) => `<tr><td>${escapeHtml(source.source_id)}</td><td>${escapeHtml(titleCase(source.usage_status))}</td><td>${source.quota_limit ? `${source.quota_used}/${source.quota_limit} per ${escapeHtml(source.quota_period)}` : "Not metered"}</td></tr>`).join("")}</tbody></table></section></div>`;
 }
 
+const SECRET_FIELDS = [
+  ["ODDS_API_KEY", "The Odds API", "Pre-match market odds"],
+  ["API_FOOTBALL_KEY", "API-Football", "Confirmed lineups and injuries"],
+  ["TAVILY_API_KEY", "Tavily", "Team-news search for the knowledge agent"],
+  ["FOOTBALL_DATA_ORG_KEY", "football-data.org", "Fixtures, results and match status"],
+];
+
+function secretsSection() {
+  const configured = appData.secrets || {};
+  const rows = SECRET_FIELDS.map(([key, label, blurb]) => `<tr><td><strong>${escapeHtml(label)}</strong><br><small>${escapeHtml(blurb)}</small></td><td><span class="status-pill ${configured[key] ? "approved" : "neutral"}">${configured[key] ? "Configured" : "Not set"}</span></td><td><input type="password" data-secret-input="${key}" placeholder="Paste key" autocomplete="off"> <button class="plain-button" type="button" data-action="save-secret" data-secret-key="${key}">Save</button></td></tr>`).join("");
+  return `<section class="form-card"><p class="eyebrow">API keys</p><p class="subtitle">Stored in secrets/ on this server. Once saved, a key is never displayed again — only whether it is configured.</p><div class="stat-table-card"><table><thead><tr><th>Source</th><th>Status</th><th></th></tr></thead><tbody>${rows}</tbody></table></div></section>`;
+}
+
 function settingsView() {
   const { settings } = appData;
   const toggles = Object.entries(settings.notifications).map(([key, enabled]) => `<label class="toggle-row"><span>${escapeHtml(titleCase(key))}</span><input type="checkbox" name="notification_${key}" ${enabled ? "checked" : ""}><i></i></label>`).join("");
@@ -1156,7 +1182,7 @@ function settingsView() {
   const extractor = settings.knowledge_extractor || { enabled: false, base_url: "http://localhost:11434", model: "llama3.1", mode: "shadow" };
   const models = [...new Set([extractor.model, ...ollamaModels].filter(Boolean))];
   const modelOptions = models.map((model) => `<option value="${escapeHtml(model)}" ${model === extractor.model ? "selected" : ""}>${escapeHtml(model)}</option>`).join("");
-  return `${pageHeader("Your preferences", "Settings", "Settings control presentation and alerts. They never change the frozen forecasting core.")}<form id="settings-form" class="settings-grid"><section class="form-card"><p class="eyebrow">League</p><label>League name<input required name="league_name" maxlength="80" value="${escapeHtml(settings.league_name)}"></label><label>Your name<input required name="player_name" maxlength="80" value="${escapeHtml(settings.player_name)}"></label></section><section class="form-card"><p class="eyebrow">Notifications</p>${toggles}<label class="toggle-row"><span>In-app delivery</span><input type="checkbox" name="delivery_in_app" ${delivery.in_app ? "checked" : ""}><i></i></label><label class="toggle-row"><span>Email delivery</span><input type="checkbox" name="delivery_email" ${delivery.email ? "checked" : ""}><i></i></label><label>Email address<input name="notification_email" type="email" value="${escapeHtml(settings.notification_email || "")}" placeholder="you@example.com"></label><p class="subtitle">Email sends material prediction changes through your configured SMTP relay.</p></section><section class="form-card"><p class="eyebrow">Budget</p><label>Target monthly spend<input required name="target_monthly" type="number" min="0" step="1" value="${settings.budget.target_monthly}"></label><label>Hard monthly ceiling<input required name="hard_ceiling" type="number" min="0" step="1" value="${settings.budget.hard_ceiling}"></label><p class="subtitle">Current source spend is not yet connected; limits are saved here for the source-promotion flow.</p></section><section class="form-card"><p class="eyebrow">Season</p><label>Rounds in this Super 6 season<input required name="season_rounds_total" type="number" min="1" max="60" step="1" value="${settings.season_rounds_total || 38}"></label><p class="subtitle">Sky does not publish this in advance, so it stays a manual estimate. It sets how many future rounds the season strategy simulation (§13) looks ahead across.</p></section><section class="form-card"><p class="eyebrow">Knowledge extractor</p><label class="toggle-row"><span>Enable Ollama</span><input type="checkbox" name="extractor_enabled" ${extractor.enabled ? "checked" : ""}><i></i></label><label>Ollama base URL<input required name="extractor_base_url" type="url" maxlength="512" value="${escapeHtml(extractor.base_url)}" placeholder="http://localhost:11434"></label><label>Model<select required name="extractor_model">${modelOptions}</select></label><button class="button secondary-button" type="button" data-action="find-ollama-models">Refresh available models</button><label>Claim handling<select name="extractor_mode"><option value="shadow" ${extractor.mode === "shadow" ? "selected" : ""}>Shadow — record only</option><option value="active" ${extractor.mode === "active" ? "selected" : ""}>Active — promote validated claims</option></select></label><p class="subtitle">Refreshes using the base URL above. Shadow is the safe default; Active still never changes forecast probabilities. A Tavily API key is also required before research can run.</p></section><div class="form-actions"><button class="button" type="submit">Save settings</button></div></form>`;
+  return `${pageHeader("Your preferences", "Settings", "Settings control presentation and alerts. They never change the frozen forecasting core.")}<form id="settings-form" class="settings-grid"><section class="form-card"><p class="eyebrow">League</p><label>League name<input required name="league_name" maxlength="80" value="${escapeHtml(settings.league_name)}"></label><label>Your name<input required name="player_name" maxlength="80" value="${escapeHtml(settings.player_name)}"></label></section><section class="form-card"><p class="eyebrow">Notifications</p>${toggles}<label class="toggle-row"><span>In-app delivery</span><input type="checkbox" name="delivery_in_app" ${delivery.in_app ? "checked" : ""}><i></i></label><label class="toggle-row"><span>Email delivery</span><input type="checkbox" name="delivery_email" ${delivery.email ? "checked" : ""}><i></i></label><label>Email address<input name="notification_email" type="email" value="${escapeHtml(settings.notification_email || "")}" placeholder="you@example.com"></label><p class="subtitle">Email sends material prediction changes through your configured SMTP relay.</p></section><section class="form-card"><p class="eyebrow">Budget</p><label>Target monthly spend<input required name="target_monthly" type="number" min="0" step="1" value="${settings.budget.target_monthly}"></label><label>Hard monthly ceiling<input required name="hard_ceiling" type="number" min="0" step="1" value="${settings.budget.hard_ceiling}"></label><p class="subtitle">Current source spend is not yet connected; limits are saved here for the source-promotion flow.</p></section><section class="form-card"><p class="eyebrow">Season</p><label>Rounds in this Super 6 season<input required name="season_rounds_total" type="number" min="1" max="60" step="1" value="${settings.season_rounds_total || 38}"></label><p class="subtitle">Sky does not publish this in advance, so it stays a manual estimate. It sets how many future rounds the season strategy simulation (§13) looks ahead across.</p></section><section class="form-card"><p class="eyebrow">Knowledge extractor</p><label class="toggle-row"><span>Enable Ollama</span><input type="checkbox" name="extractor_enabled" ${extractor.enabled ? "checked" : ""}><i></i></label><label>Ollama base URL<input required name="extractor_base_url" type="url" maxlength="512" value="${escapeHtml(extractor.base_url)}" placeholder="http://localhost:11434"></label><label>Model<select required name="extractor_model">${modelOptions}</select></label><button class="button secondary-button" type="button" data-action="find-ollama-models">Refresh available models</button><label>Claim handling<select name="extractor_mode"><option value="shadow" ${extractor.mode === "shadow" ? "selected" : ""}>Shadow — record only</option><option value="active" ${extractor.mode === "active" ? "selected" : ""}>Active — promote validated claims</option></select></label><p class="subtitle">Refreshes using the base URL above. Shadow is the safe default; Active still never changes forecast probabilities. A Tavily API key is also required before research can run.</p></section><div class="form-actions"><button class="button" type="submit">Save settings</button></div></form>${secretsSection()}`;
 }
 
 function moreView() {
@@ -1166,6 +1192,10 @@ function moreView() {
 
 function renderPage() {
   if (!appData) return;
+  if (appData.onboarding) {
+    $("#app").innerHTML = onboardingView();
+    return;
+  }
   const page = (location.hash || "#home").slice(1).split("?")[0] || "home";
   const views = { home: homeView, round: roundView, cup: cupView, lms: lmsView, "lms-replay": lmsReplayView, league: leagueView, opponents: opponentsView, performance: performanceView, activity: activityView, model: modelView, sources: sourcesView, health: healthView, settings: settingsView, more: moreView };
   $("#app").innerHTML = (views[page] || homeView)();
@@ -1539,6 +1569,26 @@ document.addEventListener("click", async (event) => {
       toast(`${sourceId} approved. The scheduled workers will start querying it.`);
       await loadApp();
       location.hash = "#sources";
+    } catch (error) {
+      toast(error.message);
+      button.disabled = false;
+      button.textContent = previous;
+    }
+  }
+  if (action === "save-secret") {
+    const button = event.target.closest("[data-action]");
+    const key = button.dataset.secretKey;
+    const input = document.querySelector(`[data-secret-input="${key}"]`);
+    const value = input?.value.trim();
+    if (!value) { toast("Enter a key first."); return; }
+    button.disabled = true;
+    const previous = button.textContent;
+    button.textContent = "Saving…";
+    try {
+      await post("/api/secrets", { key, value });
+      toast(`${key} saved.`);
+      await loadApp();
+      location.hash = "#settings";
     } catch (error) {
       toast(error.message);
       button.disabled = false;
