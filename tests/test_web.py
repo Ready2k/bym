@@ -10,6 +10,7 @@ from bym import web
 from bym.round import load_round, round_from_dict, round_to_dict
 from bym.web import (
     WebConfig,
+    approve_source,
     available_ollama_models,
     create_round,
     cup_prediction,
@@ -152,6 +153,44 @@ def test_create_round_schedules_polling_the_same_way_bym_watch_does(tmp_path):
     assert scheduler.JobType.POLL_ODDS.value in job_types
     assert scheduler.JobType.POLL_AVAILABILITY.value in job_types
     assert all(job.round_number == 14 for job in jobs)
+
+
+# --- source approval -------------------------------------------------------
+#
+# Promotion REVIEW_REQUIRED -> APPROVED must stay a deliberate human act
+# (§18.1, §22) even once it is a browser click instead of `bym sources
+# approve` — approve_source is a thin wrapper around the same registry
+# function the CLI uses, refusing the same PROHIBITED/unknown cases.
+
+
+def test_approve_source_promotes_a_review_required_source(tmp_path):
+    registry_path = tmp_path / "source_registry.json"
+    result = approve_source(
+        {"source_id": "tavily"}, WebConfig(registry_path=registry_path)
+    )
+    assert result["usage_status"] == "APPROVED"
+
+    from bym.sources.registry import load_registry
+
+    assert load_registry(registry_path)["tavily"].usage_status == "APPROVED"
+
+
+def test_approve_source_refuses_a_prohibited_source(tmp_path):
+    config = WebConfig(registry_path=tmp_path / "source_registry.json")
+    with pytest.raises(ValueError, match="PROHIBITED"):
+        approve_source({"source_id": "sky_super6"}, config)
+
+
+def test_approve_source_refuses_an_unknown_source(tmp_path):
+    config = WebConfig(registry_path=tmp_path / "source_registry.json")
+    with pytest.raises(ValueError, match="Unknown source"):
+        approve_source({"source_id": "not_a_real_source"}, config)
+
+
+def test_approve_source_requires_a_source_id(tmp_path):
+    config = WebConfig(registry_path=tmp_path / "source_registry.json")
+    with pytest.raises(ValueError, match="source_id"):
+        approve_source({}, config)
 
 
 def test_mark_entered_records_manual_confirmation_only(tmp_path):

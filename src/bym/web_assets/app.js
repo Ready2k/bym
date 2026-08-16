@@ -1102,7 +1102,7 @@ const SOURCE_GROUPS = [
   { key: "in-use", heading: "In use", statuses: ["APPROVED"],
     blurb: "Approved and queried by the always-on workers." },
   { key: "awaiting", heading: "Awaiting your review", statuses: ["REVIEW_REQUIRED"],
-    blurb: "Read the terms, then approve from the command line. Nothing queries these until you do." },
+    blurb: "Read the terms, then approve below. Nothing queries these until you do." },
   { key: "evaluated", heading: "Evaluated — not in use", statuses: ["EVALUATED"],
     blurb: "Assessed and deliberately not adopted. Recorded so the decision is not re-derived; nothing is pending." },
   { key: "prohibited", heading: "Prohibited", statuses: ["PROHIBITED"],
@@ -1117,7 +1117,7 @@ function sourceCard(source) {
     : (source.usage_status === "EVALUATED" ? "terms not reviewed — not needed, nothing queries it"
                                            : "terms not reviewed yet");
   const action = source.usage_status === "REVIEW_REQUIRED"
-    ? `<code class="source-action">bym sources approve ${escapeHtml(source.source_id)}</code>`
+    ? `<button class="plain-button" type="button" data-action="approve-source" data-source-id="${escapeHtml(source.source_id)}">Approve ${escapeHtml(source.source_name)}</button>`
     : "";
   return `<article class="source-card"><div><span class="status-pill ${pill}">${escapeHtml(titleCase(source.usage_status))}</span><h2>${escapeHtml(source.source_name)}</h2><p>${escapeHtml(source.acquisition_method)} · ${checked}</p></div><p>${escapeHtml(source.notes)}</p><small>Purpose: ${escapeHtml((source.purpose || []).join(", ") || "None — nothing queries this source")}</small>${action}${source.terms_url ? `<a href="${escapeHtml(source.terms_url)}" target="_blank" rel="noreferrer">View terms</a>` : ""}</article>`;
 }
@@ -1515,6 +1515,23 @@ document.addEventListener("click", async (event) => {
         toast(error.message);
       }
     } finally {
+      button.disabled = false;
+      button.textContent = previous;
+    }
+  }
+  if (action === "approve-source") {
+    const button = event.target.closest("[data-action]");
+    const sourceId = button.dataset.sourceId;
+    button.disabled = true;
+    const previous = button.textContent;
+    button.textContent = "Approving…";
+    try {
+      await post("/api/sources/approve", { source_id: sourceId });
+      toast(`${sourceId} approved. The scheduled workers will start querying it.`);
+      await loadApp();
+      location.hash = "#sources";
+    } catch (error) {
+      toast(error.message);
       button.disabled = false;
       button.textContent = previous;
     }

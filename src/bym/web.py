@@ -1724,6 +1724,27 @@ def research_now(payload: dict, config: WebConfig) -> dict:
     }
 
 
+def approve_source(payload: dict, config: WebConfig) -> dict:
+    """Promote a source from REVIEW_REQUIRED to APPROVED (§18.1, §22).
+
+    This is still the deliberate human act the registry requires — a
+    click here carries the same weight `bym sources approve` did, just
+    without needing a terminal to make it. PROHIBITED sources and unknown
+    ids are refused the same way the CLI refuses them; the registry
+    itself is the single source of truth for what is allowed.
+    """
+    from .sources.registry import SourceNotApprovedError, approve
+
+    source_id = str(payload.get("source_id") or "").strip()
+    if not source_id:
+        raise ValueError("source_id is required.")
+    try:
+        record = approve(source_id, path=config.registry_path)
+    except (KeyError, SourceNotApprovedError) as exc:
+        raise ValueError(str(exc)) from exc
+    return {"source_id": record.source_id, "usage_status": record.usage_status}
+
+
 def _alerts_payload(activity: list[dict], state: dict) -> dict:
     """Filter the in-app alert centre by the user's material-event choices."""
     notification_map = {
@@ -2545,6 +2566,8 @@ class BymRequestHandler(BaseHTTPRequestHandler):
                 self._send_json(HTTPStatus.OK, save_settings(payload, self.config))
             elif path == "/api/research":
                 self._send_json(HTTPStatus.OK, research_now(payload, self.config))
+            elif path == "/api/sources/approve":
+                self._send_json(HTTPStatus.OK, approve_source(payload, self.config))
             elif path == "/api/ollama/models":
                 self._send_json(HTTPStatus.OK, available_ollama_models(payload))
             elif path == "/api/opponents":
