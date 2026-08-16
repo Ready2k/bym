@@ -49,7 +49,10 @@ substitution is reported. A name that resolves to nothing is kept as typed
 and warned about, because it will be forecast from a league-average
 stand-in rather than from that club.
 
-Your own round files are gitignored; only the example is tracked.
+Your own round files are gitignored; only the example is tracked. This
+manual copy is one way in, not the only one — the local UI below creates
+and switches rounds directly from the browser, including a first-run
+setup screen when no round file exists yet.
 
 ## Local decision UI
 
@@ -63,6 +66,15 @@ divergence, an opponent-aware strategy panel for the current round (§12-14
 — see caveat below), and records only your manual confirmation that you
 entered picks in Super 6. It is a stdlib `http.server` app, not
 FastAPI/Next.js — §26's optional web-framework choice was never taken up.
+
+Round setup, source approval and API key entry are all in the browser
+too, not just read-only views: Round control's Setup/Rounds tabs create
+and switch between rounds, Sources has an Approve button for anything
+`REVIEW_REQUIRED`, and Settings has an API keys section that writes
+straight into `secrets/` — none of it needs a terminal. A deployment
+with no round file yet (a fresh checkout, or a fresh Docker volume — see
+below) shows a one-time "set up your first round" screen instead of the
+dashboard, so the manual copy step above is optional, not required.
 
 ```bash
 bym serve --round rounds/2026_27_round_01.json --seasons 2019 2025 --data data
@@ -101,6 +113,27 @@ Select the recency-decay hyperparameter ξ by out-of-sample validation
 bym tune-xi --seasons 2019 2024 --validation-season 2024 --data data
 ```
 
+## Docker deployment
+
+For a NAS or any host where running the CLI by hand isn't practical:
+
+```bash
+docker compose up -d --build
+```
+
+Two containers share one image: `web` (`bym serve`, port 8000) and
+`worker` (an always-on `bym tick` loop — not `bym watch --loop`, which is
+scoped to one round and exits once its jobs finish). They share a
+database on purpose, so jobs the browser schedules are the ones the
+worker actually polls. `./data`, `./rounds`, `./config`, `./secrets` and
+`./results` are bind-mounted from the host next to `docker-compose.yml`,
+not hidden inside Docker's own storage — visible and backupable through a
+NAS's own file manager. Nothing here needs a shell inside the container:
+open `http://<host>:8000`, create the first round in the onboarding
+screen, then add API keys under Settings to turn monitoring on — the
+worker picks a saved key up on its next cycle, no restart needed. See
+[docker/README.md](docker/README.md) for the full walkthrough.
+
 ## Other commands
 
 `bym <command> --help` gives the full flag list for any of these; the
@@ -130,7 +163,8 @@ rather than a one-off report:
 **Sources & credits** — §18.1 registry and metering:
 
 - `bym sources list` / `bym sources approve <source_id>` — inspect or
-  promote entries in `config/source_registry.json`.
+  promote entries in `config/source_registry.json`. The Sources page in
+  the local UI has an Approve button for the same action.
 - `bym quota` — API credit usage across all metered sources.
 - `bym verify-live` — live-checks each external source (not a cached
   read), for confirming credentials and connectivity actually work.
@@ -167,8 +201,11 @@ rather than a one-off report:
   `tune-xi` selects ξ.
 - `bym final-test --seasons 2019 2025 --test-season 2025 --data data --i-understand-this-is-single-use`
   — the single-shot frozen-model run against the untouched holdout season.
-  Gated behind the acknowledgement flag because the holdout is spent the
-  moment it runs.
+  Refuses unconditionally if `results/final_test_<season>.md` already
+  exists (`assert_holdout_unspent`, [VALIDATION.md](VALIDATION.md)) — the
+  acknowledgement flag is extra friction on top of that, not the only
+  guard. Model Lab's "Final holdout test" control in the local UI is
+  behind the same gate, plus a typed confirmation phrase.
 - `bym readiness` — how close the data-blocked backlog items
   ([docs/next_steps.md](docs/next_steps.md)) are to having enough evidence
   for an ablation: claim-outcome sample size and round-characteristic
@@ -349,6 +386,7 @@ src/bym/
 ├── claim_outcomes.py     recorded team-news claims paired with realised results (§8 step 1)
 ├── db.py                 SQLite schema (jobs, availability, evidence, claims, …)
 ├── secrets.py            credential loading, hostname-only in logs/provenance
+├── validation.py         single-use-holdout gate shared by the CLI and UI
 ├── web.py + web_assets/  local decision UI (`bym serve`, stdlib http.server)
 ├── data/football_data.py  Football-Data.co.uk ingestion + cache (§18)
 ├── sources/
@@ -377,6 +415,10 @@ src/bym/
     ├── walk_forward.py  leak-free walk-forward + ablation baselines (§16, §28)
     └── metrics.py       pts/fixture, exact %, Brier, log loss (§16)
 ```
+
+`Dockerfile` and `docker-compose.yml` at the repo root package `bym serve`
+and a looped `bym tick` from that same image — see
+[Docker deployment](#docker-deployment) above.
 
 ## Status
 
