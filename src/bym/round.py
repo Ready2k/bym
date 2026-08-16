@@ -130,6 +130,17 @@ def round_from_dict(raw: dict) -> Round:
     )
 
 
+def season_slug(deadline: datetime) -> str:
+    """The `<season>` prefix used by `rounds/<season>_round_<NN>.json`.
+
+    The English season runs August to July and is named after both years
+    it spans (`2026_27`). A deadline in Jan-Jul belongs to the season that
+    started the previous August, not the calendar year it falls in.
+    """
+    start_year = deadline.year if deadline.month >= 8 else deadline.year - 1
+    return f"{start_year}_{(start_year + 1) % 100:02d}"
+
+
 def round_to_dict(rnd: Round) -> dict:
     """Serialize a round in the documented, user-editable JSON format."""
     return {

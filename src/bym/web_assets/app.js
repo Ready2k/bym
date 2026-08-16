@@ -3,6 +3,8 @@
 let appData;
 let countdownTimer;
 let roundTab = "predictions";
+let roundSetupMode = "edit"; // "edit" the active round, or "new" for the next one
+let roundsList = null;
 let pendingRound;
 let activityFilter = "ALL";
 let cupForecast;
@@ -354,6 +356,7 @@ function homeView() {
     marketOnly.length ? `<div class="change-alert notice"><strong>${marketOnly.length} market-derived pick${marketOnly.length === 1 ? "" : "s"}</strong> ${escapeHtml(marketOnly.map(name).join("; "))} — outside the ${escapeHtml(corpus)} corpus, so the market supplied the result probabilities instead of the model. Usable, but not PHASE1_MODEL_V1.</div>` : "",
   ].join("");
   const action = nextRoundAction(round);
+  const deadlinePassed = Date.now() > new Date(round.deadline_at).getTime();
   const confidenceCounts = round.fixtures.reduce((counts, fixture) => ({ ...counts, [fixture.confidence]: (counts[fixture.confidence] || 0) + 1 }), {});
   return `${pageHeader(`Super 6 — Round ${round.round_number}`, "Your picks are ready.", `Deadline ${displayDate(round.deadline_at)}`, "")}
     <section class="round-hero" aria-label="Round status"><div class="hero-deadline"><span class="eyebrow">Time to deadline</span><strong id="countdown">—</strong><span>${displayDate(round.deadline_at)}</span></div><div class="hero-action"><p class="eyebrow">${escapeHtml(action.eyebrow)}</p><h2>${escapeHtml(action.title)}</h2><p>${escapeHtml(action.copy)}</p><div class="button-row"><button class="button" data-action="${action.actionName}">${escapeHtml(action.action)}</button>${round.submission_state !== "MARKED_AS_SUBMITTED" ? '<button class="button secondary-button" data-action="copy-picks">Copy picks</button>' : ''}</div></div><div class="hero-meta"><div><span>Expected round score <button class="info" data-info="ev" aria-label="Explain expected points">?</button></span><strong>${round.expected_round_score.toFixed(2)}</strong><small>Across all six picks</small></div><div><span>Forecast quality</span><strong>${dataQuality}</strong><small>${qualityCopy}</small></div></div></section>
@@ -363,7 +366,7 @@ function homeView() {
     ${changed ? `<div class="change-alert"><strong>Action needed</strong> ${escapeHtml(submissionDetail)}. This app does not update Super 6 for you.</div>` : ""}
     ${unmodellableBanner}
     <div class="fixture-grid">${round.fixtures.map((fixture, index) => fixtureCard(fixture, index)).join("")}</div>
-    <section class="lower-grid"><article class="golden-card"><p class="eyebrow">Golden Goal</p><div class="golden-value">${round.golden_goal.minute}</div><p>Sky minute ${round.golden_goal.minute} = goal between ${round.golden_goal.sky_interval}.</p><button class="text-button" data-action="golden-detail">Why this minute?</button></article>${leagueSummary()}<article class="quality-card"><p class="eyebrow">Need a deeper review?</p><h2>Round detail</h2><p>Compare alternatives, investigate evidence or manage this round from one place.</p><button class="text-button" data-page="round">Open round control</button></article></section>`;
+    <section class="lower-grid"><article class="golden-card"><p class="eyebrow">Golden Goal</p><div class="golden-value">${round.golden_goal.minute}</div><p>Sky minute ${round.golden_goal.minute} = goal between ${round.golden_goal.sky_interval}.</p><button class="text-button" data-action="golden-detail">Why this minute?</button></article>${leagueSummary()}<article class="quality-card"><p class="eyebrow">Need a deeper review?</p><h2>Round detail</h2><p>Compare alternatives, investigate evidence or manage this round from one place.</p><button class="text-button" data-page="round">Open round control</button></article>${deadlinePassed ? `<article class="quality-card"><p class="eyebrow">Round ${round.round_number} deadline has passed</p><h2>Ready for round ${round.round_number + 1}?</h2><p>Add next week's fixtures and deadline here.</p><button class="text-button" data-action="start-next-round-home">Start next round</button></article>` : ""}</section>`;
 }
 
 function intelligenceView() {
@@ -375,9 +378,10 @@ function intelligenceView() {
 
 function roundView() {
   const { round, results } = appData;
-  const tabs = ["predictions", "intelligence", "changes", "setup", "results"];
+  const tabs = ["predictions", "intelligence", "changes", "setup", "rounds", "results"];
   let content;
   if (roundTab === "intelligence") content = intelligenceView();
+  else if (roundTab === "rounds") content = roundsListView();
   else if (roundTab === "changes") {
     const visitChanges = round.changes_since_last_visit || [];
     const submissionChanges = round.submission?.drift || [];
@@ -924,7 +928,23 @@ function teamPickerField(index, side, value, teams) {
 function roundSetupView() {
   const { round } = appData;
   const teams = (appData.teams || []).slice().sort();
-  return `<section class="form-card"><div class="section-heading"><div><p class="eyebrow">Manual configuration</p><h2>Set up a Super 6 round</h2><p class="subtitle">Sky stays outside the system boundary. Add the six fixtures and confirm the UK deadline here. Pick a team from the list, or choose "Other" for a cup tie or a side the model doesn't know.</p></div></div><form id="round-form"><div class="form-grid"><label>Round number<input required name="round_number" type="number" min="1" value="${round.round_number}"></label><label>Deadline (UK time)<input required name="deadline_at" type="datetime-local" value="${localDateTime(round.deadline_at)}"></label></div><div class="fixture-form-list">${round.fixtures.map((fixture, index) => `<div class="fixture-form-row"><span>${index + 1}</span>${teamPickerField(index, "home", fixture.home_team, teams)}<b>v</b>${teamPickerField(index, "away", fixture.away_team, teams)}</div>`).join("")}</div><div class="form-actions"><button class="button" type="submit">Save round &amp; refresh forecast</button></div></form></section>`;
+  const isNext = roundSetupMode === "new";
+  const number = isNext ? round.round_number + 1 : round.round_number;
+  const deadline = isNext ? "" : localDateTime(round.deadline_at);
+  const fixtures = isNext
+    ? Array.from({ length: 6 }, () => ({ home_team: "", away_team: "" }))
+    : round.fixtures;
+  const toggle = isNext
+    ? `<button class="plain-button" type="button" data-action="edit-current-round">Back to round ${round.round_number}</button>`
+    : `<button class="plain-button" type="button" data-action="start-next-round">Start round ${round.round_number + 1} instead</button>`;
+  return `<section class="form-card"><div class="section-heading"><div><p class="eyebrow">Manual configuration</p><h2>${isNext ? `Set up round ${number}` : "Set up a Super 6 round"}</h2><p class="subtitle">Sky stays outside the system boundary. Add the six fixtures and confirm the UK deadline here. Pick a team from the list, or choose "Other" for a cup tie or a side the model doesn't know.</p></div>${toggle}</div><form id="round-form"><div class="form-grid"><label>Round number<input required name="round_number" type="number" min="1" value="${number}"></label><label>Deadline (UK time)<input required name="deadline_at" type="datetime-local" value="${deadline}"></label></div><div class="fixture-form-list">${fixtures.map((fixture, index) => `<div class="fixture-form-row"><span>${index + 1}</span>${teamPickerField(index, "home", fixture.home_team, teams)}<b>v</b>${teamPickerField(index, "away", fixture.away_team, teams)}</div>`).join("")}</div><div class="form-actions"><button class="button" type="submit">${isNext ? `Save round ${number} &amp; start monitoring` : "Save round &amp; refresh forecast"}</button></div></form></section>`;
+}
+
+function roundsListView() {
+  if (!roundsList) return emptyState("Loading rounds…", "");
+  const rounds = roundsList.rounds || [];
+  if (!rounds.length) return emptyState("No round files found", "Use Setup to create the first round.");
+  return `<div class="feed-list">${rounds.map((r) => `<article class="feed-item"><span class="severity ${r.active ? "important" : ""}">${r.active ? "Active" : ""}</span><div><h3>Round ${r.round_number}</h3><p>${escapeHtml(r.fixtures.join("; "))}</p><small>Deadline ${displayDate(r.deadline_at)} · ${escapeHtml(r.round_path)}</small></div>${r.active ? "" : `<button class="plain-button" type="button" data-action="switch-round" data-round-path="${escapeHtml(r.round_path)}">Switch to this round</button>`}</article>`).join("")}</div>`;
 }
 
 function resultsView(results) {
@@ -1342,6 +1362,23 @@ async function post(path, body) {
   return payload;
 }
 
+async function getJson(path) {
+  const response = await fetch(path, { cache: "no-store" });
+  const payload = await response.json();
+  if (!response.ok) throw new Error(payload.error || "Something went wrong.");
+  return payload;
+}
+
+async function loadRoundsList() {
+  try {
+    roundsList = await getJson("/api/rounds");
+  } catch (error) {
+    toast(error.message);
+    roundsList = { rounds: [] };
+  }
+  renderPage();
+}
+
 async function loadLmsReplay(season, game, usedClubs = [], suggestedUsedClubs = []) {
   const data = await post("/api/lms/replay", {
     season, game, used_clubs: usedClubs, suggested_used_clubs: suggestedUsedClubs,
@@ -1444,7 +1481,11 @@ document.addEventListener("click", async (event) => {
   const page = event.target.closest("[data-page]");
   if (page) location.hash = `#${page.dataset.page}`;
   const tab = event.target.closest("[data-round-tab]");
-  if (tab) { roundTab = tab.dataset.roundTab; renderPage(); }
+  if (tab) {
+    roundTab = tab.dataset.roundTab;
+    renderPage();
+    if (roundTab === "rounds" && !roundsList) loadRoundsList();
+  }
   const activityTab = event.target.closest("[data-activity-filter]");
   if (activityTab) { activityFilter = activityTab.dataset.activityFilter; renderPage(); }
   const action = event.target.closest("[data-action]")?.dataset.action;
@@ -1507,6 +1548,20 @@ document.addEventListener("click", async (event) => {
   }
   if (action === "copy-picks") await copyPicks();
   if (action === "edit-picks") { location.hash = "#round"; roundTab = "predictions"; }
+  if (action === "start-next-round") { roundSetupMode = "new"; renderPage(); }
+  if (action === "start-next-round-home") { roundSetupMode = "new"; roundTab = "setup"; location.hash = "#round"; renderPage(); }
+  if (action === "edit-current-round") { roundSetupMode = "edit"; renderPage(); }
+  if (action === "switch-round") {
+    const roundPath = event.target.closest("[data-action]").dataset.roundPath;
+    try {
+      await post("/api/rounds/active", { round_path: roundPath });
+      roundsList = null;
+      toast("Switched active round.");
+      await loadApp();
+      roundTab = "predictions";
+      location.hash = "#home";
+    } catch (error) { toast(error.message); }
+  }
   if (action === "golden-detail") { const distribution = appData.round.golden_goal.distribution; openInfo("Golden Goal", `${appData.round.golden_goal.rationale}${distribution ? ` Most likely intervals: ${Object.entries(distribution.interval_probabilities).map(([label, value]) => `${label} ${percent(value)}`).join(", ")}. No goal: ${percent(distribution.no_goal_probability)}.` : ""}`); }
   if (event.target.closest("[data-info='ev']")) openInfo("Expected points", "This is the average Super 6 score this prediction would earn if the match were replayed many times under the model’s current probabilities. It is not a promise for one match.");
   const close = event.target.closest("[data-close]");
@@ -1514,7 +1569,13 @@ document.addEventListener("click", async (event) => {
   if (event.target.closest("#confirm-entered")) { try { await markEntered(); } catch (error) { toast(error.message); } }
   if (event.target.closest("#confirm-round")) {
     try {
-      await post("/api/rounds", pendingRound); $("#round-dialog").close(); toast("Round saved and forecast refreshed."); await loadApp(); location.hash = "#home";
+      await post("/api/rounds", pendingRound);
+      $("#round-dialog").close();
+      toast("Round saved. Monitoring scheduled.");
+      roundSetupMode = "edit";
+      roundsList = null;
+      await loadApp();
+      location.hash = "#home";
     } catch (error) { toast(error.message); }
   }
   const graphWeek = event.target.closest("[data-lms-graph-week]");

@@ -1,8 +1,9 @@
 import json
+from datetime import datetime
 
 import pytest
 
-from bym.round import load_round, round_from_dict
+from bym.round import load_round, round_from_dict, season_slug
 
 VALID = {
     "round_number": 14,
@@ -110,6 +111,30 @@ def test_a_genuinely_unknown_team_is_kept_verbatim():
     rnd, renamed = resolve_round_teams(_round_named("Real Madrid", "Leeds"), CORPUS)
     assert rnd.fixtures[0].home == "Real Madrid"
     assert renamed == []
+
+
+# --- season_slug --------------------------------------------------------
+#
+# The `rounds/<season>_round_<NN>.json` filename convention names a season
+# by both years it spans. A deadline in the back half of the season (e.g.
+# an April run-in fixture) still belongs to the season that kicked off
+# the previous August.
+
+
+def test_season_slug_for_an_august_deadline():
+    assert season_slug(datetime(2026, 8, 22, 15, 0)) == "2026_27"
+
+
+def test_season_slug_for_a_december_deadline():
+    assert season_slug(datetime(2026, 12, 26, 12, 30)) == "2026_27"
+
+
+def test_season_slug_for_a_spring_deadline_belongs_to_the_prior_august():
+    assert season_slug(datetime(2027, 4, 10, 14, 0)) == "2026_27"
+
+
+def test_season_slug_rolls_over_at_the_turn_of_the_century():
+    assert season_slug(datetime(2099, 9, 1, 12, 0)) == "2099_00"
 
 
 def test_every_forecasting_reader_resolves_through_the_same_helper():

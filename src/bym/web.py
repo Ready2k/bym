@@ -31,6 +31,7 @@ from .round import (
     resolve_round_teams,
     round_from_dict,
     round_to_dict,
+    season_slug,
 )
 from .sources.registry import load_registry
 from .sources.teams import resolve as resolve_team_name
@@ -153,6 +154,13 @@ DEFAULT_UI_STATE = {
     # keyed the same way as "results" above, one actual first-goal minute
     # per round rather than one per fixture.
     "golden_goal_actual": {},
+    # Which round file is "active" — the one every reader below resolves
+    # against. None means no round has been created/switched to from the
+    # UI yet, so config.round_path (the --round flag / BYM_ROUND at
+    # process startup) is still the answer. Set once create_round() writes
+    # a new season-prefixed file, or the Rounds list switches to one, so
+    # advancing to next week's round never requires restarting the server.
+    "active_round_path": None,
 }
 
 
@@ -177,6 +185,21 @@ def load_ui_state(path: Path) -> dict:
 def save_ui_state(state: dict, path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(state, indent=2, sort_keys=True) + "\n")
+
+
+def _active_round_path(config: WebConfig) -> Path:
+    """The round file every reader resolves against.
+
+    `config.round_path` is fixed for the life of the process (it comes
+    from the `--round` CLI flag / `BYM_ROUND`). `active_round_path` in UI
+    state lets the browser move to a new or different round file — created
+    via `create_round()` or picked from the Rounds list — without
+    restarting the server. Every reader below must go through this, the
+    same discipline `resolve_round_teams` documents for club names: one
+    reader disagreeing about which file is current is a bug.
+    """
+    stored = load_ui_state(config.ui_state_path).get("active_round_path")
+    return Path(stored) if stored else config.round_path
 
 
 def _round_key(rnd: Round) -> str:
@@ -487,7 +510,7 @@ def _dashboard(config: WebConfig):
     simulate from, and re-running the engine to get them would double the
     cost of every page load.
     """
-    rnd = load_round(config.round_path)
+    rnd = load_round(_active_round_path(config))
     matches, router, known_teams = _model_context(config)
     extractor_config = web_extractor_config(config)
     # A configured local extractor may be on a laptop or a home server that
@@ -570,7 +593,7 @@ def _dashboard(config: WebConfig):
     }
     summary["meta"] = {
         "generated_at": generated_at,
-        "round_source": str(config.round_path),
+        "round_source": str(_active_round_path(config)),
         "current_picks": picks,
         "forecast_version": snapshot["version"],
     }
@@ -746,7 +769,18 @@ def cup_prediction(payload: dict, config: WebConfig) -> dict:
 
 
 def create_round(payload: dict, config: WebConfig) -> dict:
-    """Validate and persist a manually configured round outside Sky's boundary."""
+    """Validate and persist a manually configured round outside Sky's boundary.
+
+    A submitted round_number matching the currently active round is an
+    edit — write it back to the same file. A different round_number is
+    the next round starting: give it its own season-prefixed file
+    (`rounds/<season>_round_<NN>.json`, the same convention documented in
+    `round.py`) rather than overwriting the file the previous round is
+    still using, and point `active_round_path` at it so every reader picks
+    it up on the next request with no server restart — the browser-only
+    path to "next week's round" that the CLI's `--round` flag otherwise
+    requires.
+    """
     rnd = round_from_dict(payload)
     # Resolve on the way in, not on every read. This is where a club name
     # enters the system — the "Other" option in the fixture form accepts
@@ -765,14 +799,95 @@ def create_round(payload: dict, config: WebConfig) -> dict:
         # A round must still be saveable when the corpus is absent — the
         # UI's own unmodellable banner covers what this would have caught.
         logging.getLogger(__name__).warning("team resolution skipped: %s", exc)
-    path = config.round_path
+
+    active_path = _active_round_path(config)
+    existing_round_number = None
+    if active_path.exists():
+        try:
+            existing_round_number = load_round(active_path).round_number
+        except (ValueError, KeyError, OSError):
+            existing_round_number = None
+
+    if existing_round_number is not None and existing_round_number != rnd.round_number:
+        path = config.round_path.parent / (
+            f"{season_slug(rnd.deadline_at)}_round_{rnd.round_number:02d}.json"
+        )
+        state = load_ui_state(config.ui_state_path)
+        state["active_round_path"] = str(path)
+        save_ui_state(state, config.ui_state_path)
+    else:
+        path = active_path
+
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(round_to_dict(rnd), indent=2) + "\n")
+    _schedule_monitoring(rnd, path, config)
     return {"round_path": str(path), "round": round_to_dict(rnd)}
 
 
+def _schedule_monitoring(rnd: Round, path: Path, config: WebConfig) -> None:
+    """Schedule polling jobs for a round the same way `bym watch` does.
+
+    `schedule_round` deletes-then-inserts per (round_number, job_type), so
+    calling this on every save — not just the first — is safe: it just
+    resets the cadence, which is correct when an edit changed the
+    deadline. Knowledge research follows the same on/off toggle
+    `research_now` checks, so saving a round never starts spending Tavily
+    credits for a deployment that hasn't configured an extractor.
+    """
+    from . import scheduler
+
+    include_knowledge = web_extractor_config(config).kind != "null"
+    with scheduler.connect(config.database_path) as conn:
+        scheduler.schedule_all_layers(
+            conn, rnd.round_number, str(path.resolve()), rnd.deadline_at,
+            include_knowledge=include_knowledge,
+        )
+
+
+def list_rounds(config: WebConfig) -> dict:
+    """Every round file on disk, so the browser can switch between them
+    without a shell to `ls rounds/` or edit `BYM_ROUND`."""
+    active_path = _active_round_path(config)
+    directory = config.round_path.parent
+    rounds = []
+    if directory.is_dir():
+        for file_path in sorted(directory.glob("*.json")):
+            try:
+                rnd = load_round(file_path)
+            except (ValueError, KeyError, OSError):
+                continue
+            rounds.append({
+                "round_path": str(file_path),
+                "round_number": rnd.round_number,
+                "deadline_at": rnd.deadline_at.isoformat(),
+                "fixtures": [f"{f.home} v {f.away}" for f in rnd.fixtures],
+                "active": file_path.resolve() == active_path.resolve(),
+            })
+    rounds.sort(key=lambda r: r["deadline_at"], reverse=True)
+    return {"rounds": rounds}
+
+
+def set_active_round(payload: dict, config: WebConfig) -> dict:
+    """Switch which existing round file the UI reads, in place of a
+    restart with a different --round flag (§9.1 stays manual entry; this
+    only changes which already-saved entry is current)."""
+    round_path = str(payload.get("round_path") or "").strip()
+    if not round_path:
+        raise ValueError("round_path is required.")
+    candidate = Path(round_path)
+    if candidate.parent.resolve() != config.round_path.parent.resolve():
+        raise ValueError("round_path must be an existing round in the rounds directory.")
+    if not candidate.exists():
+        raise ValueError(f"{candidate} does not exist.")
+    load_round(candidate)  # fail loudly on a corrupt file, before switching to it
+    state = load_ui_state(config.ui_state_path)
+    state["active_round_path"] = str(candidate)
+    save_ui_state(state, config.ui_state_path)
+    return {"round_path": str(candidate)}
+
+
 def mark_round_entered(payload: dict, config: WebConfig) -> dict:
-    rnd = load_round(config.round_path)
+    rnd = load_round(_active_round_path(config))
     picks = payload.get("picks")
     if not isinstance(picks, list) or len(picks) != len(rnd.fixtures):
         raise ValueError("Exactly six predictions are required before marking entered.")
@@ -833,7 +948,7 @@ def _record_prospective_picks(rnd: Round, submitted_picks: list[str], config: We
 
 
 def save_pick_overrides(payload: dict, config: WebConfig) -> dict:
-    rnd = load_round(config.round_path)
+    rnd = load_round(_active_round_path(config))
     picks = payload.get("picks")
     if not isinstance(picks, list) or len(picks) != len(rnd.fixtures):
         raise ValueError("Provide one score for each of the six fixtures.")
@@ -933,7 +1048,7 @@ def _golden_goal_minute(value) -> int | None:
 
 
 def import_opponent(payload: dict, config: WebConfig) -> dict:
-    rnd = load_round(config.round_path)
+    rnd = load_round(_active_round_path(config))
     name = str(payload.get("name", "")).strip()
     picks = payload.get("picks")
     if not name or len(name) > 80:
@@ -963,7 +1078,7 @@ def import_opponent(payload: dict, config: WebConfig) -> dict:
 
 
 def save_results(payload: dict, config: WebConfig) -> dict:
-    rnd = load_round(config.round_path)
+    rnd = load_round(_active_round_path(config))
     results = payload.get("results")
     if not isinstance(results, list) or len(results) != len(rnd.fixtures):
         raise ValueError("Provide a result or VOID for each of the six fixtures.")
@@ -1584,7 +1699,7 @@ def research_now(payload: dict, config: WebConfig) -> dict:
             "extraction."
         )
 
-    rnd = load_round(config.round_path)
+    rnd = load_round(_active_round_path(config))
     accepted = rejected = failures = 0
     with db.connect(config.database_path) as conn:
         for fixture in rnd.fixtures:
@@ -2300,7 +2415,7 @@ def app_payload(config: WebConfig) -> dict:
     """One truthful payload for all UI phases; absent evidence remains absent."""
     payload, engine_result = _dashboard(config)
     _, router, known_teams = _model_context(config)
-    rnd = load_round(config.round_path)
+    rnd = load_round(_active_round_path(config))
     state = load_ui_state(config.ui_state_path)
     registry = load_registry(config.registry_path)
     activity = [asdict(event) for event in events.load(config.event_log_path)[-100:]][::-1]
@@ -2394,6 +2509,8 @@ class BymRequestHandler(BaseHTTPRequestHandler):
                 self._send_json(HTTPStatus.OK, app_payload(self.config))
             elif path == "/api/health":
                 self._send_json(HTTPStatus.OK, dashboard_payload(self.config)["health"])
+            elif path == "/api/rounds":
+                self._send_json(HTTPStatus.OK, list_rounds(self.config))
             elif path in {"/", "/index.html"}:
                 self._send_file(ASSET_DIR / "index.html")
             elif path == "/favicon.ico":
@@ -2420,6 +2537,8 @@ class BymRequestHandler(BaseHTTPRequestHandler):
                 self._send_json(HTTPStatus.OK, mark_round_entered(payload, self.config))
             elif path == "/api/rounds":
                 self._send_json(HTTPStatus.CREATED, create_round(payload, self.config))
+            elif path == "/api/rounds/active":
+                self._send_json(HTTPStatus.OK, set_active_round(payload, self.config))
             elif path == "/api/picks":
                 self._send_json(HTTPStatus.OK, save_pick_overrides(payload, self.config))
             elif path == "/api/settings":

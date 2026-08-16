@@ -51,7 +51,11 @@ def test_round_payload_round_trips_without_a_web_specific_shape():
 
 
 def test_create_round_validates_before_persisting(tmp_path):
-    config = WebConfig(round_path=tmp_path / "active.json")
+    config = WebConfig(
+        round_path=tmp_path / "active.json",
+        database_path=tmp_path / "bym.db",
+        ui_state_path=tmp_path / "ui_state.json",
+    )
     created = create_round(payload(), config)
     path = Path(created["round_path"])
     assert path.name == "active.json"
@@ -61,6 +65,93 @@ def test_create_round_validates_before_persisting(tmp_path):
     invalid["fixtures"] = invalid["fixtures"][:5]
     with pytest.raises(ValueError, match="exactly 6"):
         create_round(invalid, config)
+
+
+# --- active round pointer -------------------------------------------------
+#
+# WebConfig.round_path is fixed for the life of the process (the --round
+# flag / BYM_ROUND). active_round_path in UI state is what lets the browser
+# move to a new or different round file without a restart — every reader
+# must resolve through _active_round_path rather than config.round_path
+# directly, the same discipline resolve_round_teams documents for names.
+
+
+def test_active_round_path_falls_back_to_config_round_path_when_unset(tmp_path):
+    from bym.web import _active_round_path
+
+    config = WebConfig(
+        round_path=tmp_path / "active.json", ui_state_path=tmp_path / "ui_state.json"
+    )
+    assert _active_round_path(config) == config.round_path
+
+
+def test_active_round_path_prefers_the_ui_state_pointer(tmp_path):
+    from bym.web import _active_round_path
+
+    other = tmp_path / "rounds" / "2026_27_round_02.json"
+    ui_state_path = tmp_path / "ui_state.json"
+    ui_state_path.write_text(json.dumps({"active_round_path": str(other)}))
+    config = WebConfig(round_path=tmp_path / "active.json", ui_state_path=ui_state_path)
+    assert _active_round_path(config) == other
+
+
+def test_create_round_editing_the_same_round_number_overwrites_in_place(tmp_path):
+    config = WebConfig(
+        round_path=tmp_path / "active.json",
+        database_path=tmp_path / "bym.db",
+        ui_state_path=tmp_path / "ui_state.json",
+    )
+    first = create_round(payload(), config)
+    edited = payload()
+    edited["fixtures"][0] = {"home": "Fulham", "away": "Arsenal"}
+    second = create_round(edited, config)
+    assert first["round_path"] == second["round_path"]
+    assert load_round(Path(second["round_path"])).fixtures[0].home == "Fulham"
+
+
+def test_create_round_with_a_new_round_number_starts_a_season_prefixed_file(tmp_path):
+    """Round 14's file must not be overwritten by round 15 — that would
+    destroy the previous round's record and leave nothing for the Rounds
+    list to show. A different round_number is "start next round", not an
+    edit, so it gets its own file and becomes the active one."""
+    config = WebConfig(
+        round_path=tmp_path / "active.json",
+        database_path=tmp_path / "bym.db",
+        ui_state_path=tmp_path / "ui_state.json",
+    )
+    first = create_round(payload(), config)
+
+    next_round = payload()
+    next_round["round_number"] = 15
+    next_round["deadline_at"] = "2026-10-25T14:00:00+01:00"
+    second = create_round(next_round, config)
+
+    assert second["round_path"] != first["round_path"]
+    assert Path(second["round_path"]).name == "2026_27_round_15.json"
+    # The previous round's file is untouched, still round 14.
+    assert load_round(Path(first["round_path"])).round_number == 14
+
+    from bym.web import _active_round_path
+
+    assert _active_round_path(config) == Path(second["round_path"])
+
+
+def test_create_round_schedules_polling_the_same_way_bym_watch_does(tmp_path):
+    from bym import scheduler
+
+    config = WebConfig(
+        round_path=tmp_path / "active.json",
+        database_path=tmp_path / "bym.db",
+        ui_state_path=tmp_path / "ui_state.json",
+    )
+    create_round(payload(), config)
+
+    with scheduler.connect(config.database_path) as conn:
+        jobs = scheduler.list_jobs(conn)
+    job_types = {job.job_type for job in jobs}
+    assert scheduler.JobType.POLL_ODDS.value in job_types
+    assert scheduler.JobType.POLL_AVAILABILITY.value in job_types
+    assert all(job.round_number == 14 for job in jobs)
 
 
 def test_mark_entered_records_manual_confirmation_only(tmp_path):
@@ -841,6 +932,8 @@ def test_create_round_canonicalises_club_names(tmp_path):
         round_path=tmp_path / "active.json",
         data_path=Path("data"),
         seasons=(2024, 2024),
+        database_path=tmp_path / "bym.db",
+        ui_state_path=tmp_path / "ui_state.json",
     )
     raw = payload()
     raw["fixtures"][0] = {"home": "Manchester City", "away": "Nottingham Forest"}
@@ -856,7 +949,10 @@ def test_create_round_still_saves_without_a_corpus(tmp_path):
     saveable when the corpus is absent — the UI's unmodellable banner
     already covers what this would have caught."""
     config = WebConfig(
-        round_path=tmp_path / "active.json", data_path=tmp_path / "nothing-here"
+        round_path=tmp_path / "active.json",
+        data_path=tmp_path / "nothing-here",
+        database_path=tmp_path / "bym.db",
+        ui_state_path=tmp_path / "ui_state.json",
     )
     created = create_round(payload(), config)
     assert Path(created["round_path"]).exists()
