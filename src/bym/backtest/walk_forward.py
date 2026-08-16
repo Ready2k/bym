@@ -402,6 +402,25 @@ def run_frozen_model(
     )
 
 
+def run_final_test_rows(matches: pd.DataFrame, test_season: int) -> list[dict]:
+    """The frozen-model-vs-market comparison table for `bym final-test`.
+
+    Shared by the CLI and the web UI so the two can never compute this
+    differently — the single-use discipline this protects (VALIDATION.md)
+    would be worthless if a UI shortcut quietly used a different pipeline
+    from the one that produced the recorded numbers.
+    """
+    test_mask = matches["season"] == test_season
+    rows = []
+    for label, closing in [("MARKET-AVAILABLE", False), ("MARKET-ORACLE", True)]:
+        baseline = run_favourite_baseline(matches, test_mask, closing=closing)
+        if baseline is not None:
+            rows.append(baseline.metrics.as_row(f"{label} fav +2-1/1-1/1-2"))
+    frozen = run_frozen_model(matches, test_season)
+    rows.append(frozen.metrics.as_row("PHASE1_MODEL_V1 (frozen)"))
+    return rows
+
+
 def tune_market(
     matches: pd.DataFrame,
     validation_season: int,

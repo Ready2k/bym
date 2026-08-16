@@ -50,6 +50,7 @@ class WebConfig:
     registry_path: Path = Path("config/source_registry.json")
     event_log_path: Path = Path("data/events/activity.jsonl")
     ledger_path: Path = Path("results/prospective_ledger.csv")
+    results_path: Path = Path("results")
     ui_state_path: Path = Path("data/ui_state.json")
     prediction_history_path: Path = Path("data/prediction_history.json")
     strategy_history_path: Path = Path("data/strategy_history.json")
@@ -1745,6 +1746,58 @@ def approve_source(payload: dict, config: WebConfig) -> dict:
     return {"source_id": record.source_id, "usage_status": record.usage_status}
 
 
+def run_final_test(payload: dict, config: WebConfig) -> dict:
+    """The browser equivalent of `bym final-test` (VALIDATION.md).
+
+    Two independent guards, because the CLI's single flag already failed
+    once: `assert_holdout_unspent` refuses outright if this season's
+    result is already on record — the check `--i-understand-this-is-
+    single-use` never was, which is how the 2026-08-08 protocol breach
+    happened. Nothing here can talk that guard past an existing record.
+    The typed confirmation below is the remaining friction for the one
+    case that guard cannot catch: a genuinely new holdout season, run for
+    the very first time — the browser equivalent of having to type the
+    CLI flag out by hand rather than click past a dialog.
+    """
+    from .backtest.walk_forward import run_final_test_rows
+    from .data.football_data import load_matches
+    from .validation import HoldoutAlreadySpentError, assert_holdout_unspent
+
+    test_season = payload.get("test_season")
+    if not isinstance(test_season, int):
+        raise ValueError("test_season is required.")
+    try:
+        assert_holdout_unspent(test_season, config.results_path)
+    except HoldoutAlreadySpentError as exc:
+        raise ValueError(str(exc)) from exc
+
+    expected = f"SPEND {test_season}"
+    if payload.get("confirmation") != expected:
+        raise ValueError(
+            f'Type exactly "{expected}" to confirm — this holdout can only '
+            "be evaluated once, ever (VALIDATION.md)."
+        )
+
+    matches = load_matches(
+        config.data_path,
+        list(range(config.seasons[0], config.seasons[1] + 1)),
+        config.divisions,
+        fetch=False,
+    )
+    rows = run_final_test_rows(matches, test_season)
+    result_path = config.results_path / (
+        f"final_test_{test_season}_{(test_season + 1) % 100:02d}.md"
+    )
+    return {
+        "test_season": test_season,
+        "rows": rows,
+        "message": (
+            f"This number is now spent. Record it in {result_path} and "
+            "never tune against it (VALIDATION.md)."
+        ),
+    }
+
+
 def _alerts_payload(activity: list[dict], state: dict) -> dict:
     """Filter the in-app alert centre by the user's material-event choices."""
     notification_map = {
@@ -2568,6 +2621,8 @@ class BymRequestHandler(BaseHTTPRequestHandler):
                 self._send_json(HTTPStatus.OK, research_now(payload, self.config))
             elif path == "/api/sources/approve":
                 self._send_json(HTTPStatus.OK, approve_source(payload, self.config))
+            elif path == "/api/final-test":
+                self._send_json(HTTPStatus.OK, run_final_test(payload, self.config))
             elif path == "/api/ollama/models":
                 self._send_json(HTTPStatus.OK, available_ollama_models(payload))
             elif path == "/api/opponents":

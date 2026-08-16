@@ -19,6 +19,7 @@ from bym.web import (
     mark_round_entered,
     ollama_status,
     extractor_settings_for_ui,
+    run_final_test,
     save_pick_overrides,
     save_results,
     save_settings,
@@ -191,6 +192,65 @@ def test_approve_source_requires_a_source_id(tmp_path):
     config = WebConfig(registry_path=tmp_path / "source_registry.json")
     with pytest.raises(ValueError, match="source_id"):
         approve_source({}, config)
+
+
+# --- final-test enforcement -------------------------------------------------
+#
+# The browser control must fail the same way the CLI does: a season
+# already on record is refused unconditionally (no confirmation phrase
+# can talk it past that), and a genuinely new season still needs the
+# typed phrase — the browser equivalent of typing out
+# --i-understand-this-is-single-use rather than clicking past a dialog.
+
+
+def test_run_final_test_requires_a_test_season(tmp_path):
+    config = WebConfig(results_path=tmp_path)
+    with pytest.raises(ValueError, match="test_season"):
+        run_final_test({}, config)
+
+
+def test_run_final_test_refuses_an_already_spent_season_before_checking_the_phrase(tmp_path):
+    (tmp_path / "final_test_2025_26.md").write_text("spent")
+    config = WebConfig(results_path=tmp_path)
+    with pytest.raises(ValueError, match="already exists"):
+        run_final_test({"test_season": 2025, "confirmation": "wrong"}, config)
+
+
+def test_run_final_test_refuses_without_the_confirmation_phrase(tmp_path):
+    config = WebConfig(results_path=tmp_path)
+    with pytest.raises(ValueError, match="Type exactly"):
+        run_final_test({"test_season": 2030}, config)
+
+
+def test_run_final_test_refuses_the_wrong_phrase(tmp_path):
+    config = WebConfig(results_path=tmp_path)
+    with pytest.raises(ValueError, match="Type exactly"):
+        run_final_test(
+            {"test_season": 2030, "confirmation": "spend 2030"}, config
+        )
+
+
+def test_run_final_test_succeeds_for_a_genuinely_unspent_season(tmp_path):
+    """A narrow --seasons/--divisions slice, same as a real invocation
+    could use — this only needs to prove the plumbing (confirmation,
+    spent-check, load_matches, run_final_test_rows) is wired correctly,
+    not reproduce a real holdout result."""
+    config = WebConfig(
+        results_path=tmp_path,
+        data_path=Path("data"),
+        seasons=(2023, 2024),
+        divisions=("E0",),
+    )
+    result = run_final_test(
+        {"test_season": 2024, "confirmation": "SPEND 2024"}, config
+    )
+    assert result["test_season"] == 2024
+    models = {row["model"] for row in result["rows"]}
+    assert "PHASE1_MODEL_V1 (frozen)" in models
+    assert "spent" in result["message"]
+    # The endpoint only displays the result — recording it is still a
+    # deliberate, separate human act, exactly as it is for the CLI.
+    assert not (tmp_path / "final_test_2024_25.md").exists()
 
 
 def test_mark_entered_records_manual_confirmation_only(tmp_path):

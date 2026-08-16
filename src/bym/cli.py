@@ -1152,9 +1152,19 @@ def cmd_ledger(args) -> int:
 
 def cmd_final_test(args) -> int:
     """Single-shot evaluation of the frozen model on the holdout season."""
-    from .backtest.metrics import evaluate
-    from .backtest.walk_forward import run_favourite_baseline, run_frozen_model
+    from .backtest.walk_forward import run_final_test_rows
     from .data.football_data import load_matches
+    from .validation import HoldoutAlreadySpentError, assert_holdout_unspent
+
+    # Checked before the acknowledgement flag, and unconditionally: on
+    # 2026-08-08 an already-spent holdout was re-run anyway because the
+    # flag is only a typed acknowledgement, not a check against anything.
+    # This refusal cannot be flagged past.
+    try:
+        assert_holdout_unspent(args.test_season)
+    except HoldoutAlreadySpentError as exc:
+        print(f"REFUSED. {exc}", file=sys.stderr)
+        return 2
 
     if not args.i_understand_this_is_single_use:
         print(
@@ -1167,16 +1177,7 @@ def cmd_final_test(args) -> int:
         return 2
 
     matches = load_matches(Path(args.data), _season_range(args), tuple(args.divisions))
-    test_mask = matches["season"] == args.test_season
-
-    rows = []
-    for label, closing in [("MARKET-AVAILABLE", False), ("MARKET-ORACLE", True)]:
-        baseline = run_favourite_baseline(matches, test_mask, closing=closing)
-        if baseline is not None:
-            rows.append(baseline.metrics.as_row(f"{label} fav +2-1/1-1/1-2"))
-
-    frozen = run_frozen_model(matches, args.test_season)
-    rows.append(frozen.metrics.as_row("PHASE1_MODEL_V1 (frozen)"))
+    rows = run_final_test_rows(matches, args.test_season)
 
     import pandas as pd
 

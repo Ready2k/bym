@@ -5,6 +5,7 @@ let countdownTimer;
 let roundTab = "predictions";
 let roundSetupMode = "edit"; // "edit" the active round, or "new" for the next one
 let roundsList = null;
+let finalTestResult = null;
 let pendingRound;
 let activityFilter = "ALL";
 let cupForecast;
@@ -1085,11 +1086,19 @@ function activityView() {
   return `${pageHeader("Decision history", "Activity", "A chronological audit of material forecast, intelligence, strategy, and manual events.")}<div class="tabs activity-tabs">${Object.keys(filters).map((filter) => `<button class="tab ${activityFilter === filter ? "active" : ""}" data-activity-filter="${filter}">${titleCase(filter)}</button>`).join("")}</div>${visible.length ? `<div class="feed-list">${visible.map(activityItem).join("")}</div>` : emptyState("No matching activity", "Routine no-change refreshes are intentionally quiet.")}`;
 }
 
+function finalTestSection() {
+  const columns = ["model", "fixtures", "pts/fixture", "pts/round(6)", "exact%", "result%", "brier", "logloss"];
+  const resultTable = finalTestResult
+    ? `<table><thead><tr>${columns.map((c) => `<th>${escapeHtml(c)}</th>`).join("")}</tr></thead><tbody>${finalTestResult.rows.map((row) => `<tr>${columns.map((c) => `<td>${escapeHtml(String(row[c]))}</td>`).join("")}</tr>`).join("")}</tbody></table><p class="subtitle">${escapeHtml(finalTestResult.message)}</p>`
+    : "";
+  return `<section class="form-card"><div class="section-heading"><div><p class="eyebrow">Irreversible — read VALIDATION.md first</p><h2>Final holdout test</h2><p class="subtitle">Single-use, ever, per season. A season whose result is already on record is refused outright, in the browser exactly as in the CLI — there is no override.</p></div></div><form id="final-test-form"><div class="form-grid"><label>Test season (start year)<input required name="test_season" type="number" min="2019" placeholder="e.g. 2026"></label><label>Type SPEND &lt;season&gt; to confirm<input required name="confirmation" type="text" placeholder="SPEND 2026"></label></div><div class="form-actions"><button class="button" type="submit">Run final test</button></div></form>${resultTable}</section>`;
+}
+
 function modelView() {
   const config = appData.model.frozen_config;
   const transparency = appData.model.transparency;
   const values = [["Model version", appData.model.version], ["Training config", "Frozen Phase 1"], ["Time decay ξ", config.xi], ["Market blend", config.market_blend_weight], ["Tail tolerance", config.tail_tolerance], ["Goal grid", `${config.min_goals_grid}–${config.max_goals_cap}`], ["Promoted-team priors", config.use_promoted_priors ? "Enabled" : "Disabled"]];
-  return `<div class="model-view">${pageHeader("Expert", "Model Lab", "Technical detail is available here without competing with the weekly decision.")}<section class="callout muted"><strong>Frozen evaluation model</strong><span>${escapeHtml(appData.model.note)} ${escapeHtml(transparency.evaluation_reason || "")}</span></section><section class="spec-grid">${values.map(([label, value]) => `<article><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></article>`).join("")}</section><section class="form-card"><h2>How a pick is selected</h2><p>The scoreline with the highest expected Super 6 value is recommended. Expected points uses the probability of the selected match result plus the probability of the exact score; confidence remains a separate category.</p><p class="subtitle">Open any fixture for its expected-value breakdown, and expand “Score matrix &amp; provenance” there for the full scoreline distribution and source freshness.</p></section></div>`;
+  return `<div class="model-view">${pageHeader("Expert", "Model Lab", "Technical detail is available here without competing with the weekly decision.")}<section class="callout muted"><strong>Frozen evaluation model</strong><span>${escapeHtml(appData.model.note)} ${escapeHtml(transparency.evaluation_reason || "")}</span></section><section class="spec-grid">${values.map(([label, value]) => `<article><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></article>`).join("")}</section><section class="form-card"><h2>How a pick is selected</h2><p>The scoreline with the highest expected Super 6 value is recommended. Expected points uses the probability of the selected match result plus the probability of the exact score; confidence remains a separate category.</p><p class="subtitle">Open any fixture for its expected-value breakdown, and expand “Score matrix &amp; provenance” there for the full scoreline distribution and source freshness.</p></section>${finalTestSection()}</div>`;
 }
 
 // §18.1's registry answers three different questions, and showing them as
@@ -1737,6 +1746,14 @@ document.addEventListener("submit", async (event) => {
       const season = Number(form.elements.season.value);
       lmsReplay = { data: null, season, usedClubs: [], suggestedUsedClubs: [], history: [], suggestedHistory: [], selectedTeam: "", revealed: false, eliminated: false, suggestedEliminated: false };
       await loadLmsReplay(season, 1);
+    } else if (form.id === "final-test-form") {
+      const testSeason = Number(form.elements.test_season.value);
+      finalTestResult = await post("/api/final-test", {
+        test_season: testSeason,
+        confirmation: form.elements.confirmation.value,
+      });
+      toast(finalTestResult.message);
+      renderPage();
     }
   } catch (error) { toast(error.message); }
 });
