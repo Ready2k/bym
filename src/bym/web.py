@@ -2221,8 +2221,6 @@ def lms_replay(payload: dict, config: WebConfig) -> dict:
         return clubs
 
     used_clubs = club_list("used_clubs")
-    suggested_used_clubs = club_list("suggested_used_clubs")
-
     history = [year for year in available if year <= season]
     matches = load_matches(config.data_path, history, ("E0",), fetch=False)
     return lms_backtest.replay_slate(
@@ -2230,7 +2228,6 @@ def lms_replay(payload: dict, config: WebConfig) -> dict:
         season,
         slate,
         used_clubs=used_clubs,
-        suggested_used_clubs=suggested_used_clubs,
         xi=FROZEN_PHASE1_V1.xi,
         cfg=FROZEN_PHASE1_V1,
         lms_cfg=DEFAULT_LMS,

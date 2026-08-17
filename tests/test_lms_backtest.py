@@ -106,16 +106,17 @@ def test_replay_slate_excludes_used_clubs_and_exposes_results(monkeypatch):
             team="C", opponent="D", is_home=True, p_win=0.7,
         ),
     )
-    monkeypatch.setattr(
-        lms_backtest,
-        "plan_horizon",
-        lambda *_args, **_kwargs: SimpleNamespace(this_week=planned, picks=(planned,)),
-    )
+    def fake_plan(*_args, **kwargs):
+        seen["planned_used"] = kwargs["used_clubs"]
+        return SimpleNamespace(this_week=planned, picks=(planned,))
+
+    monkeypatch.setattr(lms_backtest, "plan_horizon", fake_plan)
     replay = lms_backtest.replay_slate(
         matches, 2025, 1, used_clubs=["A"], min_training_matches=0
     )
 
     assert seen["used"] == ["A"]
+    assert seen["planned_used"] == ["A"]
     assert replay.model_pick == "C"
     assert replay.candidates[0]["won"] is True
     assert replay.fixtures[0]["score"] == "1–0"

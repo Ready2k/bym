@@ -280,7 +280,6 @@ def replay_slate(
     slate_number: int,
     *,
     used_clubs: Sequence[str] = (),
-    suggested_used_clubs: Sequence[str] = (),
     xi: float = DEFAULT_MODEL.xi,
     cfg: ModelConfig = DEFAULT_MODEL,
     lms_cfg: LMSConfig = DEFAULT_LMS,
@@ -336,15 +335,17 @@ def replay_slate(
         for candidate in candidates
     )
     market_choice = _market_pick(slate)
-    # The comparator gets its own one-club-once history. It is therefore a
-    # real alternative route, not a recommendation distorted by the clubs
-    # the player has already spent. The horizon is deliberately short: the
-    # current fixture schedule is known, but a long historical reconstruction
-    # would overstate how far-ahead it could have planned in practice.
+    # Advice follows the player's actual route.  A replay is a decision
+    # audit, not a second entrant racing alongside the player: if the player
+    # rejects a recommendation and survives, the next recommendation must
+    # respect the club the player really spent.  The horizon is deliberately
+    # short: the current fixture schedule is known, but a long historical
+    # reconstruction would overstate how far-ahead it could have planned in
+    # practice.
     suggestion = plan_horizon(
         params,
         gameweeks[slate_number - 1:slate_number - 1 + lms_cfg.horizon_gameweeks],
-        used_clubs=suggested_used_clubs,
+        used_clubs=used_clubs,
         cfg=cfg,
         lms_cfg=lms_cfg,
     )

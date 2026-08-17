@@ -14,7 +14,7 @@ let lmsEntrant = "";
 let lmsPreview = "";
 let lmsGraphWeek = "";
 let appLoadController;
-let lmsReplay = { data: null, season: null, usedClubs: [], suggestedUsedClubs: [], history: [], suggestedHistory: [], selectedTeam: "", revealed: false, eliminated: false, suggestedEliminated: false };
+let lmsReplay = { data: null, season: null, usedClubs: [], history: [], suggestedHistory: [], selectedTeam: "", revealed: false, eliminated: false };
 
 // The current English 92, taken from the same E0–E3 season data used by the
 // model. Cup Match can select any of those clubs, so the crest list cannot be
@@ -749,15 +749,16 @@ function openLmsReplayPath() {
   const suggestedByGame = new Map(lmsReplay.suggestedHistory.map((entry) => [entry.game, entry]));
   const outcome = (won) => won ? "Survived" : "Out";
   const odds = (entry) => entry?.pWin == null ? "Probability unavailable" : `${percent(entry.pWin)} to win`;
-  const choice = (label, entry, route) => `<article class="replay-tree-choice ${route} ${entry?.won ? "survived" : "out"}"><span>${label}</span><strong>${entry ? escapeHtml(entry.team) : "Route ended"}</strong><small>${entry ? `${odds(entry)} · ${outcome(entry.won)}` : "No further pick"}</small></article>`;
+  const adviceOutcome = (won) => won ? "Would have survived" : "Did not win";
+  const choice = (label, entry, route, isAdvice = false) => `<article class="replay-tree-choice ${route} ${entry?.won ? "survived" : "out"}"><span>${label}</span><strong>${entry ? escapeHtml(entry.team) : "No model advice"}</strong><small>${entry ? `${odds(entry)} · ${isAdvice ? adviceOutcome(entry.won) : outcome(entry.won)}` : "No legal pick was available"}</small></article>`;
   const games = lmsReplay.history.map((entry) => {
     const suggested = suggestedByGame.get(entry.game);
     if (suggested && entry.team === suggested.team) {
-      return `<section class="replay-tree-game merged"><p class="eyebrow">Game ${entry.game} · routes together</p>${choice("Both chose", { ...entry, pWin: suggested.pWin, won: suggested.won }, "shared")}</section>`;
+      return `<section class="replay-tree-game merged"><p class="eyebrow">Game ${entry.game} · followed model advice</p>${choice("You and the model", { ...entry, pWin: suggested.pWin, won: suggested.won }, "shared")}</section>`;
     }
-    return `<section class="replay-tree-game forked"><p class="eyebrow">Game ${entry.game} · route splits</p><div class="replay-tree-branches">${choice("Your pick", entry, "yours")}${choice("Suggested pick", suggested, "suggested")}</div></section>`;
+    return `<section class="replay-tree-game forked"><p class="eyebrow">Game ${entry.game} · chose differently</p><div class="replay-tree-branches">${choice("Your pick", entry, "yours")}${choice("Model advice", suggested, "suggested", true)}</div></section>`;
   }).join("");
-  $("#lms-replay-detail").innerHTML = `<p class="eyebrow">Replay results</p><h2>Your decision tree</h2><p class="subtitle">Each branch shows the club picked, its pre-game chance of winning, and the result. Where the routes select the same club they merge; where they differ, they split. The suggested route is re-planned before each game—never with hindsight.</p><div class="replay-tree"><div class="replay-tree-root"><span>Season start</span><strong>${escapeHtml(String(lmsReplay.season))}/${String(Number(lmsReplay.season) + 1).slice(2)}</strong></div>${games}</div>`;
+  $("#lms-replay-detail").innerHTML = `<p class="eyebrow">Replay results</p><h2>Your decision audit</h2><p class="subtitle">Each game shows your pick alongside the model advice available before the result. Advice is re-planned from the clubs you actually used whenever you survive—never with hindsight. Its historical result is shown for comparison, but it does not end your replay route.</p><div class="replay-tree"><div class="replay-tree-root"><span>Season start</span><strong>${escapeHtml(String(lmsReplay.season))}/${String(Number(lmsReplay.season) + 1).slice(2)}</strong></div>${games}</div>`;
   $("#lms-replay-dialog").showModal();
 }
 
@@ -790,7 +791,7 @@ function lmsReplayLab(lms) {
   const game = data.game ?? data.slate;
   const totalGames = data.total_games ?? data.total_slates;
   const picked = data.candidates.find((candidate) => candidate.team === lmsReplay.selectedTeam);
-  const suggested = lmsReplay.suggestedEliminated ? null : replaySuggestedPick(data);
+  const suggested = replaySuggestedPick(data);
   const suggestedWon = replaySuggestedWon(data, suggested);
   const market = data.candidates.find((candidate) => candidate.team === data.market_pick);
   const result = lmsReplay.revealed && picked
@@ -799,8 +800,8 @@ function lmsReplayLab(lms) {
       : `<div class="danger-card"><h3>You are out</h3><p>${escapeHtml(picked.team)} did not win, so this replay ends here. Restart to take another path.</p></div>`)
     : "";
   const comparison = lmsReplay.revealed
-    ? `<p class="subtitle">Suggested pick: ${suggested ? `${escapeHtml(suggested.team)} — ${suggestedWon ? "won" : "did not win"}` : "No legal route"}${market ? ` · Price-proxy pick: ${escapeHtml(market.team)} — ${market.won ? "won" : "did not win"}` : ""}</p>`
-    : `<p class="subtitle">Suggested plan: ${suggested ? `${escapeHtml(suggested.team)} (${percent(suggested.p_win)})` : "No legal route"}${suggested && data.suggested_path.length > 1 ? ` · then ${data.suggested_path.slice(1).map((pick) => escapeHtml(pick.team)).join(", ")}` : ""}${market ? ` · Price-proxy: ${escapeHtml(market.team)}` : ""}</p>`;
+    ? `<p class="subtitle">Model advice: ${suggested ? `${escapeHtml(suggested.team)} — ${suggestedWon ? "would have won" : "did not win"}` : "No legal route"}${market ? ` · Price-proxy pick: ${escapeHtml(market.team)} — ${market.won ? "won" : "did not win"}` : ""}</p>`
+    : `<p class="subtitle">Model advice for your route: ${suggested ? `${escapeHtml(suggested.team)} (${percent(suggested.p_win)})` : "No legal route"}${suggested && data.suggested_path.length > 1 ? ` · then ${data.suggested_path.slice(1).map((pick) => escapeHtml(pick.team)).join(", ")}` : ""}${market ? ` · Price-proxy: ${escapeHtml(market.team)}` : ""}</p>`;
   const fixtureResults = lmsReplay.revealed
     ? `<details class="disclosure"><summary>Show game results</summary><div class="fixture-form-list">${data.fixtures.map((fixture) => `<div class="predicted-fixture"><span>${escapeHtml(fixture.home)} v ${escapeHtml(fixture.away)}</span><strong>${fixture.score}</strong></div>`).join("")}</div></details>`
     : "";
@@ -1418,16 +1419,15 @@ async function loadRoundsList() {
   renderPage();
 }
 
-async function loadLmsReplay(season, game, usedClubs = [], suggestedUsedClubs = []) {
+async function loadLmsReplay(season, game, usedClubs = []) {
   const data = await post("/api/lms/replay", {
-    season, game, used_clubs: usedClubs, suggested_used_clubs: suggestedUsedClubs,
+    season, game, used_clubs: usedClubs,
   });
   lmsReplay = {
     ...lmsReplay,
     data,
     season,
     usedClubs,
-    suggestedUsedClubs,
     selectedTeam: "",
     revealed: false,
     eliminated: false,
@@ -1713,14 +1713,12 @@ document.addEventListener("click", async (event) => {
       game, team: picked.team, pWin: picked.p_win, won: picked.won,
     }];
     if (picked.won) lmsReplay.usedClubs = [...lmsReplay.usedClubs, picked.team];
-    if (!lmsReplay.suggestedEliminated && replaySuggestedPick(lmsReplay.data)) {
+    if (replaySuggestedPick(lmsReplay.data)) {
       const suggested = replaySuggestedPick(lmsReplay.data);
       const won = replaySuggestedWon(lmsReplay.data, suggested);
       lmsReplay.suggestedHistory = [...lmsReplay.suggestedHistory, {
         game, team: suggested?.team || lmsReplay.data.suggested_pick, pWin: suggested?.p_win, won,
       }];
-      if (won) lmsReplay.suggestedUsedClubs = [...lmsReplay.suggestedUsedClubs, suggested?.team || lmsReplay.data.suggested_pick];
-      else lmsReplay.suggestedEliminated = true;
     }
     renderPage();
     return;
@@ -1731,13 +1729,12 @@ document.addEventListener("click", async (event) => {
         lmsReplay.season,
         (lmsReplay.data.game ?? lmsReplay.data.slate) + 1,
         lmsReplay.usedClubs,
-        lmsReplay.suggestedUsedClubs,
       );
     } catch (error) { toast(error.message); }
     return;
   }
   if (event.target.closest("[data-lms-replay-reset]")) {
-    lmsReplay = { data: null, season: lmsReplay.season, usedClubs: [], suggestedUsedClubs: [], history: [], suggestedHistory: [], selectedTeam: "", revealed: false, eliminated: false, suggestedEliminated: false };
+    lmsReplay = { data: null, season: lmsReplay.season, usedClubs: [], history: [], suggestedHistory: [], selectedTeam: "", revealed: false, eliminated: false };
     renderPage();
   }
   if (event.target.closest("[data-lms-replay-path]")) openLmsReplayPath();
@@ -1794,7 +1791,7 @@ document.addEventListener("submit", async (event) => {
       renderPage();
     } else if (form.id === "lms-replay-form") {
       const season = Number(form.elements.season.value);
-      lmsReplay = { data: null, season, usedClubs: [], suggestedUsedClubs: [], history: [], suggestedHistory: [], selectedTeam: "", revealed: false, eliminated: false, suggestedEliminated: false };
+      lmsReplay = { data: null, season, usedClubs: [], history: [], suggestedHistory: [], selectedTeam: "", revealed: false, eliminated: false };
       await loadLmsReplay(season, 1);
     } else if (form.id === "final-test-form") {
       const testSeason = Number(form.elements.test_season.value);

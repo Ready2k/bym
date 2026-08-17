@@ -130,6 +130,7 @@ def test_replay_payload_is_transient_and_passes_the_used_clubs(tmp_path, monkeyp
     assert result == {"slate": 2, "candidates": []}
     assert seen["matches"] == "matches"
     assert seen["used_clubs"] == ["Arsenal"]
+    assert "suggested_used_clubs" not in seen
 
 
 def test_replay_rejects_unavailable_season(tmp_path):
