@@ -975,6 +975,28 @@ function seasonLabel(season) {
   return season ? `${season}/${String(season + 1).slice(-2)}` : "";
 }
 
+function fplStatusPill(status) {
+  const live = status === "live";
+  return `<span class="status-pill ${live ? "approved" : "neutral"}">${live ? "LIVE" : "UNDER CONSTRUCTION"}</span>`;
+}
+
+function fplView() {
+  const fpl = appData.fpl || { status: "under_construction", seasons: [] };
+  const seasons = fpl.seasons || [];
+  const live = fpl.status === "live";
+  const header = pageHeader("Fantasy Premier League", "FPL", "Player projections and a squad optimiser, built on the same frozen match model as Super 6.");
+  const progress = seasons.length
+    ? `<section class="form-card">${seasons.map((s) => {
+        const pct = s.total ? Math.round((100 * s.fetched) / s.total) : 0;
+        return `<div class="fpl-progress-row"><span>${escapeHtml(seasonLabel(s.season))}</span><div class="fpl-progress-track"><div class="fpl-progress-fill" style="width:${pct}%"></div></div><span>${s.fetched}/${s.total} fixtures</span></div>`;
+      }).join("")}</section>`
+    : "";
+  const body = live
+    ? emptyState("FPL data is ready", "The historical player-data corpus has finished harvesting. Squad recommendations are coming soon.")
+    : emptyState("FPL is under construction", "The historical player-data corpus is still being harvested automatically, a limited number of fixtures per day to respect the data provider's free-tier limit. Player projections and the squad optimiser go live here once every season is fully fetched.");
+  return `${header}<p>${fplStatusPill(fpl.status)}</p>${body}${progress}`;
+}
+
 function leagueView() {
   const league = appData.league;
   const name = appData.settings.league_name;
@@ -1187,7 +1209,8 @@ function settingsView() {
 }
 
 function moreView() {
-  const pages = [["Round control", "round", "Changes, setup and results"], ["Opponents", "opponents", "Import picks for your private league"], ["Performance", "performance", "Measure recorded results"], ["Cup Match", "cup", "One-off match forecast"], ["LMS season replay", "lms-replay", "Play through a completed season"], ["Activity", "activity", "Material forecast and intelligence history"], ["Model Lab", "model", "Frozen model and technical detail"], ["Sources", "sources", "Source approval and provenance"], ["System Health", "health", "Operational status and data warnings"], ["Settings", "settings", "League, notification and budget preferences"]];
+  const fplLive = appData.fpl?.status === "live";
+  const pages = [["Round control", "round", "Changes, setup and results"], ["FPL", "fpl", `Fantasy Premier League — ${fplLive ? "live" : "under construction"}`], ["Opponents", "opponents", "Import picks for your private league"], ["Performance", "performance", "Measure recorded results"], ["Cup Match", "cup", "One-off match forecast"], ["LMS season replay", "lms-replay", "Play through a completed season"], ["Activity", "activity", "Material forecast and intelligence history"], ["Model Lab", "model", "Frozen model and technical detail"], ["Sources", "sources", "Source approval and provenance"], ["System Health", "health", "Operational status and data warnings"], ["Settings", "settings", "League, notification and budget preferences"]];
   return `${pageHeader("More", "More tools", "Everything outside the quick weekly review is still one tap away.")}<div class="more-list">${pages.map(([title, page, copy]) => `<button class="more-link" data-page="${page}"><span><strong>${title}</strong><small>${copy}</small></span><b>›</b></button>`).join("")}</div>`;
 }
 
@@ -1198,7 +1221,7 @@ function renderPage() {
     return;
   }
   const page = (location.hash || "#home").slice(1).split("?")[0] || "home";
-  const views = { home: homeView, round: roundView, cup: cupView, lms: lmsView, "lms-replay": lmsReplayView, league: leagueView, opponents: opponentsView, performance: performanceView, activity: activityView, model: modelView, sources: sourcesView, health: healthView, settings: settingsView, more: moreView };
+  const views = { home: homeView, round: roundView, cup: cupView, lms: lmsView, "lms-replay": lmsReplayView, fpl: fplView, league: leagueView, opponents: opponentsView, performance: performanceView, activity: activityView, model: modelView, sources: sourcesView, health: healthView, settings: settingsView, more: moreView };
   $("#app").innerHTML = (views[page] || homeView)();
   document.querySelectorAll("[data-page-link]").forEach((link) => link.classList.toggle("active", link.dataset.pageLink === page));
   markScrollableRegions();

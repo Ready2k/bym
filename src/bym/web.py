@@ -2017,6 +2017,35 @@ def _lms_plan_dict(plan) -> dict:
     }
 
 
+def fpl_status_payload(config: WebConfig) -> dict:
+    """FPL corpus-harvest progress for the FPL tab, read straight from
+    `fpl_fixture_harvest_state` — the same ledger `scripts/fpl_daily_
+    harvest.py`'s LaunchAgent writes to every night. The tab's "live"
+    status is gated on `fpl.harvest.harvest_complete()`, not a separate
+    flag someone could forget to flip: it is a live read of the same
+    resumable ledger the harvest itself uses to know it is done, so the
+    UI and the harvest can never disagree about whether the corpus is
+    ready. No FPL projection/optimiser data is read or computed here —
+    every harvest season finishing is only the FIRST gate (docs/
+    MANIFEST_FPL.md's Phase 1B "field-completeness gate + freeze" is a
+    separate, still human, step after that).
+    """
+    from .fpl import harvest as fpl_harvest
+
+    with db.connect(config.database_path) as conn:
+        seasons = []
+        for season in fpl_harvest.HARVEST_SEASONS:
+            counts = fpl_harvest.harvest_status_counts(
+                conn, season, fpl_harvest.HARVEST_COMPETITION
+            )
+            total = sum(counts.values())
+            fetched = counts.get("FETCHED", 0) + counts.get("NO_DATA", 0)
+            seasons.append({"season": season, "fetched": fetched, "total": total})
+        complete = fpl_harvest.harvest_complete(conn)
+
+    return {"status": "live" if complete else "under_construction", "seasons": seasons}
+
+
 def lms_payload(config: WebConfig, router=None, known_teams: set[str] | None = None) -> dict:
     """Every entrant's survival state, this gameweek's eligible clubs, and
     the multi-gameweek plan behind the recommendation.
@@ -2566,6 +2595,7 @@ def app_payload(config: WebConfig) -> dict:
                 router=router,
                 known_teams=known_teams,
             ),
+            "fpl": fpl_status_payload(config),
         }
     )
     return payload

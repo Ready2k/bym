@@ -2,8 +2,9 @@ import json
 
 import pytest
 
-from bym.config import DEFAULT_LMS, DEFAULT_MODEL, LMSConfig
+from bym.config import DEFAULT_LMS, DEFAULT_MODEL, FROZEN_PHASE1_V1, LMSConfig
 from bym.model import dixon_coles
+from bym.model.matrix import score_matrix
 from bym.lms import (
     FixtureOutlook,
     Gameweek,
@@ -12,6 +13,7 @@ from bym.lms import (
     PickCandidate,
     auto_settle,
     field_equity,
+    fixture_outlooks,
     format_field_equity,
     format_plan,
     format_recommendations,
@@ -19,6 +21,7 @@ from bym.lms import (
     gameweek_from_dict,
     load_states,
     plan_horizon,
+    rank_candidates,
     record_pick,
     record_result,
     recommend_gameweek,
@@ -82,6 +85,57 @@ def test_no_candidates_when_every_club_used(params):
 def test_win_draw_loss_sum_to_one(params):
     for c in recommend_gameweek(params, make_gameweek()):
         assert c.p_win + c.p_draw + c.p_loss == pytest.approx(1.0)
+
+
+def test_extending_fixtureoutlook_for_fpl_does_not_alter_lms_or_super6_output(params):
+    """FixtureOutlook gained optional lambda_home/lambda_away/
+    p_home_clean_sheet/p_away_clean_sheet fields (SPEC_FPL.md §3.2/§6) so
+    the FPL player projection could reuse the already-computed score
+    matrix instead of refitting it. FPL is allowed to consume the frozen
+    model; it must never influence it (§19) — this pins that boundary
+    directly rather than trusting the ordinary suite to notice a
+    regression here by accident, the same discipline
+    test_frozen_config.py's ablation_007/008/009 checks already apply to
+    other frozen-adjacent additions.
+    """
+    gw = make_gameweek()
+    outlooks = fixture_outlooks(params, gw, DEFAULT_MODEL)
+
+    for outlook in outlooks:
+        f = outlook.fixture
+        lam_h, lam_a = params.lambdas(f.home, f.away, DEFAULT_MODEL)
+        matrix = score_matrix(lam_h, lam_a, params.rho, DEFAULT_MODEL)
+
+        # The four fields every existing Super 6/LMS consumer reads are
+        # bit-identical to an independent recomputation off the same
+        # fitted params — untouched by the new fields' presence.
+        assert outlook.p_home_win == matrix.p_home_win
+        assert outlook.p_draw == matrix.p_draw
+        assert outlook.p_away_win == matrix.p_away_win
+
+        # The new FPL-only fields read off the SAME matrix already
+        # computed for the four fields above — not a second, possibly
+        # inconsistent computation.
+        assert outlook.lambda_home == matrix.lambda_home
+        assert outlook.lambda_away == matrix.lambda_away
+        assert outlook.p_home_clean_sheet == pytest.approx(float(matrix.probs[:, 0].sum()))
+        assert outlook.p_away_clean_sheet == pytest.approx(float(matrix.probs[0, :].sum()))
+
+    # rank_candidates (and therefore recommend_gameweek, LMS's actual
+    # decision path) reads only the original four fields — confirm its
+    # output is identical whether or not the new fields are populated.
+    bare_outlooks = [
+        FixtureOutlook(o.fixture, o.p_home_win, o.p_draw, o.p_away_win) for o in outlooks
+    ]
+    assert rank_candidates(outlooks) == rank_candidates(bare_outlooks)
+
+    # The frozen arm itself carries no knowledge of the new fields — they
+    # are a decision-layer type's FPL-only addition, never a change to
+    # the fitted model or its config.
+    assert not hasattr(FROZEN_PHASE1_V1, "lambda_home")
+    assert not hasattr(FROZEN_PHASE1_V1, "p_home_clean_sheet")
+    assert FROZEN_PHASE1_V1.xi == 0.003
+    assert FROZEN_PHASE1_V1.market_blend_weight == 0.5
 
 
 def test_report_handles_empty_candidates(params):

@@ -71,6 +71,12 @@ class SourceRecord:
     attribution_required: bool = False
     purpose: list[str] = field(default_factory=list)
     notes: str = ""
+    # SPEC_FPL.md §5.3/§15: research and benchmark sources are never a
+    # production dependency by default. RESEARCH_ONLY / BENCHMARK_ONLY /
+    # DEVELOPMENT record *why* a non-APPROVED source is registered at all,
+    # distinct from usage_status which records whether it may be queried.
+    # Empty for every pre-FPL source — this field did not exist for them.
+    usage_scope: str = ""
 
 
 def _seed() -> list[SourceRecord]:
@@ -125,6 +131,10 @@ def _seed() -> list[SourceRecord]:
                 "suspensions",
                 "squads",
                 "player_resolution",
+                "historical_player_match_stats",
+                "historical_player_identity",
+                "historical_lineups",
+                "historical_injuries",
             ],
             notes="Structured availability source for Phase 2 Increment 3B. "
             "Terms permit using the data to build applications and "
@@ -145,7 +155,15 @@ def _seed() -> list[SourceRecord]:
             "the free tier useless for live 2026/27 operation but "
             "sufficient to measure, at zero cost, whether availability "
             "data improves forecasts at all before anyone pays for a "
-            "live feed (§25's cost-per-Brier-improvement test).",
+            "live feed (§25's cost-per-Brier-improvement test). "
+            "2026-08-17: Human approved extension of the existing scope to "
+            "historical player-match statistics and historical player "
+            "identity for FPL Phase 1A development (SPEC_FPL.md §5.2, "
+            "§5.6) — the four `historical_*` purposes above. This does "
+            "NOT approve current-season/paid endpoints or broaden "
+            "production/live use: historical seasons available under the "
+            "current approved/free account only (2022-2024, per the "
+            "2026-08-08 probe above).",
         ),
         SourceRecord(
             source_id="tavily",
@@ -203,25 +221,158 @@ def _seed() -> list[SourceRecord]:
             usage_status=UsageStatus.EVALUATED.value,
             terms_url="https://bigballsdata.com/docs",
             terms_checked_at="",  # capability probed, terms NOT yet reviewed
-            refresh_limit="free tier: 1000 requests/day (2000 with a GitHub account)",
+            refresh_limit="free tier: 100 requests/minute, 2000 requests/day "
+            "(with a GitHub-linked account) — re-confirmed via /v1/usage "
+            "2026-08-17",
             retention_policy="none — nothing queries this source",
             purpose=[],
-            notes="Assessed 2026-08-10 as a candidate xG source (§7) and "
-            "not adopted. NOTHING QUERIES THIS SOURCE: there is no adapter, "
-            "purpose is empty, and no validation or cross-checking runs "
-            "against it. A key is held in secrets/ only so the option stays "
-            "open; this entry exists so its presence is explained rather "
-            "than rediscovered. Probed with a live key: /v1/leagues returns 8 "
-            "competitions, England = EPL only, so NO Championship (59% of "
-            "the corpus). Its advertised match-level xG does not appear in "
-            "any payload — 0 of 30 finished EPL matches had any team_stats, "
-            "and the one match in 40 that did carried 28 fields (shots, "
-            "shots on target, possession, passing, cards) with no xG in "
-            "either the stats or the match object. Lineups return "
-            "available=false. Fixture horizon ended 2026-05-24, so it has "
-            "no 2026/27 season yet. Terms have NOT been reviewed: do that "
-            "first if this is ever promoted. Genuine but modest value as a "
-            "second opinion on results/scores alongside football_data_org.",
+            usage_scope="",
+            notes="STATUS: EVALUATED. DECISION (human, 2026-08-17): not "
+            "suitable for Phase 1A live player ingestion — do not widen to "
+            "REVIEW_REQUIRED merely because some historical aggregate "
+            "fields work; better candidates already exist for that role "
+            "(api_football, vaastav_fpl_historical). Its season-aggregate "
+            "xG/xA is itself Understat-sourced, so adopting it would add "
+            "another wrapper and another identity problem rather than a "
+            "genuinely independent dataset. KNOWN CAPABILITIES: historical "
+            "season-aggregate goals/assists/minutes (confirmed live for "
+            "season 2025, e.g. Haaland goals=27 assists=8 minutes=2958 "
+            "matches=35 via /v1/leagues/epl/top-scorers); historical "
+            "season-aggregate xG/xA via /v1/leagues/epl/xg-leaders. KNOWN "
+            "LIMITATIONS: no per-match player statistics (own /v1/coverage "
+            "reports player_stats status=none, coverage_pct=0; "
+            "/v1/stored/matches/{id}/stats returned empty team_stats and "
+            "players for every match tested); match-level team xG is now "
+            "PAYWALLED (403, 'requires the Edge plan or higher' — new "
+            "since the 2026-08-10 probe, which could at least query it); "
+            "no stable player-id bridge for the Understat-derived "
+            "aggregates (that endpoint's own docs say rows are keyed by "
+            "player NAME, not player_id); 2026/27 live coverage not yet "
+            "empirically testable (season now listed with 380 scheduled "
+            "fixtures, but ZERO have finished — data_through is still "
+            "2026-05-24). Also unchanged from 2026-08-10: England = EPL "
+            "only (24 leagues total), still NO Championship (59% of the "
+            "match corpus); lineups unavailable=false/status=none. "
+            "REVISIT WHEN: 2026/27 completed matches exist, OR the "
+            "provider adds per-match player data or a stable identity "
+            "bridge. Assessed 2026-08-10 as a candidate xG/live-evidence "
+            "source (§7) and not adopted; re-probed 2026-08-17 for "
+            "SPEC_FPL.md §5.2's Phase 0 live-verification step. NOTHING "
+            "QUERIES THIS SOURCE IN PRODUCTION. Terms have NOT been "
+            "reviewed — not relevant while the capability case itself "
+            "does not clear the bar.",
+        ),
+        SourceRecord(
+            source_id="vaastav_fpl_historical",
+            source_name="vaastav/Fantasy-Premier-League (GitHub)",
+            acquisition_method=AcquisitionMethod.DATASET.value,
+            usage_status=UsageStatus.REVIEW_REQUIRED.value,
+            terms_url="https://github.com/vaastav/Fantasy-Premier-League",
+            terms_checked_at="2026-08-17",
+            refresh_limit="static per-season GitHub dataset; no live API",
+            retention_policy="not yet retained — no dataset has been "
+            "downloaded; Phase 1A retrieval will persist normalised fields "
+            "plus a frozen fpl_research_dataset_manifest entry (§15)",
+            attribution_required=True,
+            purpose=[],
+            usage_scope="RESEARCH_ONLY",
+            notes="SPEC_FPL.md §5.3/§12.2 candidate: community historical "
+            "Gameweek-level FPL labels/features (minutes, starts, goals, "
+            "assists, FPL points, bonus/BPS, prices, ownership, xG/xA; "
+            "newer seasons add tackles/recoveries/combined CBI). Much of it "
+            "is itself derived from the FPL website/API and Understat, so "
+            "downstream availability does NOT settle the upstream "
+            "source-policy question — REVIEW_REQUIRED, not APPROVED, "
+            "pending that review. LEAKAGE CAVEAT (load-bearing, §5.3/§12.2/"
+            "§19): the historical `xP`/`ep_this` field is scraped AFTER the "
+            "Gameweek and may carry post-match information. It is FORBIDDEN "
+            "as a same-Gameweek feature unless an observation timestamp "
+            "proves it was captured before that historical FPL deadline — "
+            "otherwise drop it or lag it by one Gameweek. terms_checked_at "
+            "reflects reading the published GitHub README/data dictionary "
+            "on 2026-08-17, not a live legal terms-of-service review; a "
+            "human legal-style read of GitHub's terms and the underlying "
+            "FPL-derived provenance is required before this could ever be "
+            "promoted to APPROVED.",
+        ),
+        SourceRecord(
+            source_id="understat",
+            source_name="Understat",
+            acquisition_method=AcquisitionMethod.DATASET.value,
+            usage_status=UsageStatus.REVIEW_REQUIRED.value,
+            terms_url="https://understat.com/",
+            terms_checked_at="2026-08-17",
+            refresh_limit="unknown — not yet reviewed; site scrape/dataset, "
+            "no documented official API or rate policy",
+            retention_policy="not yet retained — nothing queries this "
+            "source",
+            attribution_required=False,
+            purpose=[],
+            usage_scope="RESEARCH_ONLY",
+            notes="SPEC_FPL.md §5.3 candidate: structurally useful "
+            "attacking-player features (match-level xG, xA, shots, key "
+            "passes, non-penalty xG, involvement/build-up measures). Does "
+            "NOT solve DefCon (§5.4) — no CBIT/CBIRT-shaped defensive "
+            "actions. Automation method, retention and current terms have "
+            "not been reviewed, so this stays REVIEW_REQUIRED; direct "
+            "ingestion is not enabled. terms_checked_at reflects reading "
+            "documentation/site conventions on 2026-08-17, not a live "
+            "legal terms review — that human legal-style read is required "
+            "before promotion to APPROVED, same caveat as "
+            "vaastav_fpl_historical.",
+        ),
+        SourceRecord(
+            source_id="fpl_core_insights",
+            source_name="olbauday/FPL-Core-Insights (GitHub)",
+            acquisition_method=AcquisitionMethod.DATASET.value,
+            usage_status=UsageStatus.EVALUATED.value,
+            terms_url="https://github.com/olbauday/FPL-Core-Insights",
+            terms_checked_at="2026-08-17",
+            refresh_limit="static GitHub dataset; no live API",
+            retention_policy="none — nothing queries this source; a "
+            "feasibility study would persist only what its own frozen "
+            "fpl_research_dataset_manifest entry scopes",
+            attribution_required=True,
+            purpose=[],
+            usage_scope="RESEARCH_ONLY",
+            notes="SPEC_FPL.md §5.3/§5.4 candidate: per-match tables "
+            "include tackles, interceptions, recoveries, blocks and "
+            "clearances aligned to FPL identities — close to the exact "
+            "data needed to study CBIT/CBIRT and 2026/27 DefCon. EVALUATED "
+            "rather than REVIEW_REQUIRED because its detailed match-data "
+            "provenance is aggregated from multiple free sources rather "
+            "than one clearly licensed authoritative feed, so it is scoped "
+            "to a feasibility study only — whether DefCon features have "
+            "predictive value and whether our calculations match observed "
+            "outcomes — not a path to production use until provenance and "
+            "use rights are independently cleared. terms_checked_at "
+            "reflects reading the repository documentation on 2026-08-17, "
+            "not a live legal review.",
+        ),
+        SourceRecord(
+            source_id="openfpl",
+            source_name="OpenFPL (daniegr/OpenFPL, GitHub + arXiv:2508.09992)",
+            acquisition_method=AcquisitionMethod.DATASET.value,
+            usage_status=UsageStatus.EVALUATED.value,
+            terms_url="https://github.com/daniegr/OpenFPL",
+            terms_checked_at="2026-08-17",
+            refresh_limit="static repository/paper artefact; no live API",
+            retention_policy="none — nothing queries this source; a "
+            "benchmark run would persist only reproduced comparison "
+            "outputs, never imported as training labels",
+            attribution_required=True,
+            purpose=[],
+            usage_scope="BENCHMARK_ONLY",
+            notes="SPEC_FPL.md §5.3/§12.2 candidate: an independent "
+            "benchmark implementation, not a data source — position-"
+            "specific ensemble models trained on FPL + Understat data "
+            "2020/21-2023/24, with prospective 2024/25 evaluation "
+            "(Groos, arXiv:2508.09992). EVALUATED, BENCHMARK_ONLY: usable "
+            "as a reproducible independent sanity check on compatible "
+            "historical samples, never ingested as training labels and "
+            "never treated as evidence that bym itself is calibrated. "
+            "terms_checked_at reflects reading the repository/paper on "
+            "2026-08-17, not a live legal review.",
         ),
         SourceRecord(
             source_id="sky_super6",

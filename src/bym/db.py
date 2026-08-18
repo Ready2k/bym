@@ -195,6 +195,237 @@ MIGRATIONS: list[str] = [
     ALTER TABLE candidate_claims ADD COLUMN promoted INTEGER NOT NULL DEFAULT 0;
     ALTER TABLE candidate_claims ADD COLUMN extraction_run_id INTEGER;
     """,
+    # 0007 — FPL season-scoped player identity (SPEC_FPL.md §4 Phase 1A).
+    # Table names are pluralised to match this file's existing convention;
+    # they are the same entities SPEC_FPL.md §4 calls `fpl_player` and
+    # `fpl_player_season`. Club identity stays the TEXT name every other
+    # part of bym already keys on (round.py, availability, LMS used_clubs)
+    # rather than introducing a second, numeric team_id scheme alongside it.
+    """
+    CREATE TABLE IF NOT EXISTS fpl_players (
+        id             INTEGER PRIMARY KEY AUTOINCREMENT,
+        canonical_name TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_fpl_players_name ON fpl_players (canonical_name);
+
+    CREATE TABLE IF NOT EXISTS fpl_player_seasons (
+        id             INTEGER PRIMARY KEY AUTOINCREMENT,
+        player_id      INTEGER NOT NULL REFERENCES fpl_players (id),
+        season         INTEGER NOT NULL,
+        fpl_element_id INTEGER,
+        team           TEXT NOT NULL,
+        position       TEXT NOT NULL,
+        start_price    REAL,
+        external_ids   TEXT NOT NULL DEFAULT '{}',
+        UNIQUE (player_id, season)
+    );
+    CREATE INDEX IF NOT EXISTS idx_fpl_player_seasons_season
+        ON fpl_player_seasons (season, team);
+    """,
+    # 0008 — FPL historical player-match statistics (SPEC_FPL.md §4 Phase 1A).
+    # Columns not populated by the free-tier api_football ingester (xg, xa,
+    # own_goals, clearances, recoveries, cbit/cbirt, bps) stay nullable
+    # rather than defaulted to 0 — 0 would claim "observed zero", not
+    # "not supplied by this source".
+    """
+    CREATE TABLE IF NOT EXISTS fpl_player_match_stats (
+        id                     INTEGER PRIMARY KEY AUTOINCREMENT,
+        player_id              INTEGER NOT NULL REFERENCES fpl_players (id),
+        fixture_id             TEXT NOT NULL,
+        season                 INTEGER NOT NULL,
+        source_id              TEXT NOT NULL,
+        source_record_version  TEXT NOT NULL,
+        dataset_manifest_id    TEXT,
+        observed_at            TEXT NOT NULL,
+        minutes                INTEGER NOT NULL DEFAULT 0,
+        goals                  INTEGER NOT NULL DEFAULT 0,
+        assists                INTEGER NOT NULL DEFAULT 0,
+        shots                  INTEGER,
+        xg                     REAL,
+        xa                     REAL,
+        saves                  INTEGER,
+        yellow_cards           INTEGER NOT NULL DEFAULT 0,
+        red_cards              INTEGER NOT NULL DEFAULT 0,
+        own_goals              INTEGER,
+        penalties_missed       INTEGER,
+        penalties_saved        INTEGER,
+        tackles                INTEGER,
+        interceptions          INTEGER,
+        blocks                 INTEGER,
+        clearances             INTEGER,
+        recoveries             INTEGER,
+        cbit_actions           INTEGER,
+        cbirt_actions          INTEGER,
+        bps                    INTEGER,
+        UNIQUE (player_id, fixture_id, source_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_fpl_match_stats_fixture
+        ON fpl_player_match_stats (fixture_id);
+    CREATE INDEX IF NOT EXISTS idx_fpl_match_stats_player_season
+        ON fpl_player_match_stats (player_id, season);
+    """,
+    # 0009 — FPL game-state import persistence (SPEC_FPL.md §4, §13.3, §15
+    # Phase 1A). Two tables deliberately: fpl_game_state_snapshots is the
+    # generic, source-agnostic provenance wrapper (§15) and
+    # fpl_squad_snapshots is its FPL-domain decode (§4), linked by FK. Both
+    # are append-only — deadline/game-state snapshots are immutable
+    # (§4, §11.2) — so neither table gets an UPDATE path, only INSERT.
+    # UNIQUE(source_id, content_hash) is the idempotency gate: re-importing
+    # byte-identical content must not manufacture a second row, the same
+    # dedupe_key idiom availability_events uses.
+    """
+    CREATE TABLE IF NOT EXISTS fpl_game_state_snapshots (
+        id                     INTEGER PRIMARY KEY AUTOINCREMENT,
+        source_id              TEXT NOT NULL,
+        source_schema_version  TEXT NOT NULL,
+        observed_at            TEXT NOT NULL,
+        content_hash           TEXT NOT NULL,
+        normalised_state       TEXT NOT NULL,
+        raw_payload_location   TEXT,
+        UNIQUE (source_id, content_hash)
+    );
+    CREATE INDEX IF NOT EXISTS idx_fpl_game_state_snapshots_source
+        ON fpl_game_state_snapshots (source_id, observed_at);
+
+    CREATE TABLE IF NOT EXISTS fpl_squad_snapshots (
+        id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+        game_state_snapshot_id  INTEGER NOT NULL
+            REFERENCES fpl_game_state_snapshots (id),
+        season                  INTEGER NOT NULL,
+        gameweek                INTEGER NOT NULL,
+        as_of                   TEXT NOT NULL,
+        deadline                TEXT,
+        bank                    REAL NOT NULL,
+        free_transfers          INTEGER NOT NULL,
+        active_chip             TEXT,
+        chips_available         TEXT NOT NULL DEFAULT '[]',
+        players                 TEXT NOT NULL,
+        starter_ids             TEXT NOT NULL,
+        captain_id              INTEGER NOT NULL,
+        vice_captain_id         INTEGER NOT NULL,
+        bench_order             TEXT NOT NULL,
+        source_kind             TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_fpl_squad_snapshots_season_gw
+        ON fpl_squad_snapshots (season, gameweek);
+    """,
+    # 0010 — fixture kickoff time on match stats (SPEC_FPL.md §12.1, Phase
+    # 1B). `observed_at` is when a stat row was INGESTED (always after the
+    # fact, for a historical fixture), never when the fixture itself was
+    # played — walk-forward evaluation needs the latter to order fixtures
+    # chronologically and enforce a causal cutoff (fpl.causality), so it
+    # gets its own column rather than overloading observed_at's meaning.
+    """
+    ALTER TABLE fpl_player_match_stats ADD COLUMN kickoff_at TEXT;
+    CREATE INDEX IF NOT EXISTS idx_fpl_match_stats_kickoff
+        ON fpl_player_match_stats (kickoff_at);
+    """,
+    # 0011 — projection/recommendation persistence (SPEC_FPL.md §4, §11.2,
+    # §15, Phase 1B). Deliberately deferred from Phase 1A until the
+    # projection/scoring shape had actually been exercised (§18) — see
+    # docs/MANIFEST_FPL.md. `model_version` is part of the uniqueness key
+    # on the two projection tables, not just a label: §12.3 forbids a
+    # later model version from overwriting an earlier one's row, since a
+    # frozen baseline's projections must stay reconstructable even after
+    # a challenger version exists. `fpl_recommendation_snapshots` carries
+    # no uniqueness constraint at all — every call is a new immutable
+    # observation (§11.2), never an update, including repeated pre-
+    # deadline reforecasts.
+    """
+    CREATE TABLE IF NOT EXISTS fpl_fixture_projections (
+        id                     INTEGER PRIMARY KEY AUTOINCREMENT,
+        player_id              INTEGER NOT NULL REFERENCES fpl_players (id),
+        fixture_id             TEXT NOT NULL,
+        season                 INTEGER NOT NULL,
+        gameweek               INTEGER NOT NULL,
+        p_appearance           REAL NOT NULL,
+        p_start                REAL NOT NULL,
+        p_60_plus              REAL NOT NULL,
+        expected_minutes       REAL NOT NULL,
+        goal_lambda            REAL NOT NULL,
+        assist_lambda          REAL NOT NULL,
+        p_clean_sheet          REAL NOT NULL,
+        expected_saves         REAL,
+        expected_defcon_points REAL,
+        expected_bonus         REAL,
+        expected_points        REAL NOT NULL,
+        points_variance        REAL,
+        model_version          TEXT NOT NULL,
+        computed_at            TEXT NOT NULL,
+        UNIQUE (player_id, fixture_id, model_version)
+    );
+    CREATE INDEX IF NOT EXISTS idx_fpl_fixture_proj_gw
+        ON fpl_fixture_projections (season, gameweek);
+
+    CREATE TABLE IF NOT EXISTS fpl_gameweek_projections (
+        id                INTEGER PRIMARY KEY AUTOINCREMENT,
+        player_id         INTEGER NOT NULL REFERENCES fpl_players (id),
+        season            INTEGER NOT NULL,
+        gameweek          INTEGER NOT NULL,
+        expected_points   REAL NOT NULL,
+        points_variance   REAL,
+        quantiles         TEXT,
+        simulation_key    TEXT,
+        fixtures_played   INTEGER NOT NULL,
+        model_version     TEXT NOT NULL,
+        computed_at       TEXT NOT NULL,
+        UNIQUE (player_id, season, gameweek, model_version)
+    );
+    CREATE INDEX IF NOT EXISTS idx_fpl_gw_proj_gw
+        ON fpl_gameweek_projections (season, gameweek);
+
+    CREATE TABLE IF NOT EXISTS fpl_recommendation_snapshots (
+        id                        INTEGER PRIMARY KEY AUTOINCREMENT,
+        season                    INTEGER NOT NULL,
+        gameweek                  INTEGER NOT NULL,
+        game_state_snapshot_id    INTEGER REFERENCES fpl_game_state_snapshots (id),
+        computed_at               TEXT NOT NULL,
+        model_version             TEXT NOT NULL,
+        top_k                     INTEGER NOT NULL,
+        squad_ids                 TEXT NOT NULL,
+        starter_ids               TEXT NOT NULL,
+        bench_order               TEXT NOT NULL,
+        captain_id                INTEGER NOT NULL,
+        vice_captain_id           INTEGER NOT NULL,
+        transfers_in              TEXT NOT NULL,
+        transfers_out             TEXT NOT NULL,
+        hit_cost                  REAL NOT NULL,
+        xi_expected_points        REAL NOT NULL,
+        evaluated_expected_points REAL NOT NULL,
+        net_expected_points       REAL NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_fpl_recommendation_snapshots_gw
+        ON fpl_recommendation_snapshots (season, gameweek);
+    """,
+    # 0012 — resumable historical-fixture harvest bookkeeping (SPEC_FPL.md
+    # §5.2/§5.6, Phase 1B corpus build). Deliberately its own table, not a
+    # reuse of `fixture_mappings` (Increment 3B's availability/lineup
+    # mapping) — different subsystem, different lifecycle fields
+    # (player_stats_status/attempt_count), and coupling them would make
+    # neither easy to reason about alone. `player_stats_status` values:
+    # PENDING | FETCHED | NO_DATA | RETRYABLE_FAILURE | FINAL_FAILURE.
+    # NO_DATA means the API was queried and legitimately returned zero
+    # player rows — never fabricated, never re-attempted, and never
+    # confused with a fixture that hasn't been tried yet.
+    """
+    CREATE TABLE IF NOT EXISTS fpl_fixture_harvest_state (
+        id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+        fixture_id           TEXT NOT NULL,
+        season               INTEGER NOT NULL,
+        competition          TEXT NOT NULL,
+        home_team            TEXT NOT NULL,
+        away_team            TEXT NOT NULL,
+        kickoff_at           TEXT,
+        player_stats_status  TEXT NOT NULL DEFAULT 'PENDING',
+        attempt_count        INTEGER NOT NULL DEFAULT 0,
+        last_attempt_at      TEXT,
+        content_hash         TEXT,
+        row_count            INTEGER,
+        UNIQUE (fixture_id, competition, season)
+    );
+    CREATE INDEX IF NOT EXISTS idx_fpl_harvest_state_status
+        ON fpl_fixture_harvest_state (season, competition, player_stats_status);
+    """,
 ]
 
 

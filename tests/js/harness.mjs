@@ -29,7 +29,7 @@ const EXPOSED = [
   "strategyPanel", "submissionRecord", "leagueView", "homeView",
   "teamBadge", "activityItem", "emptyState", "markScrollableRegions",
   "lmsPlanCard", "lmsRecommendationRows", "lmsLineageCard", "lineageChart",
-  "healthView", "modelView",
+  "healthView", "modelView", "fplView", "fplStatusPill",
 ];
 
 /** An entrant's lineage as `_lms_lineage_dict` shapes it. */

@@ -15,9 +15,14 @@
       "injuries",
       "suspensions",
       "squads",
-      "player_resolution"
+      "player_resolution",
+      "historical_player_match_stats",
+      "historical_player_identity",
+      "historical_lineups",
+      "historical_injuries"
     ],
-    "notes": "Structured availability source for Phase 2 Increment 3B. Terms permit using the data to build applications and fantasy-football projects but prohibit reselling the feed directly \u2014 this private analytical system is a permitted use. Provides confirmed XIs (typically 20-40 min before kickoff) and injuries (Missing Fixture vs Questionable, refreshed roughly every four hours). Does NOT provide predicted/expected lineups; that gap is deliberately left to manual entry or the later knowledge agent, since Sportmonks' expected-lineups product is far outside the GBP10 budget (\u00a725). Promote to APPROVED only once an account exists and the terms have been accepted."
+    "notes": "Structured availability source for Phase 2 Increment 3B. Terms permit using the data to build applications and fantasy-football projects but prohibit reselling the feed directly \u2014 this private analytical system is a permitted use. Provides confirmed XIs (typically 20-40 min before kickoff) and injuries (Missing Fixture vs Questionable, refreshed roughly every four hours). Does NOT provide predicted/expected lineups; that gap is deliberately left to manual entry or the later knowledge agent, since Sportmonks' expected-lineups product is far outside the GBP10 budget (\u00a725). FREE-TIER LIMITS, established by live probing 2026-08-08: current seasons are paywalled (2025+ rejected, 'try from 2022 to 2024'), and the batch `ids` parameter is paid-only. BUT single-fixture /injuries and /fixtures/lineups DO return full data for 2022-2024 with stable player ids. That makes the free tier useless for live 2026/27 operation but sufficient to measure, at zero cost, whether availability data improves forecasts at all before anyone pays for a live feed (\u00a725's cost-per-Brier-improvement test). 2026-08-17: Human approved extension of the existing scope to historical player-match statistics and historical player identity for FPL Phase 1A development (SPEC_FPL.md \u00a75.2, \u00a75.6) \u2014 the four `historical_*` purposes above. This does NOT approve current-season/paid endpoints or broaden production/live use: historical seasons available under the current approved/free account only (2022-2024, per the 2026-08-08 probe above).",
+    "usage_scope": ""
   },
   {
     "source_id": "big_balls_sports_data",
@@ -30,7 +35,8 @@
     "retention_policy": "none \u2014 nothing queries this source",
     "attribution_required": false,
     "purpose": [],
-    "notes": "EVALUATED 2026-08-10 as a candidate xG source (\u00a77) and REJECTED for that purpose. A key is held in secrets/ as a cross-reference, and nothing in the codebase queries it \u2014 this entry exists so the key's presence is explained rather than rediscovered. Probed with a live key: /v1/leagues returns 8 competitions, England = EPL only, so NO Championship (59% of the corpus). Its advertised match-level xG does not appear in any payload \u2014 0 of 30 finished EPL matches had any team_stats, and the one match in 40 that did carried 28 fields (shots, shots on target, possession, passing, cards) with no xG in either the stats or the match object. Lineups return available=false. Fixture horizon ended 2026-05-24, so it has no 2026/27 season yet. Terms have NOT been reviewed: do that first if this is ever promoted. Genuine but modest value as a second opinion on results/scores alongside football_data_org."
+    "notes": "STATUS: EVALUATED. DECISION (human, 2026-08-17): not suitable for Phase 1A live player ingestion \u2014 do not widen to REVIEW_REQUIRED merely because some historical aggregate fields work; better candidates already exist for that role (api_football, vaastav_fpl_historical). Its season-aggregate xG/xA is itself Understat-sourced, so adopting it would add another wrapper and another identity problem rather than a genuinely independent dataset. KNOWN CAPABILITIES: historical season-aggregate goals/assists/minutes (confirmed live for season 2025, e.g. Haaland goals=27 assists=8 minutes=2958 matches=35 via /v1/leagues/epl/top-scorers); historical season-aggregate xG/xA via /v1/leagues/epl/xg-leaders. KNOWN LIMITATIONS: no per-match player statistics (own /v1/coverage reports player_stats status=none, coverage_pct=0; /v1/stored/matches/{id}/stats returned empty team_stats and players for every match tested); match-level team xG is now PAYWALLED (403, 'requires the Edge plan or higher' \u2014 new since the 2026-08-10 probe, which could at least query it); no stable player-id bridge for the Understat-derived aggregates (that endpoint's own docs say rows are keyed by player NAME, not player_id); 2026/27 live coverage not yet empirically testable (season now listed with 380 scheduled fixtures, but ZERO have finished \u2014 data_through is still 2026-05-24). Also unchanged from 2026-08-10: England = EPL only (24 leagues total), still NO Championship (59% of the match corpus); lineups unavailable=false/status=none. REVISIT WHEN: 2026/27 completed matches exist, OR the provider adds per-match player data or a stable identity bridge. Assessed 2026-08-10 as a candidate xG/live-evidence source (\u00a77) and not adopted; re-probed 2026-08-17 for SPEC_FPL.md \u00a75.2's Phase 0 live-verification step. NOTHING QUERIES THIS SOURCE IN PRODUCTION. Terms have NOT been reviewed \u2014 not relevant while the capability case itself does not clear the bar.",
+    "usage_scope": ""
   },
   {
     "source_id": "football_data_co_uk",
@@ -47,7 +53,8 @@
       "historical_odds",
       "backtest_corpus"
     ],
-    "notes": "Free downloadable historical results/odds. Training and backtesting corpus for Phase 1."
+    "notes": "Free downloadable historical results/odds. Training and backtesting corpus for Phase 1.",
+    "usage_scope": ""
   },
   {
     "source_id": "football_data_org",
@@ -64,7 +71,36 @@
       "results",
       "tables"
     ],
-    "notes": "Free tier does NOT include odds \u2014 pre-match H/D/A odds are a paid add-on (~EUR15/month) which would breach the GBP10 target (\u00a725). Retained as a candidate structured fixtures/results source only."
+    "notes": "Free tier does NOT include odds \u2014 pre-match H/D/A odds are a paid add-on (~EUR15/month) which would breach the GBP10 target (\u00a725). Retained as a candidate structured fixtures/results source only.",
+    "usage_scope": ""
+  },
+  {
+    "source_id": "fpl_core_insights",
+    "source_name": "olbauday/FPL-Core-Insights (GitHub)",
+    "acquisition_method": "DATASET",
+    "usage_status": "EVALUATED",
+    "terms_url": "https://github.com/olbauday/FPL-Core-Insights",
+    "terms_checked_at": "2026-08-17",
+    "refresh_limit": "static GitHub dataset; no live API",
+    "retention_policy": "none \u2014 nothing queries this source; a feasibility study would persist only what its own frozen fpl_research_dataset_manifest entry scopes",
+    "attribution_required": true,
+    "purpose": [],
+    "notes": "SPEC_FPL.md \u00a75.3/\u00a75.4 candidate: per-match tables include tackles, interceptions, recoveries, blocks and clearances aligned to FPL identities \u2014 close to the exact data needed to study CBIT/CBIRT and 2026/27 DefCon. EVALUATED rather than REVIEW_REQUIRED because its detailed match-data provenance is aggregated from multiple free sources rather than one clearly licensed authoritative feed, so it is scoped to a feasibility study only \u2014 whether DefCon features have predictive value and whether our calculations match observed outcomes \u2014 not a path to production use until provenance and use rights are independently cleared. terms_checked_at reflects reading the repository documentation on 2026-08-17, not a live legal review.",
+    "usage_scope": "RESEARCH_ONLY"
+  },
+  {
+    "source_id": "openfpl",
+    "source_name": "OpenFPL (daniegr/OpenFPL, GitHub + arXiv:2508.09992)",
+    "acquisition_method": "DATASET",
+    "usage_status": "EVALUATED",
+    "terms_url": "https://github.com/daniegr/OpenFPL",
+    "terms_checked_at": "2026-08-17",
+    "refresh_limit": "static repository/paper artefact; no live API",
+    "retention_policy": "none \u2014 nothing queries this source; a benchmark run would persist only reproduced comparison outputs, never imported as training labels",
+    "attribution_required": true,
+    "purpose": [],
+    "notes": "SPEC_FPL.md \u00a75.3/\u00a712.2 candidate: an independent benchmark implementation, not a data source \u2014 position-specific ensemble models trained on FPL + Understat data 2020/21-2023/24, with prospective 2024/25 evaluation (Groos, arXiv:2508.09992). EVALUATED, BENCHMARK_ONLY: usable as a reproducible independent sanity check on compatible historical samples, never ingested as training labels and never treated as evidence that bym itself is calibrated. terms_checked_at reflects reading the repository/paper on 2026-08-17, not a live legal review.",
+    "usage_scope": "BENCHMARK_ONLY"
   },
   {
     "source_id": "sky_super6",
@@ -77,7 +113,8 @@
     "retention_policy": "",
     "attribution_required": false,
     "purpose": [],
-    "notes": "PERMANENTLY PROHIBITED as an automated source. Sky's terms prohibit automated and unauthorised manual data extraction. The agent is external to Sky by architecture (\u00a73, \u00a718.1): round fixtures and deadlines are entered by the user by hand (\u00a79.1). Cannot be promoted."
+    "notes": "PERMANENTLY PROHIBITED as an automated source. Sky's terms prohibit automated and unauthorised manual data extraction. The agent is external to Sky by architecture (\u00a73, \u00a718.1): round fixtures and deadlines are entered by the user by hand (\u00a79.1). Cannot be promoted.",
+    "usage_scope": ""
   },
   {
     "source_id": "tavily",
@@ -96,7 +133,8 @@
       "expected_lineup_research",
       "market_move_investigation"
     ],
-    "notes": "Retrieval layer for the knowledge agent (Increment 4). Search and Extract endpoints ONLY \u2014 Tavily's Answer/Research layer is deliberately unused, because feeding an AI-generated research answer into another model turns provenance into interpretive dance. Tavily is the *acquisition* source; the authority behind any football claim is the ORIGIN domain, stored separately. Retention is derived claims plus source metadata and a minimal audit snippet \u2014 never full copies of articles."
+    "notes": "Retrieval layer for the knowledge agent (Increment 4). Search and Extract endpoints ONLY \u2014 Tavily's Answer/Research layer is deliberately unused, because feeding an AI-generated research answer into another model turns provenance into interpretive dance. Tavily is the *acquisition* source; the authority behind any football claim is the ORIGIN domain, stored separately. Retention is derived claims plus source metadata and a minimal audit snippet \u2014 never full copies of articles.",
+    "usage_scope": ""
   },
   {
     "source_id": "the_odds_api",
@@ -113,6 +151,35 @@
       "market_consensus",
       "market_movement"
     ],
-    "notes": "UK region, h2h market, Premier League + Championship. Terms permit use in analytical tools including commercial applications, but prohibit reselling or repackaging the raw market feed as a standalone data product \u2014 this system is a permitted analytical use. Promote to APPROVED only once an account exists and the terms have been accepted."
+    "notes": "UK region, h2h market, Premier League + Championship. Terms permit use in analytical tools including commercial applications, but prohibit reselling or repackaging the raw market feed as a standalone data product \u2014 this system is a permitted analytical use. Promote to APPROVED only once an account exists and the terms have been accepted.",
+    "usage_scope": ""
+  },
+  {
+    "source_id": "understat",
+    "source_name": "Understat",
+    "acquisition_method": "DATASET",
+    "usage_status": "REVIEW_REQUIRED",
+    "terms_url": "https://understat.com/",
+    "terms_checked_at": "2026-08-17",
+    "refresh_limit": "unknown \u2014 not yet reviewed; site scrape/dataset, no documented official API or rate policy",
+    "retention_policy": "not yet retained \u2014 nothing queries this source",
+    "attribution_required": false,
+    "purpose": [],
+    "notes": "SPEC_FPL.md \u00a75.3 candidate: structurally useful attacking-player features (match-level xG, xA, shots, key passes, non-penalty xG, involvement/build-up measures). Does NOT solve DefCon (\u00a75.4) \u2014 no CBIT/CBIRT-shaped defensive actions. Automation method, retention and current terms have not been reviewed, so this stays REVIEW_REQUIRED; direct ingestion is not enabled. terms_checked_at reflects reading documentation/site conventions on 2026-08-17, not a live legal terms review \u2014 that human legal-style read is required before promotion to APPROVED, same caveat as vaastav_fpl_historical.",
+    "usage_scope": "RESEARCH_ONLY"
+  },
+  {
+    "source_id": "vaastav_fpl_historical",
+    "source_name": "vaastav/Fantasy-Premier-League (GitHub)",
+    "acquisition_method": "DATASET",
+    "usage_status": "REVIEW_REQUIRED",
+    "terms_url": "https://github.com/vaastav/Fantasy-Premier-League",
+    "terms_checked_at": "2026-08-17",
+    "refresh_limit": "static per-season GitHub dataset; no live API",
+    "retention_policy": "not yet retained \u2014 no dataset has been downloaded; Phase 1A retrieval will persist normalised fields plus a frozen fpl_research_dataset_manifest entry (\u00a715)",
+    "attribution_required": true,
+    "purpose": [],
+    "notes": "SPEC_FPL.md \u00a75.3/\u00a712.2 candidate: community historical Gameweek-level FPL labels/features (minutes, starts, goals, assists, FPL points, bonus/BPS, prices, ownership, xG/xA; newer seasons add tackles/recoveries/combined CBI). Much of it is itself derived from the FPL website/API and Understat, so downstream availability does NOT settle the upstream source-policy question \u2014 REVIEW_REQUIRED, not APPROVED, pending that review. LEAKAGE CAVEAT (load-bearing, \u00a75.3/\u00a712.2/\u00a719): the historical `xP`/`ep_this` field is scraped AFTER the Gameweek and may carry post-match information. It is FORBIDDEN as a same-Gameweek feature unless an observation timestamp proves it was captured before that historical FPL deadline \u2014 otherwise drop it or lag it by one Gameweek. terms_checked_at reflects reading the published GitHub README/data dictionary on 2026-08-17, not a live legal terms-of-service review; a human legal-style read of GitHub's terms and the underlying FPL-derived provenance is required before this could ever be promoted to APPROVED.",
+    "usage_scope": "RESEARCH_ONLY"
   }
 ]

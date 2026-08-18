@@ -83,6 +83,118 @@ class LineupRecord:
     substitutes: list[tuple[str | None, str]] = field(default_factory=list)
 
 
+# api-football's own single-letter position codes (games.position), used
+# only to seed FplPlayerSeason.position — the `Position` enum owns the
+# canonical GK/DEF/MID/FWD values everything downstream reads.
+POSITION_CODE_MAP = {"G": "GK", "D": "DEF", "M": "MID", "F": "FWD"}
+
+
+@dataclass
+class PlayerMatchStatsRecord:
+    """One player's stats from one fixture (SPEC_FPL.md §4
+    `fpl_player_match_stats`, FPL Phase 1A §5.2 historical scope).
+
+    Fields the free-tier `/fixtures/players` response does not carry
+    (xg, xa, own_goals, clearances, recoveries, cbit/cbirt, bps) are left
+    for `fpl_player_match_stats`'s own nullable columns to hold `None` —
+    this ingester never fabricates them.
+    """
+
+    fixture_id: str
+    team: str
+    provider_player_id: str | None
+    player_name: str
+    position_code: str | None  # api-football's G/D/M/F, or None if absent
+    minutes: int
+    goals: int
+    assists: int
+    shots: int | None
+    saves: int | None
+    yellow_cards: int
+    red_cards: int
+    tackles: int | None
+    interceptions: int | None
+    blocks: int | None
+    penalties_scored: int
+    penalties_missed: int
+    penalties_saved: int | None
+
+    @property
+    def position(self) -> str | None:
+        return POSITION_CODE_MAP.get(self.position_code or "")
+
+
+def _int(value, default: int = 0) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def parse_player_match_stats(payload: list[dict]) -> list[PlayerMatchStatsRecord]:
+    """Parse a `/fixtures/players` response — one entry per team, each
+    carrying that team's player statistics for the fixture."""
+    fixture_id = ""
+    records: list[PlayerMatchStatsRecord] = []
+    for team_entry in payload:
+        team = (team_entry.get("team") or {}).get("name", "")
+        for player_entry in team_entry.get("players") or []:
+            player = player_entry.get("player") or {}
+            stats_list = player_entry.get("statistics") or []
+            if not stats_list:
+                continue
+            stats = stats_list[0]
+            games = stats.get("games") or {}
+            goals = stats.get("goals") or {}
+            shots = stats.get("shots") or {}
+            tackles = stats.get("tackles") or {}
+            cards = stats.get("cards") or {}
+            penalty = stats.get("penalty") or {}
+            records.append(
+                PlayerMatchStatsRecord(
+                    fixture_id=fixture_id,
+                    team=team,
+                    provider_player_id=(
+                        str(player["id"]) if player.get("id") else None
+                    ),
+                    player_name=player.get("name", ""),
+                    position_code=games.get("position"),
+                    minutes=_int(games.get("minutes")),
+                    goals=_int(goals.get("total")),
+                    assists=_int(goals.get("assists")),
+                    shots=(shots.get("total") if shots.get("total") is not None else None),
+                    saves=(goals.get("saves") if goals.get("saves") is not None else None),
+                    yellow_cards=_int(cards.get("yellow")),
+                    red_cards=_int(cards.get("red")),
+                    tackles=(tackles.get("total") if tackles.get("total") is not None else None),
+                    interceptions=(
+                        tackles.get("interceptions")
+                        if tackles.get("interceptions") is not None
+                        else None
+                    ),
+                    blocks=(tackles.get("blocks") if tackles.get("blocks") is not None else None),
+                    penalties_scored=_int(penalty.get("scored")),
+                    penalties_missed=_int(penalty.get("missed")),
+                    penalties_saved=(
+                        penalty.get("saved") if penalty.get("saved") is not None else None
+                    ),
+                )
+            )
+    return records
+
+
+def fetch_player_match_stats(
+    fixture_id: str, api_key: str, **kwargs
+) -> list[PlayerMatchStatsRecord]:
+    """Per-player stats for one historical fixture (2022-2024 on the free
+    tier — see the registry's `historical_player_match_stats` purpose)."""
+    payload = _request("fixtures/players", api_key, {"fixture": fixture_id}, **kwargs)
+    records = parse_player_match_stats(payload)
+    for r in records:
+        r.fixture_id = fixture_id
+    return records
+
+
 def _request(
     path: str,
     api_key: str,

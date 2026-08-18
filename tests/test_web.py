@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from bym import web
+from bym import db, web
 from bym.round import load_round, round_from_dict, round_to_dict
 from bym.web import (
     WebConfig,
@@ -16,6 +16,7 @@ from bym.web import (
     available_ollama_models,
     create_round,
     cup_prediction,
+    fpl_status_payload,
     import_opponent,
     load_ui_state,
     mark_round_entered,
@@ -28,6 +29,8 @@ from bym.web import (
     save_settings,
     web_extractor_config,
 )
+from bym.fpl import harvest as fpl_harvest
+from bym.sources.api_football import ApiFootballFixture
 from bym import prediction_history
 from bym.prospective import load_ledger
 
@@ -126,6 +129,59 @@ def test_app_payload_is_the_normal_shape_once_a_round_exists(tmp_path):
     result = app_payload(config)
     assert "onboarding" not in result
     assert result["round"]["round_number"] == 14
+
+
+def test_fpl_status_is_under_construction_before_any_harvest(tmp_path):
+    """A fresh install has no fpl_fixture_harvest_state rows at all —
+    that must read as "not ready", not crash and not report "live" just
+    because there is nothing pending to contradict it."""
+    config = configured_round(tmp_path)
+    result = fpl_status_payload(config)
+    assert result["status"] == "under_construction"
+    assert {s["season"] for s in result["seasons"]} == set(fpl_harvest.HARVEST_SEASONS)
+    assert all(s["fetched"] == 0 and s["total"] == 0 for s in result["seasons"])
+
+
+def test_fpl_status_reflects_partial_harvest_progress(tmp_path):
+    config = configured_round(tmp_path)
+    with db.connect(config.database_path) as conn:
+        fpl_harvest.seed_harvest_targets(
+            conn,
+            [ApiFootballFixture(str(i), "A", "B", "2022-08-06T14:00:00+00:00", 39, 2022)
+             for i in range(10)],
+            fpl_harvest.HARVEST_COMPETITION,
+        )
+        conn.execute(
+            "UPDATE fpl_fixture_harvest_state SET player_stats_status = 'FETCHED' "
+            "WHERE fixture_id IN ('0','1','2')"
+        )
+    result = fpl_status_payload(config)
+    assert result["status"] == "under_construction"
+    season_2022 = next(s for s in result["seasons"] if s["season"] == 2022)
+    assert season_2022["fetched"] == 3
+    assert season_2022["total"] == 10
+
+
+def test_fpl_status_is_live_once_both_seasons_are_fully_harvested(tmp_path):
+    config = configured_round(tmp_path)
+    with db.connect(config.database_path) as conn:
+        for season in fpl_harvest.HARVEST_SEASONS:
+            fpl_harvest.seed_harvest_targets(
+                conn,
+                [ApiFootballFixture(f"{season}-{i}", "A", "B", "2022-08-06T14:00:00+00:00", 39, season)
+                 for i in range(2)],
+                fpl_harvest.HARVEST_COMPETITION,
+            )
+        conn.execute("UPDATE fpl_fixture_harvest_state SET player_stats_status = 'FETCHED'")
+    result = fpl_status_payload(config)
+    assert result["status"] == "live"
+    assert all(s["fetched"] == s["total"] == 2 for s in result["seasons"])
+
+
+def test_app_payload_includes_fpl_status_alongside_lms(tmp_path):
+    config = configured_round(tmp_path)
+    result = app_payload(config)
+    assert result["fpl"]["status"] == "under_construction"
 
 
 def test_create_round_editing_the_same_round_number_overwrites_in_place(tmp_path):

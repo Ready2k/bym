@@ -185,6 +185,19 @@ class FixtureOutlook:
     p_draw: float
     p_away_win: float
 
+    # Populated by `fixture_outlooks()` from the same score matrix as the
+    # 1X2 probabilities above — optional (default None) so existing
+    # positional construction elsewhere (LMS tests) stays valid. FPL's
+    # player projection (SPEC_FPL.md §6) is the reason these exist: goal/
+    # clean-sheet components need team goal expectancy and clean-sheet
+    # probability, and recomputing score_matrix() a second time per player
+    # would violate the "once per gameweek" discipline this type exists to
+    # enforce in the first place.
+    lambda_home: float | None = None
+    lambda_away: float | None = None
+    p_home_clean_sheet: float | None = None
+    p_away_clean_sheet: float | None = None
+
 
 def fixture_outlooks(
     params: DixonColesParams | ParamRouter,
@@ -206,7 +219,13 @@ def fixture_outlooks(
             mh, md, ma = market_mod.implied_result_probs(*f.odds)
             matrix = market_mod.blend_matrix(matrix, mh, md, ma, cfg.market_blend_weight)
         outlooks.append(
-            FixtureOutlook(f, matrix.p_home_win, matrix.p_draw, matrix.p_away_win)
+            FixtureOutlook(
+                f, matrix.p_home_win, matrix.p_draw, matrix.p_away_win,
+                lambda_home=matrix.lambda_home,
+                lambda_away=matrix.lambda_away,
+                p_home_clean_sheet=float(matrix.probs[:, 0].sum()),
+                p_away_clean_sheet=float(matrix.probs[0, :].sum()),
+            )
         )
     return outlooks
 

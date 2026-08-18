@@ -216,6 +216,86 @@ def test_empty_lineup_response_is_not_an_error():
     assert api_football.parse_lineups([], "555") == []
 
 
+# ---- player match stats (FPL Phase 1A historical ingestion) -------------
+
+PLAYER_STATS_PAYLOAD = [
+    {
+        "team": {"id": 49, "name": "Chelsea"},
+        "players": [
+            {
+                "player": {"id": 909, "name": "Cole Palmer"},
+                "statistics": [
+                    {
+                        "games": {"minutes": 90, "position": "M"},
+                        "shots": {"total": 3, "on": 2},
+                        "goals": {"total": 1, "assists": 1, "saves": None},
+                        "tackles": {"total": 1, "blocks": 0, "interceptions": 0},
+                        "cards": {"yellow": 0, "red": 0},
+                        "penalty": {"scored": 0, "missed": 0, "saved": None},
+                    }
+                ],
+            },
+            {
+                # Unused substitute: no statistics block at all.
+                "player": {"id": 3, "name": "Benched Player"},
+                "statistics": [],
+            },
+        ],
+    },
+    {
+        "team": {"id": 1, "name": "Everton"},
+        "players": [
+            {
+                "player": {"id": 100, "name": "Jordan Pickford"},
+                "statistics": [
+                    {
+                        "games": {"minutes": 90, "position": "G"},
+                        "shots": {"total": None, "on": None},
+                        "goals": {"total": 0, "assists": 0, "saves": 4},
+                        "tackles": {"total": None, "blocks": None, "interceptions": None},
+                        "cards": {"yellow": 1, "red": 0},
+                        "penalty": {"scored": 0, "missed": 0, "saved": 1},
+                    }
+                ],
+            },
+        ],
+    },
+]
+
+
+def test_parse_player_match_stats():
+    records = api_football.parse_player_match_stats(PLAYER_STATS_PAYLOAD)
+    assert len(records) == 2  # the statistics-less substitute is skipped
+
+    palmer = records[0]
+    assert palmer.player_name == "Cole Palmer"
+    assert palmer.provider_player_id == "909"
+    assert palmer.team == "Chelsea"
+    assert palmer.position == "MID"
+    assert palmer.minutes == 90
+    assert palmer.goals == 1
+    assert palmer.assists == 1
+    assert palmer.shots == 3
+
+    keeper = records[1]
+    assert keeper.position == "GK"
+    assert keeper.saves == 4
+    assert keeper.penalties_saved == 1
+    assert keeper.tackles is None  # not defaulted to 0 — genuinely unknown
+
+
+def test_empty_player_stats_response_is_not_an_error():
+    assert api_football.parse_player_match_stats([]) == []
+
+
+def test_fetch_player_match_stats_stamps_the_fixture_id(monkeypatch):
+    monkeypatch.setattr(
+        api_football, "_request", lambda *a, **k: PLAYER_STATS_PAYLOAD
+    )
+    records = api_football.fetch_player_match_stats("555", "fake-key")
+    assert all(r.fixture_id == "555" for r in records)
+
+
 # ---- quota --------------------------------------------------------------
 
 

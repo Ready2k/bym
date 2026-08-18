@@ -481,3 +481,45 @@ test("weeks that cannot be priced are shown as unknown, not as zero", () => {
   assert.ok(!html.includes("0.0%"), "an unknown week must not read as certain death");
   assert.match(html, /—/);
 });
+
+// ---- FPL -------------------------------------------------------------
+
+test("fplStatusPill shows UNDER CONSTRUCTION for anything other than live", () => {
+  const app = loadApp(appData());
+  assert.match(app.fplStatusPill("under_construction"), /UNDER CONSTRUCTION/);
+  assert.match(app.fplStatusPill("under_construction"), /status-pill neutral/);
+  assert.match(app.fplStatusPill("live"), /status-pill approved/);
+  assert.doesNotMatch(app.fplStatusPill("live"), /UNDER CONSTRUCTION/);
+});
+
+test("fplView renders an empty state and progress bars while under construction", () => {
+  const app = loadApp(appData({
+    fpl: { status: "under_construction", seasons: [
+      { season: 2022, fetched: 169, total: 380 },
+      { season: 2023, fetched: 0, total: 380 },
+    ] },
+  }));
+  const html = app.fplView();
+  assert.match(html, /UNDER CONSTRUCTION/);
+  assert.match(html, /169\/380 fixtures/);
+  assert.match(html, /0\/380 fixtures/);
+  assert.match(html, /width:44%/); // 169/380 rounded
+});
+
+test("fplView drops the empty state and progress bars once live", () => {
+  const app = loadApp(appData({
+    fpl: { status: "live", seasons: [
+      { season: 2022, fetched: 380, total: 380 },
+      { season: 2023, fetched: 380, total: 380 },
+    ] },
+  }));
+  const html = app.fplView();
+  assert.match(html, /status-pill approved/);
+  assert.doesNotMatch(html, /UNDER CONSTRUCTION/);
+});
+
+test("fplView tolerates a missing appData.fpl entirely", () => {
+  const app = loadApp(appData());
+  assert.doesNotThrow(() => app.fplView());
+  assert.match(app.fplView(), /UNDER CONSTRUCTION/);
+});

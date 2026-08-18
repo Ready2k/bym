@@ -108,3 +108,62 @@ def test_the_evaluation_findings_survive_in_the_registry(tmp_path):
     notes = load_registry(tmp_path / "absent.json")["big_balls_sports_data"].notes
     for fact in ("Championship", "xG", "2026-08-10"):
         assert fact in notes, fact
+
+
+# --- SPEC_FPL.md §5.3/§15 research and benchmark sources -----------------
+
+
+def test_fpl_research_sources_are_seeded_review_required_not_approved(path):
+    """§5.3: vaastav and Understat are candidates needing their own terms
+    review — dataset convenience never promotes a source to APPROVED."""
+    r = reg.load_registry(path)
+    assert r["vaastav_fpl_historical"].usage_status == "REVIEW_REQUIRED"
+    assert r["understat"].usage_status == "REVIEW_REQUIRED"
+
+
+def test_fpl_evaluated_sources_carry_their_declared_usage_scope(path):
+    """§5.3/§15: fpl_core_insights is a DefCon feasibility study only;
+    openfpl is a benchmark, never a training label."""
+    r = reg.load_registry(path)
+    assert r["fpl_core_insights"].usage_status == "EVALUATED"
+    assert r["fpl_core_insights"].usage_scope == "RESEARCH_ONLY"
+    assert r["openfpl"].usage_status == "EVALUATED"
+    assert r["openfpl"].usage_scope == "BENCHMARK_ONLY"
+
+
+def test_vaastav_xp_leakage_caveat_is_recorded_on_the_source(path):
+    """§5.3/§12.2/§19: the xP/ep_this leakage rule must be visible on the
+    SourceRecord itself, not only in the spec, so it survives a review that
+    never re-reads SPEC_FPL.md."""
+    notes = reg.load_registry(path)["vaastav_fpl_historical"].notes
+    assert "xP" in notes
+    assert "ep_this" in notes
+    assert "same-Gameweek" in notes
+
+
+@pytest.mark.parametrize(
+    "source_id",
+    ["vaastav_fpl_historical", "understat", "fpl_core_insights", "openfpl"],
+)
+def test_no_fpl_research_or_benchmark_source_can_be_queried_in_production(
+    source_id, path
+):
+    """§19: EVALUATED / RESEARCH_ONLY / BENCHMARK_ONLY evidence cannot
+    silently become a production dependency — assert_approved must still
+    refuse every one of them, same gate as any other unapproved source."""
+    with pytest.raises(reg.SourceNotApprovedError):
+        reg.assert_approved(source_id, path)
+
+
+@pytest.mark.parametrize(
+    "source_id", ["vaastav_fpl_historical", "understat", "fpl_core_insights", "openfpl"]
+)
+def test_fpl_research_source_terms_checked_at_is_todays_phase0_review_date(
+    source_id, path
+):
+    """These were seeded during the 2026-08-17 Phase 0 review, but the
+    notes must say this reflects reading documentation, not a completed
+    legal terms-of-service review (§5.3, §13.2)."""
+    record = reg.load_registry(path)[source_id]
+    assert record.terms_checked_at == "2026-08-17"
+    assert "legal" in record.notes.lower()
