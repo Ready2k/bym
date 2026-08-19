@@ -189,7 +189,7 @@ def _fetch_with_rate_limit_pacing(
     season: int,
     api_key: str,
     kickoff_at: str,
-    now: datetime,
+    now: datetime | None,
     **fetch_kwargs,
 ) -> list:
     """Retry the SAME fixture across a per-minute `RateLimitError`,
@@ -200,18 +200,31 @@ def _fetch_with_rate_limit_pacing(
     `**fetch_kwargs` (e.g. `quota_path`, `registry_path`) passes straight
     through to `ingest_fixture_player_stats`, the same override point
     `api_football.fetch_coverage`/`fetch_fixtures` already expose for
-    tests to isolate quota state from the real project files."""
+    tests to isolate quota state from the real project files.
+
+    `now` stays possibly-`None` all the way to here rather than arriving
+    pre-resolved: `sources.quota`'s per-minute check filters
+    `recent_calls` against a 60-second window ending at `now`, so this
+    loop's whole POINT — sleeping real seconds so that window can clear —
+    only works if `now` actually advances across the sleeps. Resolving it
+    fresh (`utcnow()`) on every attempt does that in production. A caller
+    that explicitly pins `now` (tests, wanting a deterministic quota
+    day-bucket) gets that same frozen value on every attempt instead,
+    exactly as before — `now or utcnow()` only re-evaluates the `utcnow()`
+    side when `now` was `None` to begin with."""
     for _ in range(MAX_RATE_LIMIT_PAUSES):
+        attempt_now = now or utcnow()
         try:
             return ingest.ingest_fixture_player_stats(
-                conn, fixture_id, season, api_key, kickoff_at=kickoff_at, now=now,
+                conn, fixture_id, season, api_key, kickoff_at=kickoff_at, now=attempt_now,
                 **fetch_kwargs,
             )
         except RateLimitError:
             time.sleep(RATE_LIMIT_PAUSE_SECONDS)
     # One last attempt whose exception (if any) propagates to the caller.
+    attempt_now = now or utcnow()
     return ingest.ingest_fixture_player_stats(
-        conn, fixture_id, season, api_key, kickoff_at=kickoff_at, now=now, **fetch_kwargs,
+        conn, fixture_id, season, api_key, kickoff_at=kickoff_at, now=attempt_now, **fetch_kwargs,
     )
 
 
@@ -250,8 +263,17 @@ def harvest_next_batch(
     the day's budget is spent — never mid-fixture, never as a fixture-
     level failure. `**fetch_kwargs` (e.g. `quota_path`) passes through to
     every fetch, so tests (and any caller wanting an isolated quota file)
-    never have to touch the real project quota state."""
-    now = now or utcnow()
+    never have to touch the real project quota state.
+
+    `now` is passed straight through to `_fetch_with_rate_limit_pacing`
+    WITHOUT resolving it here first — a batch is dozens of real HTTP calls
+    over several real minutes, and freezing one instant for all of them
+    made every successful call record an identical `recent_calls`
+    timestamp, guaranteeing a per-minute RateLimitError at request 11 that
+    real elapsed time (from `time.sleep`) could never actually clear. Only
+    `last_attempt_at` (informational ledger bookkeeping, not quota-
+    critical) uses a value resolved once for the whole batch."""
+    bookkeeping_now = now or utcnow()
     rows = _pending_rows(conn, season, competition, max_fixtures)
 
     attempted = fetched = no_data = retryable = final_failure = 0
@@ -259,7 +281,7 @@ def harvest_next_batch(
 
     for row in rows:
         attempt_count = row["attempt_count"] + 1
-        last_attempt_at = to_iso(now)
+        last_attempt_at = to_iso(bookkeeping_now)
         try:
             stats = _fetch_with_rate_limit_pacing(
                 conn, row["fixture_id"], season, api_key, row["kickoff_at"], now,
@@ -378,23 +400,37 @@ def run_daily_harvest(
     stay isolated from real project state (see `test_api_football.py`'s
     `quota_path=path` convention).
 
-    `now`, likewise, is resolved ONCE here and reused for every
-    `quota_mod.used()` check and every fetch — `quota.used()` buckets by
-    calendar day (`period_key`), so calling it once with a fixed `now`
-    and once with an implicit fresh `datetime.now()` could silently
-    disagree about which day's bucket to read (exactly the kind of bug a
-    test running across a real UTC midnight would expose and a
-    production run — which always means "actually now" throughout —
-    would not).
+    `now`, if the CALLER pins it (tests wanting a deterministic quota
+    day-bucket), is reused as-is for every `quota_mod.used()` check and
+    every fetch below — `quota.used()` buckets by calendar day
+    (`period_key`), so a test asserting on a specific day's usage needs
+    every call to agree on which day that is.
+
+    If the caller leaves `now` as `None` (the real driver script's actual
+    call), this function does NOT synthesize one fixed instant and reuse
+    it for the whole run: `reference_now` below is resolved once purely
+    for THIS function's OWN budget-check/reporting reads, but the
+    original (still-`None`) `now` is passed straight through to
+    `ensure_season_seeded`/`harvest_next_batch`, letting each individual
+    HTTP request resolve its own real time. A batch is dozens of requests
+    over several real minutes; freezing one instant across all of them
+    used to make every successful request record an identical
+    `recent_calls` timestamp, so the per-minute rate limit tripped at
+    request 11 every single day and real elapsed sleep time could never
+    clear it (`sources.quota`'s 60-second window never advanced because
+    `now` never did). The residual risk — a request genuinely crossing a
+    real midnight mid-run and landing in a different day's bucket than
+    this function's own pre-check assumed — is a rare, small
+    mis-accounting, not a guaranteed daily failure like the one above.
     """
-    now = now or utcnow()
-    used_before = quota_mod.used(api_football.QUOTA, quota_path, now)
+    reference_now = now or utcnow()
+    used_before = quota_mod.used(api_football.QUOTA, quota_path, reference_now)
     season_results: dict[int, HarvestBatchResult] = {}
 
     for season in seasons:
         if is_season_complete(conn, season, competition):
             continue
-        remaining_budget = daily_cap - quota_mod.used(api_football.QUOTA, quota_path, now)
+        remaining_budget = daily_cap - quota_mod.used(api_football.QUOTA, quota_path, reference_now)
         if remaining_budget <= 0:
             break
         try:
@@ -411,7 +447,7 @@ def run_daily_harvest(
                 final_failures=0, stopped_reason=str(exc),
             )
             break
-        remaining_budget = daily_cap - quota_mod.used(api_football.QUOTA, quota_path, now)
+        remaining_budget = daily_cap - quota_mod.used(api_football.QUOTA, quota_path, reference_now)
         if remaining_budget <= 0:
             break
         result = harvest_next_batch(
@@ -425,6 +461,6 @@ def run_daily_harvest(
     return DailyHarvestResult(
         season_results=season_results,
         requests_used_today_before=used_before,
-        requests_used_today_after=quota_mod.used(api_football.QUOTA, quota_path, now),
+        requests_used_today_after=quota_mod.used(api_football.QUOTA, quota_path, reference_now),
         all_seasons_complete=harvest_complete(conn, seasons, competition),
     )

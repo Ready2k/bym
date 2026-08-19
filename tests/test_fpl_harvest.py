@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -362,6 +362,40 @@ def test_run_daily_harvest_spills_leftover_budget_into_the_next_season(conn, mon
     assert result.season_results[2022].attempted == 2  # finishes 2022 (only 2 existed)
     assert result.season_results[2023].attempted == 3  # then spends leftover budget on 2023
     assert result.all_seasons_complete
+
+
+def test_harvest_next_batch_actually_clears_a_real_per_minute_limit_when_now_is_not_pinned(
+    conn, monkeypatch, tmp_path, registry_path,
+):
+    """Regression for a real production bug: `harvest_next_batch` used to
+    resolve `now` ONCE and reuse that single frozen instant for every
+    fixture in the batch, including ones retried after a RateLimitError.
+    That made every successful request record an IDENTICAL
+    `recent_calls` timestamp, so the 11th request tripped the 10/minute
+    cap and — because `now` never advanced — `sources.quota`'s 60-second
+    window could never be seen to clear no matter how many real seconds
+    `time.sleep` actually spent waiting. This drives the REAL quota
+    machinery (not a request-count mock) with `now=None` — exactly how
+    `scripts/fpl_daily_harvest.py` calls it — and a fake clock that
+    genuinely advances across sleeps, proving the batch pushes past the
+    cap instead of permanently stopping at exactly 10."""
+    quota_path = tmp_path / "quota.json"
+    mock_success_real_quota(monkeypatch)
+    harvest.seed_harvest_targets(conn, [fx(str(i)) for i in range(15)], COMPETITION)
+
+    clock = {"t": NOW}
+    monkeypatch.setattr(harvest, "utcnow", lambda: clock["t"])
+    monkeypatch.setattr(
+        harvest.time, "sleep",
+        lambda seconds: clock.__setitem__("t", clock["t"] + timedelta(seconds=seconds)),
+    )
+
+    result = harvest.harvest_next_batch(
+        conn, SEASON, COMPETITION, "fake-key", now=None,
+        quota_path=quota_path, registry_path=registry_path,
+    )
+    assert result.fetched == 15
+    assert result.stopped_reason is None
 
 
 def test_run_daily_harvest_runs_no_model_evaluation():
