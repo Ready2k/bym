@@ -12,7 +12,7 @@ import pytest
 from bym import cli, secrets
 
 KEYS = ("ODDS_API_KEY", "API_FOOTBALL_KEY", "TAVILY_API_KEY",
-        "FOOTBALL_DATA_ORG_KEY")
+        "FOOTBALL_DATA_ORG_KEY", "BYM_SMTP_USERNAME", "BYM_SMTP_PASSWORD")
 
 
 @pytest.fixture
@@ -66,6 +66,8 @@ def test_missing_key_resolves_to_none(clean_env, secrets_dir):
         "API_FOOTBALL_KEY": True,
         "TAVILY_API_KEY": False,
         "FOOTBALL_DATA_ORG_KEY": False,
+        "BYM_SMTP_USERNAME": False,
+        "BYM_SMTP_PASSWORD": False,
     }
 
 

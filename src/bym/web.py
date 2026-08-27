@@ -143,6 +143,12 @@ DEFAULT_UI_STATE = {
     },
     "notification_delivery": {"in_app": True, "email": False},
     "notification_email": "",
+    # Host/port/sender are plain settings (visible, editable) since they
+    # aren't sensitive; the username/password a relay like Gmail needs go
+    # through the same secrets/ store as API keys instead (see
+    # resolve_smtp_config). BYM_SMTP_* env vars still win over all of this,
+    # so existing Docker/compose deployments need no migration.
+    "smtp_settings": {"host": "", "port": 587, "from_address": ""},
     "budget": {"target_monthly": 10, "hard_ceiling": 40},
     # §13.1 season state / §13 season simulator: Sky does not publish how
     # many Super 6 rounds a season holds, so this stays a plain user
@@ -180,6 +186,9 @@ def load_ui_state(path: Path) -> dict:
         **state.get("notification_delivery", {}),
     }
     merged["notification_email"] = str(state.get("notification_email", ""))
+    merged["smtp_settings"] = {
+        **DEFAULT_UI_STATE["smtp_settings"], **state.get("smtp_settings", {})
+    }
     for key in ("overrides", "opponents", "results", "golden_goal_actual"):
         merged[key] = dict(state.get(key, {}))
     return merged
@@ -238,6 +247,33 @@ def _scoreline(value: str) -> tuple[int, int]:
     if home > 20 or away > 20:
         raise ValueError("Scores must be between 0 and 20.")
     return home, away
+
+
+def resolve_smtp_config(config: WebConfig):
+    """Merge the Settings-page relay with `BYM_SMTP_*` env vars, env winning.
+
+    Same "environment always wins" contract `secrets.get_key` already uses
+    for API keys, so an existing env-configured Docker deployment keeps
+    working unchanged once the browser also has a place to set this.
+    """
+    from .notifications import SmtpConfig
+    from .secrets import get_key
+
+    settings = load_ui_state(config.ui_state_path)["smtp_settings"]
+    host = os.environ.get("BYM_SMTP_HOST") or settings.get("host") or None
+    port = int(os.environ.get("BYM_SMTP_PORT") or settings.get("port") or 587)
+    sender = (
+        os.environ.get("BYM_SMTP_FROM") or settings.get("from_address") or "bym@localhost"
+    )
+    starttls = os.environ.get("BYM_SMTP_STARTTLS", "true").lower() != "false"
+    return SmtpConfig(
+        host=host,
+        port=port,
+        sender=sender,
+        username=get_key("BYM_SMTP_USERNAME", config.secrets_path),
+        password=get_key("BYM_SMTP_PASSWORD", config.secrets_path),
+        starttls=starttls,
+    )
 
 
 def web_extractor_config(config: WebConfig):
@@ -397,7 +433,8 @@ def _append_forecast_change_events(snapshot: dict, rnd: Round, config: WebConfig
         from .notifications import email_delivery_status, send_email_alert
         from smtplib import SMTPException
 
-        if email_delivery_status(True, state["notification_email"]) == "READY":
+        smtp = resolve_smtp_config(config)
+        if email_delivery_status(True, state["notification_email"], smtp) == "READY":
             try:
                 body = "\n\n".join(
                     f"{event.fixture}\n{event.summary}\nRound {rnd.round_number}".strip()
@@ -407,6 +444,7 @@ def _append_forecast_change_events(snapshot: dict, rnd: Round, config: WebConfig
                     destination=state["notification_email"],
                     subject=f"Super 6 — Round {rnd.round_number} recommendation changed",
                     body=body,
+                    smtp=smtp,
                 )
             except (OSError, RuntimeError, ValueError, SMTPException) as exc:
                 events.append([events.make_event(
@@ -446,13 +484,15 @@ def _emit_deadline_reminders(rnd: Round, submission_state: str, config: WebConfi
 
     from .notifications import email_delivery_status, send_email_alert
 
-    if email_delivery_status(True, state["notification_email"]) != "READY":
+    smtp = resolve_smtp_config(config)
+    if email_delivery_status(True, state["notification_email"], smtp) != "READY":
         return
     try:
         send_email_alert(
             destination=state["notification_email"],
             subject=f"Super 6 — Round {rnd.round_number} deadline approaching",
             body="\n\n".join(event.summary for event in created),
+            smtp=smtp,
         )
     except (OSError, RuntimeError, ValueError, SMTPException) as exc:
         events.append([events.make_event(
@@ -654,7 +694,7 @@ def _dashboard(config: WebConfig):
             key: ui_state[key]
             for key in (
                 "league_name", "player_name", "notifications", "notification_delivery",
-                "notification_email", "budget",
+                "notification_email", "smtp_settings", "budget",
             )
         } | {"knowledge_extractor": extractor_settings_for_ui(config)},
         "teams": sorted(known_teams),
@@ -999,6 +1039,24 @@ def save_settings(payload: dict, config: WebConfig) -> dict:
         if len(address) > 254 or (address and ("@" not in address or " " in address)):
             raise ValueError("Enter a valid email address, or leave it blank.")
         state["notification_email"] = address
+    if "smtp_settings" in payload:
+        smtp = payload["smtp_settings"]
+        if not isinstance(smtp, dict):
+            raise ValueError("SMTP settings must be an object.")
+        host = str(smtp.get("host", "")).strip()
+        if len(host) > 255:
+            raise ValueError("SMTP host is too long.")
+        port = int(smtp.get("port") or 587)
+        if not 1 <= port <= 65535:
+            raise ValueError("SMTP port must be between 1 and 65535.")
+        from_address = str(smtp.get("from_address", "")).strip()
+        if len(from_address) > 254 or (
+            from_address and ("@" not in from_address or " " in from_address)
+        ):
+            raise ValueError("Enter a valid \"from\" address, or leave it blank.")
+        state["smtp_settings"] = {
+            "host": host, "port": port, "from_address": from_address,
+        }
     if "budget" in payload:
         budget = payload["budget"]
         if not isinstance(budget, dict):
@@ -1040,7 +1098,7 @@ def save_settings(payload: dict, config: WebConfig) -> dict:
     save_ui_state(state, config.ui_state_path)
     return {"settings": {key: state[key] for key in (
         "league_name", "player_name", "notifications", "notification_delivery",
-        "notification_email", "budget", "season_rounds_total",
+        "notification_email", "smtp_settings", "budget", "season_rounds_total",
     )} | {"knowledge_extractor": extractor_settings_for_ui(config)}}
 
 
@@ -1783,6 +1841,36 @@ def save_secret(payload: dict, config: WebConfig) -> dict:
     return {"key": key, "configured": True}
 
 
+def send_test_email(config: WebConfig) -> dict:
+    """Send one real message through the configured relay, on demand.
+
+    Deliberately ignores the Email delivery toggle: this button exists so a
+    user can confirm host/port/credentials work *before* switching delivery
+    on, not just to re-send what the toggle already covers.
+    """
+    from smtplib import SMTPException
+
+    from .notifications import send_email_alert
+
+    state = load_ui_state(config.ui_state_path)
+    destination = state["notification_email"]
+    if not destination:
+        raise ValueError("Add an email address above first.")
+    smtp = resolve_smtp_config(config)
+    if not smtp.host:
+        raise ValueError("Add an SMTP host above first.")
+    try:
+        send_email_alert(
+            destination=destination,
+            subject="Beat Your Mates — test email",
+            body="This confirms your SMTP relay is configured correctly.",
+            smtp=smtp,
+        )
+    except (OSError, RuntimeError, ValueError, SMTPException) as exc:
+        raise ValueError(f"Send failed: {exc}") from exc
+    return {"sent_to": destination}
+
+
 def run_final_test(payload: dict, config: WebConfig) -> dict:
     """The browser equivalent of `bym final-test` (VALIDATION.md).
 
@@ -1835,7 +1923,7 @@ def run_final_test(payload: dict, config: WebConfig) -> dict:
     }
 
 
-def _alerts_payload(activity: list[dict], state: dict) -> dict:
+def _alerts_payload(activity: list[dict], state: dict, config: WebConfig) -> dict:
     """Filter the in-app alert centre by the user's material-event choices."""
     notification_map = {
         "PREDICTION_CHANGED": "prediction_changes",
@@ -1860,7 +1948,9 @@ def _alerts_payload(activity: list[dict], state: dict) -> dict:
         "items": visible[:12],
         "in_app": bool(state["notification_delivery"]["in_app"]),
         "email_status": email_delivery_status(
-            state["notification_delivery"]["email"], state["notification_email"]
+            state["notification_delivery"]["email"],
+            state["notification_email"],
+            resolve_smtp_config(config),
         ),
     }
 
@@ -2678,7 +2768,7 @@ def app_payload(config: WebConfig) -> dict:
     payload.update(
         {
             "activity": activity,
-            "alerts": _alerts_payload(activity, state),
+            "alerts": _alerts_payload(activity, state, config),
             "performance": {
                 **performance,
                 "transparency": performance_summary(performance["arms"]).to_dict(),
@@ -2802,6 +2892,8 @@ class BymRequestHandler(BaseHTTPRequestHandler):
                 self._send_json(HTTPStatus.OK, approve_source(payload, self.config))
             elif path == "/api/secrets":
                 self._send_json(HTTPStatus.OK, save_secret(payload, self.config))
+            elif path == "/api/notifications/test-email":
+                self._send_json(HTTPStatus.OK, send_test_email(self.config))
             elif path == "/api/final-test":
                 self._send_json(HTTPStatus.OK, run_final_test(payload, self.config))
             elif path == "/api/ollama/models":

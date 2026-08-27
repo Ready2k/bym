@@ -1,45 +1,61 @@
 """Delivery helpers for material Super 6 alerts.
 
 The decision UI always has an in-app stream.  Email is deliberately opt-in:
-it is sent only when a destination, SMTP host and the email channel are all
+it is sent only when a destination and a working SMTP relay are both
 configured.  A missing mail transport is reported to the UI as unavailable,
 never treated as a sent alert.
+
+Callers resolve the relay itself (host/port/sender from either the Settings
+UI or `BYM_SMTP_*` env vars, username/password from the same secrets/ store
+that holds API keys — see `resolve_smtp_config` in web.py) and hand this
+module a fully-formed `SmtpConfig`. Nothing here reads the environment
+directly, since the browser is one of two places that config can come from.
 """
 
 from __future__ import annotations
 
-import os
 import smtplib
 import ssl
+from dataclasses import dataclass
 from email.message import EmailMessage
 
 
-def email_delivery_status(enabled: bool, destination: str | None) -> str:
+@dataclass(frozen=True)
+class SmtpConfig:
+    host: str | None
+    port: int = 587
+    sender: str = "bym@localhost"
+    username: str | None = None
+    password: str | None = None
+    starttls: bool = True
+
+
+def email_delivery_status(
+    enabled: bool, destination: str | None, smtp: SmtpConfig
+) -> str:
     if not enabled:
         return "OFF"
     if not destination:
         return "NEEDS_ADDRESS"
-    if not os.environ.get("BYM_SMTP_HOST"):
+    if not smtp.host:
         return "NEEDS_SMTP"
     return "READY"
 
 
-def send_email_alert(*, destination: str, subject: str, body: str) -> None:
+def send_email_alert(
+    *, destination: str, subject: str, body: str, smtp: SmtpConfig
+) -> None:
     """Send one opted-in alert through an explicitly configured SMTP relay."""
-    host = os.environ.get("BYM_SMTP_HOST")
-    if not host:
-        raise RuntimeError("BYM_SMTP_HOST is not configured")
-    port = int(os.environ.get("BYM_SMTP_PORT", "587"))
-    sender = os.environ.get("BYM_SMTP_FROM", "bym@localhost")
+    if not smtp.host:
+        raise RuntimeError("An SMTP host is not configured")
     message = EmailMessage()
     message["Subject"] = subject
-    message["From"] = sender
+    message["From"] = smtp.sender
     message["To"] = destination
     message.set_content(body)
-    with smtplib.SMTP(host, port, timeout=10) as client:
-        if os.environ.get("BYM_SMTP_STARTTLS", "true").lower() != "false":
+    with smtplib.SMTP(smtp.host, smtp.port, timeout=10) as client:
+        if smtp.starttls:
             client.starttls(context=ssl.create_default_context())
-        username = os.environ.get("BYM_SMTP_USERNAME")
-        if username:
-            client.login(username, os.environ.get("BYM_SMTP_PASSWORD", ""))
+        if smtp.username:
+            client.login(smtp.username, smtp.password or "")
         client.send_message(message)

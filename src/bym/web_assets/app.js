@@ -15,6 +15,8 @@ let lmsPreview = "";
 let lmsGraphWeek = "";
 let appLoadController;
 let lmsReplay = { data: null, season: null, usedClubs: [], history: [], suggestedHistory: [], selectedTeam: "", revealed: false, eliminated: false };
+let lastLoadAt = 0;
+const AUTO_REFRESH_MS = 3 * 60_000;
 // Matches `lms.AI_ENTRANT` on the server — the self-play opponent whose
 // picks bym books and settles by itself. Excluded from the entrant name
 // field so nobody can type it in and try to override its pick by hand;
@@ -1209,22 +1211,33 @@ const SECRET_FIELDS = [
   ["API_FOOTBALL_KEY", "API-Football", "Confirmed lineups and injuries"],
   ["TAVILY_API_KEY", "Tavily", "Team-news search for the knowledge agent"],
   ["FOOTBALL_DATA_ORG_KEY", "football-data.org", "Fixtures, results and match status"],
+  ["BYM_SMTP_USERNAME", "SMTP username", "Usually your full email address"],
+  ["BYM_SMTP_PASSWORD", "SMTP password", "For Gmail, an App Password — not your account password"],
 ];
+
+const EMAIL_STATUS_LABELS = {
+  OFF: "Email delivery is turned off.",
+  NEEDS_ADDRESS: "Add an email address above to enable delivery.",
+  NEEDS_SMTP: "Add an SMTP host below, and a username/password if your relay needs one.",
+  READY: "Ready — material alerts will be emailed to this address.",
+};
 
 function secretsSection() {
   const configured = appData.secrets || {};
-  const rows = SECRET_FIELDS.map(([key, label, blurb]) => `<tr><td><strong>${escapeHtml(label)}</strong><br><small>${escapeHtml(blurb)}</small></td><td><span class="status-pill ${configured[key] ? "approved" : "neutral"}">${configured[key] ? "Configured" : "Not set"}</span></td><td><input type="password" data-secret-input="${key}" placeholder="Paste key" autocomplete="off"> <button class="plain-button" type="button" data-action="save-secret" data-secret-key="${key}">Save</button></td></tr>`).join("");
-  return `<section class="form-card"><p class="eyebrow">API keys</p><p class="subtitle">Stored in secrets/ on this server. Once saved, a key is never displayed again — only whether it is configured.</p><div class="stat-table-card"><table><thead><tr><th>Source</th><th>Status</th><th></th></tr></thead><tbody>${rows}</tbody></table></div></section>`;
+  const rows = SECRET_FIELDS.map(([key, label, blurb]) => `<tr><td><strong>${escapeHtml(label)}</strong><br><small>${escapeHtml(blurb)}</small></td><td><span class="status-pill ${configured[key] ? "approved" : "neutral"}">${configured[key] ? "Configured" : "Not set"}</span></td><td><input type="password" data-secret-input="${key}" placeholder="Paste value" autocomplete="off"> <button class="plain-button" type="button" data-action="save-secret" data-secret-key="${key}">Save</button></td></tr>`).join("");
+  return `<section class="form-card"><p class="eyebrow">API keys &amp; credentials</p><p class="subtitle">Stored in secrets/ on this server. Once saved, a value is never displayed again — only whether it is configured.</p><div class="stat-table-card"><table><thead><tr><th>Source</th><th>Status</th><th></th></tr></thead><tbody>${rows}</tbody></table></div></section>`;
 }
 
 function settingsView() {
   const { settings } = appData;
   const toggles = Object.entries(settings.notifications).map(([key, enabled]) => `<label class="toggle-row"><span>${escapeHtml(titleCase(key))}</span><input type="checkbox" name="notification_${key}" ${enabled ? "checked" : ""}><i></i></label>`).join("");
   const delivery = settings.notification_delivery || { in_app: true, email: false };
+  const smtp = settings.smtp_settings || { host: "", port: 587, from_address: "" };
+  const emailStatus = appData.alerts?.email_status;
   const extractor = settings.knowledge_extractor || { enabled: false, base_url: "http://localhost:11434", model: "llama3.1", mode: "shadow" };
   const models = [...new Set([extractor.model, ...ollamaModels].filter(Boolean))];
   const modelOptions = models.map((model) => `<option value="${escapeHtml(model)}" ${model === extractor.model ? "selected" : ""}>${escapeHtml(model)}</option>`).join("");
-  return `${pageHeader("Your preferences", "Settings", "Settings control presentation and alerts. They never change the frozen forecasting core.")}<form id="settings-form" class="settings-grid"><section class="form-card"><p class="eyebrow">League</p><label>League name<input required name="league_name" maxlength="80" value="${escapeHtml(settings.league_name)}"></label><label>Your name<input required name="player_name" maxlength="80" value="${escapeHtml(settings.player_name)}"></label></section><section class="form-card"><p class="eyebrow">Notifications</p>${toggles}<label class="toggle-row"><span>In-app delivery</span><input type="checkbox" name="delivery_in_app" ${delivery.in_app ? "checked" : ""}><i></i></label><label class="toggle-row"><span>Email delivery</span><input type="checkbox" name="delivery_email" ${delivery.email ? "checked" : ""}><i></i></label><label>Email address<input name="notification_email" type="email" value="${escapeHtml(settings.notification_email || "")}" placeholder="you@example.com"></label><p class="subtitle">Email sends material prediction changes through your configured SMTP relay.</p></section><section class="form-card"><p class="eyebrow">Budget</p><label>Target monthly spend<input required name="target_monthly" type="number" min="0" step="1" value="${settings.budget.target_monthly}"></label><label>Hard monthly ceiling<input required name="hard_ceiling" type="number" min="0" step="1" value="${settings.budget.hard_ceiling}"></label><p class="subtitle">Current source spend is not yet connected; limits are saved here for the source-promotion flow.</p></section><section class="form-card"><p class="eyebrow">Season</p><label>Rounds in this Super 6 season<input required name="season_rounds_total" type="number" min="1" max="60" step="1" value="${settings.season_rounds_total || 38}"></label><p class="subtitle">Sky does not publish this in advance, so it stays a manual estimate. It sets how many future rounds the season strategy simulation (§13) looks ahead across.</p></section><section class="form-card"><p class="eyebrow">Knowledge extractor</p><label class="toggle-row"><span>Enable Ollama</span><input type="checkbox" name="extractor_enabled" ${extractor.enabled ? "checked" : ""}><i></i></label><label>Ollama base URL<input required name="extractor_base_url" type="url" maxlength="512" value="${escapeHtml(extractor.base_url)}" placeholder="http://localhost:11434"></label><label>Model<select required name="extractor_model">${modelOptions}</select></label><button class="button secondary-button" type="button" data-action="find-ollama-models">Refresh available models</button><label>Claim handling<select name="extractor_mode"><option value="shadow" ${extractor.mode === "shadow" ? "selected" : ""}>Shadow — record only</option><option value="active" ${extractor.mode === "active" ? "selected" : ""}>Active — promote validated claims</option></select></label><p class="subtitle">Refreshes using the base URL above. Shadow is the safe default; Active still never changes forecast probabilities. A Tavily API key is also required before research can run.</p></section><div class="form-actions"><button class="button" type="submit">Save settings</button></div></form>${secretsSection()}`;
+  return `${pageHeader("Your preferences", "Settings", "Settings control presentation and alerts. They never change the frozen forecasting core.")}<form id="settings-form" class="settings-grid"><div class="settings-column"><section class="form-card"><p class="eyebrow">League</p><label>League name<input required name="league_name" maxlength="80" value="${escapeHtml(settings.league_name)}"></label><label>Your name<input required name="player_name" maxlength="80" value="${escapeHtml(settings.player_name)}"></label></section><section class="form-card"><p class="eyebrow">Budget</p><label>Target monthly spend<input required name="target_monthly" type="number" min="0" step="1" value="${settings.budget.target_monthly}"></label><label>Hard monthly ceiling<input required name="hard_ceiling" type="number" min="0" step="1" value="${settings.budget.hard_ceiling}"></label><p class="subtitle">Current source spend is not yet connected; limits are saved here for the source-promotion flow.</p></section><section class="form-card"><p class="eyebrow">Season</p><label>Rounds in this Super 6 season<input required name="season_rounds_total" type="number" min="1" max="60" step="1" value="${settings.season_rounds_total || 38}"></label><p class="subtitle">Sky does not publish this in advance, so it stays a manual estimate. It sets how many future rounds the season strategy simulation (§13) looks ahead across.</p></section><section class="form-card"><p class="eyebrow">Knowledge extractor</p><label class="toggle-row"><span>Enable Ollama</span><input type="checkbox" name="extractor_enabled" ${extractor.enabled ? "checked" : ""}><i></i></label><label>Ollama base URL<input required name="extractor_base_url" type="url" maxlength="512" value="${escapeHtml(extractor.base_url)}" placeholder="http://localhost:11434"></label><label>Model<select required name="extractor_model">${modelOptions}</select></label><button class="button secondary-button" type="button" data-action="find-ollama-models">Refresh available models</button><label>Claim handling<select name="extractor_mode"><option value="shadow" ${extractor.mode === "shadow" ? "selected" : ""}>Shadow — record only</option><option value="active" ${extractor.mode === "active" ? "selected" : ""}>Active — promote validated claims</option></select></label><p class="subtitle">Refreshes using the base URL above. Shadow is the safe default; Active still never changes forecast probabilities. A Tavily API key is also required before research can run.</p></section></div><div class="settings-column"><section class="form-card"><p class="eyebrow">Notifications</p>${toggles}<label class="toggle-row"><span>In-app delivery</span><input type="checkbox" name="delivery_in_app" ${delivery.in_app ? "checked" : ""}><i></i></label><label class="toggle-row"><span>Email delivery</span><input type="checkbox" name="delivery_email" ${delivery.email ? "checked" : ""}><i></i></label><label>Email address<input name="notification_email" type="email" value="${escapeHtml(settings.notification_email || "")}" placeholder="you@example.com"></label><label>SMTP host<input name="smtp_host" maxlength="255" value="${escapeHtml(smtp.host || "")}" placeholder="smtp.gmail.com"></label><label>SMTP port<input name="smtp_port" type="number" min="1" max="65535" step="1" value="${smtp.port || 587}"></label><label>From address<input name="smtp_from" type="email" value="${escapeHtml(smtp.from_address || "")}" placeholder="you@example.com"></label>${emailStatus ? `<p class="subtitle email-status-${emailStatus.toLowerCase()}">${escapeHtml(EMAIL_STATUS_LABELS[emailStatus] || "")}</p>` : ""}<p class="subtitle">Username and password (for Gmail: your address, plus an <a href="https://myaccount.google.com/apppasswords" target="_blank" rel="noopener">App Password</a> — not your normal account password) are saved below under API keys, the same gitignored store used for other credentials.</p><button class="plain-button" type="button" data-action="send-test-email">Send test email</button></section></div><div class="form-actions"><button class="button" type="submit">Save settings</button></div></form>${secretsSection()}`;
 }
 
 function moreView() {
@@ -1514,6 +1527,7 @@ async function loadApp() {
     const payload = await response.json();
     if (!response.ok) throw new Error(payload.error || "Could not build the decision centre.");
     appData = payload;
+    lastLoadAt = Date.now();
     clearInterval(countdownTimer);
     countdownTimer = setInterval(updateCountdown, 30_000);
     loading.hidden = true;
@@ -1633,6 +1647,21 @@ document.addEventListener("click", async (event) => {
       location.hash = "#settings";
     } catch (error) {
       toast(error.message);
+      button.disabled = false;
+      button.textContent = previous;
+    }
+  }
+  if (action === "send-test-email") {
+    const button = event.target.closest("[data-action]");
+    button.disabled = true;
+    const previous = button.textContent;
+    button.textContent = "Sending…";
+    try {
+      const result = await post("/api/notifications/test-email", {});
+      toast(`Test email sent to ${result.sent_to}.`);
+    } catch (error) {
+      toast(error.message);
+    } finally {
       button.disabled = false;
       button.textContent = previous;
     }
@@ -1837,7 +1866,7 @@ document.addEventListener("submit", async (event) => {
       await post("/api/results", { results, golden_goal_actual: form.elements.golden_goal_actual.value }); toast("Round results saved."); await loadApp();
     } else if (form.id === "settings-form") {
       const notifications = Object.keys(appData.settings.notifications).reduce((out, key) => ({ ...out, [key]: form.elements[`notification_${key}`].checked }), {});
-      await post("/api/settings", { league_name: form.elements.league_name.value, player_name: form.elements.player_name.value, notifications, notification_delivery: { in_app: form.elements.delivery_in_app.checked, email: form.elements.delivery_email.checked }, notification_email: form.elements.notification_email.value, budget: { target_monthly: form.elements.target_monthly.value, hard_ceiling: form.elements.hard_ceiling.value }, season_rounds_total: form.elements.season_rounds_total.value, knowledge_extractor: { enabled: form.elements.extractor_enabled.checked, base_url: form.elements.extractor_base_url.value, model: form.elements.extractor_model.value, mode: form.elements.extractor_mode.value } });
+      await post("/api/settings", { league_name: form.elements.league_name.value, player_name: form.elements.player_name.value, notifications, notification_delivery: { in_app: form.elements.delivery_in_app.checked, email: form.elements.delivery_email.checked }, notification_email: form.elements.notification_email.value, smtp_settings: { host: form.elements.smtp_host.value, port: form.elements.smtp_port.value, from_address: form.elements.smtp_from.value }, budget: { target_monthly: form.elements.target_monthly.value, hard_ceiling: form.elements.hard_ceiling.value }, season_rounds_total: form.elements.season_rounds_total.value, knowledge_extractor: { enabled: form.elements.extractor_enabled.checked, base_url: form.elements.extractor_base_url.value, model: form.elements.extractor_model.value, mode: form.elements.extractor_mode.value } });
       toast("Settings saved."); await loadApp();
     } else if (form.id === "lms-gameweek-form") {
       const fixtures = form.elements.fixtures.value.split("\n").map((line) => line.trim()).filter(Boolean).map((line) => {
@@ -1862,6 +1891,31 @@ document.addEventListener("submit", async (event) => {
       renderPage();
     }
   } catch (error) { toast(error.message); }
+});
+
+// renderPage() replaces #app's innerHTML wholesale, which would blow away
+// an in-progress edit in a page-level form (results, settings, opponent
+// import, round setup — dialogs are unaffected, since those live outside
+// #app in index.html). A background refresh checks focus first and simply
+// skips itself when the user is mid-edit, rather than risk losing typed
+// input; the next interval or tab-focus tries again.
+function isUserEditing() {
+  const active = document.activeElement;
+  if (!active || !$("#app").contains(active)) return false;
+  return ["INPUT", "TEXTAREA", "SELECT"].includes(active.tagName);
+}
+
+function backgroundRefresh() {
+  if (document.visibilityState !== "visible") return;
+  if (isUserEditing()) return;
+  loadApp();
+}
+
+setInterval(backgroundRefresh, AUTO_REFRESH_MS);
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState !== "visible") return;
+  if (Date.now() - lastLoadAt < 60_000) return;
+  backgroundRefresh();
 });
 
 loadApp();

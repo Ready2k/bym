@@ -27,6 +27,12 @@ KEY_SOURCES: dict[str, tuple[str, ...]] = {
     "FOOTBALL_DATA_ORG_KEY": (
         "footballdataorg", "football_data_org", "football-data-org",
     ),
+    # Not API keys, but stored the same way (§22's rationale applies just as
+    # much to mail credentials): a NAS/Docker deployment has no shell to
+    # export them, so the browser's Settings page is the only realistic way
+    # to configure a Gmail app password.
+    "BYM_SMTP_USERNAME": ("smtp_username", "smtp-username"),
+    "BYM_SMTP_PASSWORD": ("smtp_password", "smtp-password"),
 }
 
 
