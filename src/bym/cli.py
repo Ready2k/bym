@@ -429,6 +429,7 @@ def cmd_engine_run(args) -> int:
     import os
 
     from . import db as db_mod
+    from . import events
     from .config import FROZEN_PHASE1_V1
     from .data.football_data import load_matches
     from .engine import format_engine_report, run_engine
@@ -455,6 +456,11 @@ def cmd_engine_run(args) -> int:
             known_teams=set(matches["home_team"]) | set(matches["away_team"]),
             corpus="+".join(args.divisions),
         )
+    # Otherwise a manual engine-run's availability/knowledge findings land
+    # in the DB (and each fixture's Evidence panel) but never reach the
+    # Activity tab, which reads only this log — see the live worker path
+    # (worker.run_due_jobs) this mirrors.
+    events.append(result.events, events.DEFAULT_EVENT_LOG)
 
     print(format_engine_report(result))
     if args.json:
