@@ -15,6 +15,12 @@ let lmsPreview = "";
 let lmsGraphWeek = "";
 let appLoadController;
 let lmsReplay = { data: null, season: null, usedClubs: [], history: [], suggestedHistory: [], selectedTeam: "", revealed: false, eliminated: false };
+// Matches `lms.AI_ENTRANT` on the server — the self-play opponent whose
+// picks bym books and settles by itself. Excluded from the entrant name
+// field so nobody can type it in and try to override its pick by hand;
+// the backend refuses that too, but hiding it here means it never looks
+// like an option in the first place.
+const LMS_AI_ENTRANT = "The Model";
 
 // The current English 92, taken from the same E0–E3 season data used by the
 // model. Cup Match can select any of those clubs, so the crest list cannot be
@@ -709,7 +715,8 @@ function lmsHistoryRows(entrants) {
     const e = entrants[name];
     const last = e.history[e.history.length - 1];
     const provenance = last?.source ? ` (${last.source.toLowerCase()})` : "";
-    return `<tr><td>${escapeHtml(name)}</td><td>${lmsStatusPill(e.alive)}</td><td>${e.used_clubs.length}</td><td>${last ? `GW${last.gameweek} ${escapeHtml(last.team)} — ${last.result}${provenance}` : "—"}</td></tr>`;
+    const modelTag = name === LMS_AI_ENTRANT ? ` <span class="status-pill neutral">SELF-PLAY</span>` : "";
+    return `<tr><td>${escapeHtml(name)}${modelTag}</td><td>${lmsStatusPill(e.alive)}</td><td>${e.used_clubs.length}</td><td>${last ? `GW${last.gameweek} ${escapeHtml(last.team)} — ${last.result}${provenance}` : "—"}</td></tr>`;
   }).join("");
 }
 
@@ -832,7 +839,8 @@ function lmsView() {
   const lms = appData.lms || { gameweek: null, entrants: {}, recommendations: {}, plans: {}, unknown_teams: [], auto_settle: null, fixtures_source: null };
   const gw = lms.gameweek;
   const entrants = lms.entrants || {};
-  if (!lmsEntrant) lmsEntrant = Object.keys(entrants)[0] || "";
+  const humanEntrants = Object.keys(entrants).filter((n) => n !== LMS_AI_ENTRANT);
+  if (!lmsEntrant) lmsEntrant = humanEntrants[0] || "";
   const state = entrants[lmsEntrant];
   const candidates = (lmsEntrant && lms.recommendations[lmsEntrant]) || lms.recommendations.__all__ || [];
   const plan = (lmsEntrant && lms.plans?.[lmsEntrant]) || lms.plans?.__all__ || null;
@@ -843,7 +851,7 @@ function lmsView() {
   const pendingPick = gw && state?.history.find((h) => h.gameweek === gw.number);
   const eliminated = state && !state.alive;
 
-  const entrantSection = `<section class="form-card"><p class="eyebrow">Entrant</p><label>Name<input id="lms-entrant-input" list="lms-entrants" maxlength="60" value="${escapeHtml(lmsEntrant)}" placeholder="Your name"></label><datalist id="lms-entrants">${Object.keys(entrants).sort().map((n) => `<option value="${escapeHtml(n)}">`).join("")}</datalist>${state ? `<p>${lmsStatusPill(state.alive)} · ${state.used_clubs.length} club${state.used_clubs.length === 1 ? "" : "s"} used${state.used_clubs.length ? `: ${escapeHtml(state.used_clubs.join(", "))}` : ""}</p>${state.history.length ? '<button class="plain-button" type="button" data-lms-live-path>View live decision tree</button>' : ""}` : `<p class="subtitle">New entrant — no picks recorded yet.</p>`}</section>`;
+  const entrantSection = `<section class="form-card"><p class="eyebrow">Entrant</p><label>Name<input id="lms-entrant-input" list="lms-entrants" maxlength="60" value="${escapeHtml(lmsEntrant)}" placeholder="Your name"></label><datalist id="lms-entrants">${humanEntrants.sort().map((n) => `<option value="${escapeHtml(n)}">`).join("")}</datalist>${state ? `<p>${lmsStatusPill(state.alive)} · ${state.used_clubs.length} club${state.used_clubs.length === 1 ? "" : "s"} used${state.used_clubs.length ? `: ${escapeHtml(state.used_clubs.join(", "))}` : ""}</p>${state.history.length ? '<button class="plain-button" type="button" data-lms-live-path>View live decision tree</button>' : ""}` : `<p class="subtitle">New entrant — no picks recorded yet.</p>`}</section>`;
 
   let pickSection;
   if (!gw) {
@@ -880,7 +888,16 @@ function lmsView() {
     : "";
   const setupSection = `<details class="disclosure"><summary>${setupSummary}</summary><form id="lms-gameweek-form" class="form-card">${setupNote}<label>Gameweek number<input required name="gameweek" type="number" min="1" value="${gw ? gw.number : ""}"></label><label>Fixtures — one per line, "Home vs Away"<textarea required name="fixtures" rows="10" placeholder="Arsenal vs Everton">${gw ? gw.fixtures.map((f) => `${f.home} vs ${f.away}`).join("\n") : ""}</textarea></label><div class="form-actions"><button class="button" type="submit">Save gameweek fixtures</button></div></form></details>`;
 
-  const historySection = `<section class="section-heading"><div><p class="eyebrow">Entrants</p><h2>Survival status</h2></div></section><div class="stat-table-card"><table><thead><tr><th>Entrant</th><th>Status</th><th>Clubs used</th><th>Last result</th></tr></thead><tbody>${lmsHistoryRows(entrants)}</tbody></table></div>`;
+  const historySection = `<section class="section-heading"><div><p class="eyebrow">Entrants</p><h2>Survival status</h2></div><button class="plain-button" type="button" data-lms-reset>Start new competition</button></section><div class="stat-table-card"><table><thead><tr><th>Entrant</th><th>Status</th><th>Clubs used</th><th>Last result</th></tr></thead><tbody>${lmsHistoryRows(entrants)}</tbody></table></div><p class="subtitle">${LMS_AI_ENTRANT} plays alongside you automatically, always taking bym's own recommendation — a running check on whether following the tool beats your own picks.</p>`;
+
+  const archive = lms.archive || [];
+  const archiveSection = archive.length
+    ? `<section class="section-heading"><div><p class="eyebrow">History</p><h2>Past competitions</h2></div></section><div class="stat-table-card"><table><thead><tr><th>Finished</th><th>Winner</th><th>Entrants</th></tr></thead><tbody>${archive.map((a) => {
+        const aiNote = a.ai_alive === true ? ` · ${LMS_AI_ENTRANT} also survived`
+          : a.ai_alive === false ? ` · ${LMS_AI_ENTRANT} was eliminated` : "";
+        return `<tr><td>${displayDate(a.archived_at)}</td><td>${a.winner ? escapeHtml(a.winner) : "No clear winner"}${aiNote}</td><td>${a.entrant_count}</td></tr>`;
+      }).join("")}</tbody></table></div>`
+    : "";
 
   return `<div class="lms-view">${pageHeader("Last Man Standing", "Survivor picks", "Pick one club per gameweek. Win to survive — a draw eliminates too, same as a loss. A club can only be picked once for the whole competition.", '<a class="button secondary-button" href="#lms-replay">Replay a season</a>')}
     ${entrantSection}
@@ -890,7 +907,8 @@ function lmsView() {
     ${pickSection}
     ${unknownNote}
     ${setupSection}
-    ${historySection}</div>`;
+    ${historySection}
+    ${archiveSection}</div>`;
 }
 
 function lmsReplayView() {
@@ -1710,6 +1728,22 @@ document.addEventListener("click", async (event) => {
       lmsPreview = "";
       renderPage();
     } catch (error) { toast(error.message); }
+  }
+  const lmsReset = event.target.closest("[data-lms-reset]");
+  if (lmsReset) {
+    // bym commonly tracks only the one person running it, not the whole
+    // pool, so it cannot infer who actually won — asked here rather than
+    // guessed from whichever tracked entrant is still alive.
+    const winnerInput = prompt("Who won this competition? (optional — leave blank if you don't know)");
+    if (winnerInput === null) return;
+    const winner = winnerInput.trim();
+    if (!confirm("Start a brand new Last Man Standing competition? Every entrant returns to alive with no clubs used. This competition's picks are archived, not deleted.")) return;
+    try {
+      appData.lms = await post("/api/lms/reset", { winner });
+      toast(winner ? `New competition started — ${winner} recorded as the winner.` : "New competition started — every entrant is back in.");
+      renderPage();
+    } catch (error) { toast(error.message); }
+    return;
   }
   const lmsResult = event.target.closest("[data-lms-result]");
   if (lmsResult) {

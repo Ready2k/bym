@@ -523,3 +523,89 @@ test("fplView tolerates a missing appData.fpl entirely", () => {
   assert.doesNotThrow(() => app.fplView());
   assert.match(app.fplView(), /UNDER CONSTRUCTION/);
 });
+
+// ---- LMS competition reset ------------------------------------------------
+
+const LMS_BASE = {
+  gameweek: null, entrants: {}, recommendations: {}, plans: {}, lineages: {},
+  previews: {}, switch_candidates: {}, decision_weeks: {}, unknown_teams: [],
+  auto_settle: null, fixtures_source: null, replay_seasons: [], archive: [],
+};
+
+test("lmsView always offers a way to start a new competition, win or no winner yet", () => {
+  const app = loadApp(appData({ lms: LMS_BASE }));
+  assert.match(app.lmsView(), /data-lms-reset/);
+});
+
+test("lmsView lists a reset competition's winner and when it finished", () => {
+  const app = loadApp(appData({
+    lms: { ...LMS_BASE, archive: [
+      { archived_at: "2026-05-17T18:00:00+00:00", winner: "James", entrant_count: 28 },
+    ] },
+  }));
+  const html = app.lmsView();
+  assert.match(html, /Past competitions/);
+  assert.match(html, />James</);
+  assert.match(html, />28</);
+});
+
+test("lmsView marks an archived competition with no clear winner rather than blaming an entrant", () => {
+  const app = loadApp(appData({
+    lms: { ...LMS_BASE, archive: [
+      { archived_at: "2026-05-17T18:00:00+00:00", winner: null, entrant_count: 3 },
+    ] },
+  }));
+  assert.match(app.lmsView(), /No clear winner/);
+});
+
+test("lmsView escapes a hostile winner name from the archive", () => {
+  const app = loadApp(appData({
+    lms: { ...LMS_BASE, archive: [
+      { archived_at: "2026-05-17T18:00:00+00:00", winner: HOSTILE, entrant_count: 2 },
+    ] },
+  }));
+  const html = app.lmsView();
+  assert.ok(!html.includes(HOSTILE));
+  assert.match(html, /&lt;img/);
+});
+
+test("lmsView omits the past-competitions table until something has been archived", () => {
+  const app = loadApp(appData({ lms: LMS_BASE }));
+  assert.doesNotMatch(app.lmsView(), /Past competitions/);
+});
+
+// ---- the model's self-play opponent ---------------------------------------
+
+const LMS_WITH_MODEL_ENTRANTS = {
+  James: { entrant: "James", alive: true, used_clubs: ["Arsenal"], history: [] },
+  "The Model": { entrant: "The Model", alive: true, used_clubs: ["Man City"], history: [] },
+};
+
+test("lmsView marks the model's own row distinctly in Survival status", () => {
+  const app = loadApp(appData({
+    lms: { ...LMS_BASE, entrants: LMS_WITH_MODEL_ENTRANTS },
+  }));
+  assert.match(app.lmsView(), /SELF-PLAY/);
+});
+
+test("lmsView never offers the model as a name to type into the entrant field", () => {
+  const app = loadApp(appData({
+    lms: { ...LMS_BASE, entrants: LMS_WITH_MODEL_ENTRANTS },
+  }));
+  const html = app.lmsView();
+  const datalist = html.match(/<datalist id="lms-entrants">([\s\S]*?)<\/datalist>/)[1];
+  assert.doesNotMatch(datalist, /The Model/);
+  assert.match(datalist, /James/);
+});
+
+test("lmsView reports whether the model was still alive when a competition was archived", () => {
+  const app = loadApp(appData({
+    lms: { ...LMS_BASE, archive: [
+      { archived_at: "2026-05-17T18:00:00+00:00", winner: "James", entrant_count: 1, ai_alive: true },
+      { archived_at: "2026-04-10T18:00:00+00:00", winner: "James", entrant_count: 1, ai_alive: false },
+    ] },
+  }));
+  const html = app.lmsView();
+  assert.match(html, /The Model also survived/);
+  assert.match(html, /The Model was eliminated/);
+});

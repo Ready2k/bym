@@ -56,6 +56,14 @@ from .model.matrix import score_matrix
 ParamRouter = Callable[[str, str], DixonColesParams]
 
 DEFAULT_STATE_PATH = Path("data/lms_state.json")
+DEFAULT_ARCHIVE_PATH = Path("data/lms_archive.json")
+
+# The self-play opponent: an entrant whose pick every gameweek is simply
+# `plan_horizon`'s own "pick now" — what the tool would have told a human
+# to do. Tracked as an ordinary LMSState (see `web._lms_model_autoplay`)
+# so every existing per-entrant view (lineage, plan, the Survival status
+# table, reset/archive) already covers it with no special-casing.
+AI_ENTRANT = "The Model"
 
 
 # ---------------------------------------------------------------------------
@@ -771,6 +779,74 @@ def save_states(states: dict[str, LMSState], path: Path = DEFAULT_STATE_PATH) ->
 
 def get_state(entrant: str, path: Path = DEFAULT_STATE_PATH) -> LMSState:
     return load_states(path).get(entrant, LMSState(entrant=entrant))
+
+
+# ---------------------------------------------------------------------------
+# Competition reset — a payout ends one competition, not the pool. The group
+# re-enters and plays again from used_clubs=[], but the finished one's picks
+# are a record, not scratch state, so resetting has to archive first.
+# ---------------------------------------------------------------------------
+
+
+def load_archive(path: Path = DEFAULT_ARCHIVE_PATH) -> list[dict]:
+    """Every competition this state file has been reset out of, oldest first."""
+    if not path.exists():
+        return []
+    return json.loads(path.read_text())
+
+
+def save_archive(archive: list[dict], path: Path = DEFAULT_ARCHIVE_PATH) -> None:
+    """Write the archive atomically, same discipline as `save_states`."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps(archive, indent=2, sort_keys=True) + "\n")
+    os.replace(tmp, path)
+
+
+def archive_competition(
+    states: dict[str, LMSState], path: Path = DEFAULT_ARCHIVE_PATH, *,
+    winner: str | None = None,
+) -> dict:
+    """Append the current competition's final state to the archive.
+
+    Called before `start_new_competition` wipes `used_clubs`/`history` —
+    otherwise a payout and re-entry would be indistinguishable from every
+    entrant's picks simply disappearing, exactly the silent-narrowing
+    failure `load_matches` refuses to commit for the match corpus.
+
+    `winner` lets the caller name who actually won by hand. This module
+    only ever tracks the entrants someone bothered to record picks for —
+    commonly just the one person running `bym` for their own picks, not
+    the whole pool — so inference is a fallback, not the source of truth.
+    Left unset, the winner is inferred from the tracked human entrants
+    (`AI_ENTRANT` never counts — it has no stake in the pool): exactly one
+    still alive, or unknown (`None`) otherwise.
+    """
+    if winner is None:
+        alive = sorted(
+            name for name, s in states.items() if s.alive and name != AI_ENTRANT
+        )
+        winner = alive[0] if len(alive) == 1 else None
+    entry = {
+        "archived_at": datetime.now(timezone.utc).isoformat(),
+        "winner": winner,
+        "entrants": {k: vars(v) for k, v in states.items()},
+    }
+    archive = load_archive(path)
+    archive.append(entry)
+    save_archive(archive, path)
+    return entry
+
+
+def start_new_competition(states: dict[str, LMSState]) -> dict[str, LMSState]:
+    """Fresh state for every existing entrant — same names, nothing else.
+
+    Re-entry after a payout is the same pool of people putting money in
+    again, not a new sign-up sheet, so entrant names carry over; `alive`,
+    `used_clubs` and `history` do not, since carrying any of them over
+    would start the new competition already half-won or half-lost.
+    """
+    return {name: LMSState(entrant=name) for name in states}
 
 
 @dataclass(frozen=True)

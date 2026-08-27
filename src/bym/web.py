@@ -59,6 +59,7 @@ class WebConfig:
     arm_registry_path: Path = Path("results/prospective_arms.json")
     lms_gameweek_path: Path = Path("data/lms_gameweek.json")
     lms_state_path: Path = Path("data/lms_state.json")
+    lms_archive_path: Path = Path("data/lms_archive.json")
     seasons: tuple[int, int] = (2019, 2025)
     divisions: tuple[str, ...] = ("E0", "E1")
 
@@ -1896,6 +1897,27 @@ def _lms_replay_seasons(config: WebConfig) -> list[int]:
     return cached[1:]
 
 
+def _lms_archive_summaries(config: WebConfig) -> list[dict]:
+    """Past competitions, newest first — the UI never needs the full state."""
+    from . import lms as lms_mod
+
+    archive = lms_mod.load_archive(config.lms_archive_path)
+    summaries = []
+    for entry in reversed(archive):
+        entrants = entry.get("entrants") or {}
+        ai = entrants.get(lms_mod.AI_ENTRANT)
+        summaries.append({
+            "archived_at": entry["archived_at"],
+            "winner": entry.get("winner"),
+            # AI_ENTRANT is bym's own self-play opponent, not a human in
+            # the pool — excluded so this count reads as "how many people",
+            # matching what the human typing the winner in actually means.
+            "entrant_count": len({k for k in entrants if k != lms_mod.AI_ENTRANT}),
+            "ai_alive": ai["alive"] if ai else None,
+        })
+    return summaries
+
+
 def _lms_lineage_dict(steps) -> dict:
     """An entrant's path plus both cumulative survival curves.
 
@@ -2090,15 +2112,15 @@ def lms_payload(config: WebConfig, router=None, known_teams: set[str] | None = N
     # no-fixtures branch below: the last gameweek of a season still has
     # picks to settle after the fixture list has run out.
     auto_settle_info = _lms_auto_settle(states, config, fetched)
-    if auto_settle_info["settled"]:
-        lms_mod.save_states(states, config.lms_state_path)
-
-    entrants = {
-        name: {"entrant": s.entrant, "alive": s.alive, "used_clubs": s.used_clubs, "history": s.history}
-        for name, s in states.items()
-    }
+    state_dirty = bool(auto_settle_info["settled"])
 
     if not gameweeks:
+        if state_dirty:
+            lms_mod.save_states(states, config.lms_state_path)
+        entrants = {
+            name: {"entrant": s.entrant, "alive": s.alive, "used_clubs": s.used_clubs, "history": s.history}
+            for name, s in states.items()
+        }
         return {
             "gameweek": None, "entrants": entrants, "recommendations": {}, "plans": {},
             "lineages": {}, "previews": {}, "switch_candidates": {},
@@ -2106,6 +2128,7 @@ def lms_payload(config: WebConfig, router=None, known_teams: set[str] | None = N
             "auto_settle": auto_settle_info,
             "fixtures_source": fixtures_info,
             "replay_seasons": _lms_replay_seasons(config),
+            "archive": _lms_archive_summaries(config),
         }
 
     gw = gameweeks[0]
@@ -2114,6 +2137,20 @@ def lms_payload(config: WebConfig, router=None, known_teams: set[str] | None = N
     )
 
     outlooks = [lms_mod.fixture_outlooks(router, week) for week in gameweeks]
+
+    # The model plays its own game alongside whoever's tracked above — a
+    # self-play benchmark for "would following the tool's own advice have
+    # survived longer than the picks actually made". Needs `outlooks`, so
+    # this can only run once the no-fixtures branch above is behind us.
+    if _lms_model_autoplay(states, gameweeks, outlooks, router):
+        state_dirty = True
+    if state_dirty:
+        lms_mod.save_states(states, config.lms_state_path)
+
+    entrants = {
+        name: {"entrant": s.entrant, "alive": s.alive, "used_clubs": s.used_clubs, "history": s.history}
+        for name, s in states.items()
+    }
 
     def decision_index(state) -> int | None:
         """Which gameweek this entrant is actually deciding right now.
@@ -2229,6 +2266,7 @@ def lms_payload(config: WebConfig, router=None, known_teams: set[str] | None = N
         "auto_settle": auto_settle_info,
         "fixtures_source": fixtures_info,
         "replay_seasons": _lms_replay_seasons(config),
+        "archive": _lms_archive_summaries(config),
     }
 
 
@@ -2432,6 +2470,45 @@ def _lms_auto_settle(states: dict, config: WebConfig, prefetched=None) -> dict:
         return {"ran": False, "settled": [], "note": f"result fetch failed: {exc}"}
 
 
+def _lms_model_autoplay(states: dict, gameweeks, outlooks, router) -> bool:
+    """Book `AI_ENTRANT`'s pick for the open gameweek — whatever
+    `plan_horizon` would tell a human to do with the model's own used-club
+    list, never a human's.
+
+    Runs every page load, so the model plays on unattended: it books one
+    pick as soon as a gameweek is open, then just sits PENDING like any
+    other entrant's until `_lms_auto_settle` settles it off the same feed.
+    Returns whether a new pick was booked, so the caller knows to persist
+    `states`.
+    """
+    from . import lms as lms_mod
+
+    if not gameweeks:
+        return False
+    state = states.setdefault(lms_mod.AI_ENTRANT, lms_mod.LMSState(entrant=lms_mod.AI_ENTRANT))
+    if not state.alive:
+        return False
+    current = gameweeks[0]
+    if any(h["gameweek"] == current.number for h in state.history):
+        return False  # already booked this gameweek
+    open_idx = lms_mod.open_gameweek_indices(gameweeks, state)
+    weeks = [gameweeks[i] for i in open_idx]
+    week_outlooks = [outlooks[i] for i in open_idx]
+    plan = lms_mod.plan_horizon(router, weeks, set(state.used_clubs), outlooks=week_outlooks)
+    if not plan.picks:
+        # No legal club left this gameweek — the model is eliminated by
+        # the fixture list itself, same as `unplannable` describes for a
+        # human. Nothing to book; `alive` is untouched since that is a
+        # settled-result concept, not a fixture-list one.
+        return False
+    pick = plan.this_week.candidate
+    lms_mod.record_pick(
+        state, current.number, pick.team, pick.opponent, pick.is_home,
+        picked_p_win=pick.p_win,
+    )
+    return True
+
+
 def _lms_fd_season() -> int:
     """English football-season start year from today's date (Aug-Dec belongs
     to the season starting that year; Jan-Jul belongs to the previous one)."""
@@ -2503,6 +2580,8 @@ def save_lms_pick(payload: dict, config: WebConfig) -> dict:
     gameweek = payload.get("gameweek")
     if not entrant or not team or not opponent or gameweek is None:
         raise ValueError("entrant, gameweek, team and opponent are all required.")
+    if entrant == lms_mod.AI_ENTRANT:
+        raise ValueError(f"{lms_mod.AI_ENTRANT} plays itself — its picks aren't editable.")
     states = lms_mod.load_states(config.lms_state_path)
     state = states.get(entrant, lms_mod.LMSState(entrant=entrant))
     gameweek = int(gameweek)
@@ -2539,11 +2618,35 @@ def save_lms_result(payload: dict, config: WebConfig) -> dict:
     result = payload.get("result")
     if not entrant or gameweek is None or not result:
         raise ValueError("entrant, gameweek and result are all required.")
+    if entrant == lms_mod.AI_ENTRANT:
+        raise ValueError(f"{lms_mod.AI_ENTRANT} is settled automatically, not by hand.")
     states = lms_mod.load_states(config.lms_state_path)
     if entrant not in states:
         raise ValueError(f"no Last Man Standing state recorded for {entrant}")
     lms_mod.record_result(states[entrant], int(gameweek), result)
     lms_mod.save_states(states, config.lms_state_path)
+    return lms_payload(config)
+
+
+def reset_lms_competition(payload: dict, config: WebConfig) -> dict:
+    """Archive the current competition and start a fresh one for the same pool.
+
+    §-less: this is the payout-and-re-entry flow a Last Man Standing pool
+    actually runs, which the format never wrote down anywhere for this
+    codebase to cite. Entrant names carry over; `alive`/`used_clubs`/
+    `history` do not — see `lms.start_new_competition`.
+
+    `winner` is optional and typed in by hand rather than inferred, since
+    this state file commonly tracks one person's own picks, not the whole
+    pool — nothing here can know who actually won except the caller.
+    """
+    from . import lms as lms_mod
+
+    winner = str(payload.get("winner") or "").strip() or None
+    states = lms_mod.load_states(config.lms_state_path)
+    if states or winner:
+        lms_mod.archive_competition(states, config.lms_archive_path, winner=winner)
+    lms_mod.save_states(lms_mod.start_new_competition(states), config.lms_state_path)
     return lms_payload(config)
 
 
@@ -2717,6 +2820,8 @@ class BymRequestHandler(BaseHTTPRequestHandler):
                 self._send_json(HTTPStatus.OK, save_lms_result(payload, self.config))
             elif path == "/api/lms/replay":
                 self._send_json(HTTPStatus.OK, lms_replay(payload, self.config))
+            elif path == "/api/lms/reset":
+                self._send_json(HTTPStatus.OK, reset_lms_competition(payload, self.config))
             else:
                 self.send_error(HTTPStatus.NOT_FOUND)
         except (ValueError, KeyError, json.JSONDecodeError) as exc:

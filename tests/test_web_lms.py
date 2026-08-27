@@ -40,6 +40,7 @@ def config_with(tmp_path, gameweek: dict, states: dict | None = None) -> WebConf
     return WebConfig(
         lms_gameweek_path=tmp_path / "lms_gameweek.json",
         lms_state_path=tmp_path / "lms_state.json",
+        lms_archive_path=tmp_path / "lms_archive.json",
     )
 
 
@@ -151,6 +152,60 @@ def test_eliminated_entrants_get_no_recommendation(tmp_path, router):
     assert payload["entrants"]["Out"]["alive"] is False
 
 
+# ---- the model's self-play opponent --------------------------------------
+
+
+def test_the_model_books_its_own_top_pick_with_no_one_asking_it_to(tmp_path, router):
+    config = config_with(tmp_path, GAMEWEEK, {})
+    payload = lms_payload(config, router=router, known_teams=set(TEAMS))
+
+    ai = lms.load_states(config.lms_state_path)[lms.AI_ENTRANT]
+    assert ai.alive is True
+    assert ai.used_clubs == ["Strong"]  # the clear favourite in GAMEWEEK
+    assert ai.history[0]["result"] == "PENDING"
+    assert payload["entrants"][lms.AI_ENTRANT]["used_clubs"] == ["Strong"]
+
+
+def test_the_model_does_not_rebook_within_the_same_gameweek(tmp_path, router):
+    config = config_with(tmp_path, GAMEWEEK, {})
+    lms_payload(config, router=router, known_teams=set(TEAMS))
+    lms_payload(config, router=router, known_teams=set(TEAMS))
+    assert len(lms.load_states(config.lms_state_path)[lms.AI_ENTRANT].history) == 1
+
+
+def test_an_eliminated_model_stops_playing(tmp_path, router):
+    config = config_with(
+        tmp_path, GAMEWEEK,
+        {lms.AI_ENTRANT: {"entrant": lms.AI_ENTRANT, "alive": False, "used_clubs": ["Weak"],
+                           "history": [{"gameweek": 1, "team": "Weak", "opponent": "Strong",
+                                        "is_home": False, "result": "LOSS", "source": "AUTO"}]}},
+    )
+    lms_payload(config, router=router, known_teams=set(TEAMS))
+    ai = lms.load_states(config.lms_state_path)[lms.AI_ENTRANT]
+    assert ai.used_clubs == ["Weak"]  # untouched — no gameweek-3 pick added
+    assert len(ai.history) == 1
+
+
+def test_the_models_pick_cannot_be_edited_by_hand():
+    from bym.web import save_lms_pick
+
+    with pytest.raises(ValueError, match="plays itself"):
+        save_lms_pick(
+            {"entrant": lms.AI_ENTRANT, "gameweek": 3, "team": "Strong",
+             "opponent": "Weak", "is_home": True},
+            WebConfig(),
+        )
+
+
+def test_the_models_result_cannot_be_set_by_hand():
+    from bym.web import save_lms_result
+
+    with pytest.raises(ValueError, match="settled automatically"):
+        save_lms_result(
+            {"entrant": lms.AI_ENTRANT, "gameweek": 3, "result": "WIN"}, WebConfig()
+        )
+
+
 def test_the_model_runs_once_per_gameweek_not_once_per_entrant(
     tmp_path, router, monkeypatch
 ):
@@ -172,8 +227,14 @@ def test_the_model_runs_once_per_gameweek_not_once_per_entrant(
         config_with(tmp_path, GAMEWEEK, entrants),
         router=router, known_teams=set(TEAMS),
     )
-    assert len(payload["plans"]) == 5  # four entrants plus __all__
-    assert len(calls) == 1  # one gameweek in the cached fallback
+    assert len(payload["plans"]) == 6  # four entrants, __all__, and the model's own autoplay
+    # One call for this gameweek's shared score matrices, plus one more
+    # from `lineage()` recomputing the model's own just-booked pick from
+    # its own fixture — a booked pick is deliberately re-priced live,
+    # never read back from a stored probability (see `lms.pick_outlook`).
+    # A/B/C/D start with empty history, so only the model's autoplay
+    # triggers this second call.
+    assert len(calls) == 2
 
 
 def test_no_gameweek_still_returns_entrant_state(tmp_path, router):
@@ -306,6 +367,88 @@ def test_switching_a_pick_through_the_endpoint_frees_the_old_club(tmp_path, rout
     assert [h["team"] for h in state.history] == ["Middling A"]
 
 
+def test_reset_archives_the_finished_competition_and_starts_a_clean_one(tmp_path):
+    from bym.web import reset_lms_competition
+
+    config = config_with(
+        tmp_path, GAMEWEEK,
+        {
+            "James": {"entrant": "James", "alive": True, "used_clubs": ["Strong"],
+                      "history": [{"gameweek": 3, "team": "Strong", "opponent": "Weak",
+                                   "is_home": True, "result": "WIN", "source": None}]},
+            "Dave": {"entrant": "Dave", "alive": False, "used_clubs": ["Weak"],
+                     "history": [{"gameweek": 1, "team": "Weak", "opponent": "Strong",
+                                  "is_home": True, "result": "LOSS", "source": None}]},
+        },
+    )
+
+    payload = reset_lms_competition({}, config)
+
+    fresh = lms.load_states(config.lms_state_path)
+    assert fresh["James"] == lms.LMSState(entrant="James", alive=True)
+    assert fresh["Dave"] == lms.LMSState(entrant="Dave", alive=True)
+    # The trailing `lms_payload(config)` call that builds the response
+    # naturally re-adds and re-books the model for the new competition —
+    # the same thing any subsequent page load would do.
+    assert lms.AI_ENTRANT in fresh
+    assert fresh[lms.AI_ENTRANT].alive is True
+
+    archived = lms.load_archive(config.lms_archive_path)
+    assert len(archived) == 1
+    assert archived[0]["winner"] == "James"
+    assert archived[0]["entrants"]["James"]["used_clubs"] == ["Strong"]
+
+    assert payload["archive"] == [
+        {"archived_at": archived[0]["archived_at"], "winner": "James",
+         "entrant_count": 2, "ai_alive": None}
+    ]
+    assert payload["entrants"]["James"]["used_clubs"] == []
+
+
+def test_resetting_an_empty_pool_writes_nothing_to_the_archive(tmp_path):
+    """No entrants yet and no winner typed in is not a finished
+    competition — archiving an empty entry would just be noise in the
+    history list."""
+    from bym.web import reset_lms_competition
+
+    config = config_with(tmp_path, GAMEWEEK, {})
+
+    reset_lms_competition({}, config)
+    assert lms.load_archive(config.lms_archive_path) == []
+
+
+def test_reset_uses_a_hand_typed_winner_over_the_tracked_entrants(tmp_path):
+    """This file only ever tracked James's own picks, so the real pool's
+    winner — Dave, say — cannot come from anything in `states`."""
+    from bym.web import reset_lms_competition
+
+    config = config_with(
+        tmp_path, GAMEWEEK,
+        {"James": {"entrant": "James", "alive": False, "used_clubs": ["Weak"],
+                   "history": []}},
+    )
+
+    reset_lms_competition({"winner": "Dave"}, config)
+
+    archived = lms.load_archive(config.lms_archive_path)
+    assert archived[0]["winner"] == "Dave"
+
+
+def test_reset_records_a_hand_typed_winner_even_with_nothing_tracked(tmp_path):
+    """The whole point of a manual winner is that this app might not have
+    tracked anyone at all that round — the record should still be kept."""
+    from bym.web import reset_lms_competition
+
+    config = config_with(tmp_path, GAMEWEEK, {})
+
+    reset_lms_competition({"winner": "Dave"}, config)
+
+    archived = lms.load_archive(config.lms_archive_path)
+    assert len(archived) == 1
+    assert archived[0]["winner"] == "Dave"
+    assert archived[0]["entrants"] == {}
+
+
 def test_live_pick_keeps_its_probability_and_suggestion_snapshot(
     tmp_path, router, monkeypatch
 ):
@@ -355,14 +498,17 @@ def test_previews_cover_every_eligible_club_and_price_the_whole_horizon(
 
 def test_a_preview_never_writes_anything(tmp_path, router):
     """A preview that left a club in used_clubs would be data loss wearing
-    a feature's clothes."""
+    a feature's clothes. The model autoplaying its own pick on this same
+    call is a real write, but a separate one — it must never touch
+    James's own recorded state."""
     config = config_with(
         tmp_path, GAMEWEEK,
         {"James": {"entrant": "James", "alive": True, "used_clubs": [], "history": []}},
     )
-    before = config.lms_state_path.read_text()
     lms_payload(config, router=router, known_teams=set(TEAMS))
-    assert config.lms_state_path.read_text() == before
+    assert lms.load_states(config.lms_state_path)["James"] == lms.LMSState(
+        entrant="James", alive=True, used_clubs=[], history=[]
+    )
 
 
 def test_the_gameweek_carries_the_kickoff_that_closes_it(tmp_path, router):

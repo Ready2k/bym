@@ -29,6 +29,7 @@ const EXPOSED = [
   "strategyPanel", "submissionRecord", "leagueView", "homeView",
   "teamBadge", "activityItem", "emptyState", "markScrollableRegions",
   "lmsPlanCard", "lmsRecommendationRows", "lmsLineageCard", "lineageChart",
+  "lmsView",
   "healthView", "modelView", "fplView", "fplStatusPill",
 ];
 

@@ -620,6 +620,86 @@ def test_save_states_round_trips(tmp_path):
     assert load_states(path)["James"].history == state.history
 
 
+def test_start_new_competition_keeps_names_but_resets_everything_else():
+    from bym.lms import start_new_competition
+
+    survivor = LMSState(entrant="James", alive=True, used_clubs=["Arsenal"])
+    survivor.history.append({"gameweek": 1, "team": "Arsenal", "result": "WIN"})
+    eliminated = LMSState(entrant="Dave", alive=False, used_clubs=["Hull"])
+
+    fresh = start_new_competition({"James": survivor, "Dave": eliminated})
+
+    assert set(fresh) == {"James", "Dave"}
+    assert all(s.alive and s.used_clubs == [] and s.history == [] for s in fresh.values())
+    # The originals are untouched — a caller archiving them first must see
+    # the competition as it finished, not the reset state.
+    assert survivor.used_clubs == ["Arsenal"]
+
+
+def test_archive_competition_records_the_sole_survivor_as_winner(tmp_path):
+    from bym.lms import archive_competition, load_archive
+
+    path = tmp_path / "lms_archive.json"
+    states = {
+        "James": LMSState(entrant="James", alive=True, used_clubs=["Arsenal"]),
+        "Dave": LMSState(entrant="Dave", alive=False, used_clubs=["Hull"]),
+    }
+    entry = archive_competition(states, path)
+    assert entry["winner"] == "James"
+    assert load_archive(path) == [entry]
+
+
+def test_archive_competition_leaves_the_winner_unknown_without_exactly_one_survivor(tmp_path):
+    """Resetting mid-competition (nobody eliminated yet, or a bug wiping
+    everyone) must not guess at a winner it cannot honestly name."""
+    from bym.lms import archive_competition
+
+    path = tmp_path / "lms_archive.json"
+    two_alive = {
+        "James": LMSState(entrant="James", alive=True),
+        "Dave": LMSState(entrant="Dave", alive=True),
+    }
+    assert archive_competition(two_alive, path)["winner"] is None
+
+    none_alive = {"James": LMSState(entrant="James", alive=False)}
+    assert archive_competition(none_alive, path)["winner"] is None
+
+
+def test_archive_competition_lets_a_hand_typed_winner_override_inference(tmp_path):
+    """This file usually tracks one person's own picks, not the whole
+    pool, so the tracked entrants being alive or not says nothing about
+    who actually won the real competition — the caller has to say."""
+    from bym.lms import archive_competition
+
+    path = tmp_path / "lms_archive.json"
+    states = {"James": LMSState(entrant="James", alive=False, used_clubs=["Hull"])}
+    entry = archive_competition(states, path, winner="Dave")
+    assert entry["winner"] == "Dave"
+
+
+def test_archive_competition_never_infers_the_model_as_the_pool_winner(tmp_path):
+    """The model has no stake in the real pool — a human still eliminated
+    with only the model left alive is not the same as the human losing to
+    another human, and must not be reported as a win for `AI_ENTRANT`."""
+    from bym.lms import AI_ENTRANT, archive_competition
+
+    path = tmp_path / "lms_archive.json"
+    states = {
+        "James": LMSState(entrant="James", alive=False),
+        AI_ENTRANT: LMSState(entrant=AI_ENTRANT, alive=True),
+    }
+    assert archive_competition(states, path)["winner"] is None
+
+
+def test_archive_competition_appends_rather_than_overwrites(tmp_path):
+    from bym.lms import archive_competition, load_archive
+
+    path = tmp_path / "lms_archive.json"
+    archive_competition({"James": LMSState(entrant="James")}, path)
+    archive_competition({"Dave": LMSState(entrant="Dave")}, path)
+    assert len(load_archive(path)) == 2
+
+
 def test_auto_settle_matches_a_hand_typed_pick_to_a_fetched_fixture():
     """The pick was typed by a human, the fixture list came from a feed.
     An exact-string match here fails silently, leaving the pick PENDING."""
