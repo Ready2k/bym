@@ -18,6 +18,7 @@ from bym.web import (
     cup_prediction,
     fpl_status_payload,
     import_opponent,
+    list_rounds,
     load_ui_state,
     mark_round_entered,
     ollama_status,
@@ -241,6 +242,22 @@ def test_create_round_schedules_polling_the_same_way_bym_watch_does(tmp_path):
     assert scheduler.JobType.POLL_ODDS.value in job_types
     assert scheduler.JobType.POLL_AVAILABILITY.value in job_types
     assert all(job.round_number == 14 for job in jobs)
+
+
+def test_list_rounds_excludes_the_tracked_example_round(tmp_path):
+    """example_round.json is the CLI's tracked fixture (CLAUDE.md), not a
+    round to switch into — it showed up in the Rounds list as if it were,
+    which is exactly the kind of mistake a rename can't fix for good."""
+    config = WebConfig(
+        round_path=tmp_path / "active.json",
+        database_path=tmp_path / "bym.db",
+        ui_state_path=tmp_path / "ui_state.json",
+    )
+    create_round(payload(), config)
+    (tmp_path / "example_round.json").write_text(json.dumps(payload()))
+
+    names = {Path(r["round_path"]).name for r in list_rounds(config)["rounds"]}
+    assert "example_round.json" not in names
 
 
 # --- source approval -------------------------------------------------------

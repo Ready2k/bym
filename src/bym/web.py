@@ -854,6 +854,11 @@ def list_rounds(config: WebConfig) -> dict:
     rounds = []
     if directory.is_dir():
         for file_path in sorted(directory.glob("*.json")):
+            if file_path.name == "example_round.json":
+                # The CLI's tracked fixture (CLAUDE.md), not a round anyone
+                # would actually switch to — listing it here just invites
+                # picking it by mistake.
+                continue
             try:
                 rnd = load_round(file_path)
             except (ValueError, KeyError, OSError):
