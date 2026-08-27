@@ -1,10 +1,4 @@
 season,round,fixture_idx,home_team,away_team,arm,pred_home,pred_away,recorded_at,actual_home,actual_away,points,status
-2026,14,0,Arsenal,Everton,SUBMITTED,2,0,2026-08-08T10:55:08+00:00,2.0,0.0,5.0,OK
-2026,14,1,Chelsea,Newcastle,SUBMITTED,1,0,2026-08-08T10:55:08+00:00,1.0,1.0,0.0,OK
-2026,14,2,Fulham,Brentford,SUBMITTED,2,1,2026-08-08T10:55:08+00:00,,,,VOID
-2026,14,3,Leeds,Tottenham,SUBMITTED,1,2,2026-08-08T10:55:08+00:00,1.0,2.0,5.0,OK
-2026,14,4,Man City,Bournemouth,SUBMITTED,3,0,2026-08-08T10:55:08+00:00,3.0,0.0,5.0,OK
-2026,14,5,West Ham,Aston Villa,SUBMITTED,1,2,2026-08-08T10:55:08+00:00,1.0,2.0,5.0,OK
 2026,1,0,Everton,Crystal Palace,PHASE1_MODEL_V1,1,0,2026-08-26T17:09:12+00:00,2.0,0.0,2.0,OK
 2026,1,1,Nott'm Forest,Leeds,PHASE1_MODEL_V1,1,0,2026-08-26T17:09:12+00:00,0.0,1.0,0.0,OK
 2026,1,2,Brentford,Tottenham,PHASE1_MODEL_V1,2,1,2026-08-26T17:09:12+00:00,3.0,0.0,2.0,OK
