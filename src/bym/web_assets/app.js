@@ -1110,7 +1110,7 @@ function opponentsView() {
 function performanceView() {
   const { performance } = appData;
   const body = performance.arms.length ? `<section class="stat-table-card"><table><thead><tr><th>Arm</th><th>Rounds</th><th>Fixtures</th><th>Points</th><th>Pts / round</th><th>Exact</th></tr></thead><tbody>${performance.arms.map((arm) => `<tr><td>${escapeHtml(arm.arm)}</td><td>${arm.rounds}</td><td>${arm.fixtures}</td><td>${arm.points}</td><td>${Number(arm["pts/round"]).toFixed(2)}</td><td>${arm.exact}</td></tr>`).join("")}</tbody></table></section>` : emptyState("No performance data yet", "Record predictions before a deadline and score a completed round to begin the prospective comparison.");
-  return `${pageHeader("Prospective measurement", "Performance", "The model is evaluated round by round, not retrospectively reconstructed.")}${body}<section class="callout muted"><strong>Read this carefully</strong><span>${escapeHtml(performance.sample_warning)}</span></section>`;
+  return `${pageHeader("Prospective measurement", "Performance", "The model is evaluated round by round, not retrospectively reconstructed.", '<button class="info" data-info="performance-table" aria-label="Explain this table">?</button>')}${body}<section class="callout muted"><strong>Read this carefully</strong><span>${escapeHtml(performance.sample_warning)}</span></section>`;
 }
 
 function activityItem(event) {
@@ -1664,6 +1664,7 @@ document.addEventListener("click", async (event) => {
   }
   if (action === "golden-detail") { const distribution = appData.round.golden_goal.distribution; openInfo("Golden Goal", `${appData.round.golden_goal.rationale}${distribution ? ` Most likely intervals: ${Object.entries(distribution.interval_probabilities).map(([label, value]) => `${label} ${percent(value)}`).join(", ")}. No goal: ${percent(distribution.no_goal_probability)}.` : ""}`); }
   if (event.target.closest("[data-info='ev']")) openInfo("Expected points", "This is the average Super 6 score this prediction would earn if the match were replayed many times under the model’s current probabilities. It is not a promise for one match.");
+  if (event.target.closest("[data-info='performance-table']")) openInfo("Reading this table", "Each row is a running total for that arm across every round scored so far, not just the latest one. Rounds is how many rounds have been scored; Fixtures and Points are summed across all of them (VOID fixtures excluded); Pts/round divides by Rounds, not Fixtures. SUBMITTED is what you actually entered in Super 6; PHASE1_MODEL_V1 is the frozen model's own picks, tracked side by side for comparison.");
   const close = event.target.closest("[data-close]");
   if (close) $("#" + close.dataset.close).close();
   if (event.target.closest("#confirm-entered")) { try { await markEntered(); } catch (error) { toast(error.message); } }
