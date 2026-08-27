@@ -7,7 +7,7 @@
 # rather than in the Python script because only the wrapper can reach
 # launchctl/the plist file.
 
-REPO_DIR="/Users/jamescregeen/bym"
+REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 LOG_FILE="$REPO_DIR/data/fpl_daily_harvest.log"
 PLIST_LABEL="com.bym.fpl-daily-harvest"
 PLIST_PATH="$HOME/Library/LaunchAgents/${PLIST_LABEL}.plist"
