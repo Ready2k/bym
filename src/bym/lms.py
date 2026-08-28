@@ -40,6 +40,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import tempfile
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -768,13 +769,23 @@ def save_states(states: dict[str, LMSState], path: Path = DEFAULT_STATE_PATH) ->
     entire competition — every entrant's used clubs and pick history, with
     no other copy. A crash or a full disk partway through a plain write
     would leave truncated JSON that `load_states` cannot parse, and there
-    would be nothing to restore it from.
+    would be nothing to restore it from. The temp name is unique per call
+    (`tempfile.mkstemp`) rather than a fixed `path + ".tmp"` — the web
+    UI's `ThreadingHTTPServer` can run two requests that both save this
+    file concurrently, and a shared temp name let one thread's
+    `os.replace` consume the file a second thread was still about to
+    rename, raising `FileNotFoundError` on the loser.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = {k: vars(v) for k, v in states.items()}
-    tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
-    os.replace(tmp, path)
+    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=path.name + ".", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w") as handle:
+            handle.write(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+        os.replace(tmp, path)
+    except BaseException:
+        Path(tmp).unlink(missing_ok=True)
+        raise
 
 
 def get_state(entrant: str, path: Path = DEFAULT_STATE_PATH) -> LMSState:
@@ -798,9 +809,14 @@ def load_archive(path: Path = DEFAULT_ARCHIVE_PATH) -> list[dict]:
 def save_archive(archive: list[dict], path: Path = DEFAULT_ARCHIVE_PATH) -> None:
     """Write the archive atomically, same discipline as `save_states`."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(json.dumps(archive, indent=2, sort_keys=True) + "\n")
-    os.replace(tmp, path)
+    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=path.name + ".", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w") as handle:
+            handle.write(json.dumps(archive, indent=2, sort_keys=True) + "\n")
+        os.replace(tmp, path)
+    except BaseException:
+        Path(tmp).unlink(missing_ok=True)
+        raise
 
 
 def archive_competition(

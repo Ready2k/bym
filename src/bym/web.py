@@ -14,7 +14,7 @@ import os
 import re
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
-from threading import RLock
+from threading import Event, RLock
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -2751,7 +2751,7 @@ def reset_lms_competition(payload: dict, config: WebConfig) -> dict:
     return lms_payload(config)
 
 
-def app_payload(config: WebConfig) -> dict:
+def _build_app_payload(config: WebConfig) -> dict:
     """One truthful payload for all UI phases; absent evidence remains absent."""
     if not _active_round_path(config).exists():
         # A fresh deployment has no round file yet, and nothing else in
@@ -2809,6 +2809,57 @@ def app_payload(config: WebConfig) -> dict:
         }
     )
     return payload
+
+
+class _InFlightBuild:
+    def __init__(self) -> None:
+        self.done = Event()
+        self.result: dict | None = None
+        self.error: BaseException | None = None
+
+
+# `/api/app` is CPU-bound (score-matrix eval, JSON assembly) and the GIL
+# means concurrent requests on ThreadingHTTPServer don't run in parallel —
+# they thrash for the interpreter and each one slows down by roughly the
+# number of others in flight. Two browser tabs open at once (or the UI's
+# own 30s-timeout retry landing while the original request is still
+# finishing server-side) is enough to push every one of them well past
+# 30s. Requests that overlap are asking the same question at the same
+# moment, so coalesce them: only the first caller actually builds the
+# payload, and anyone who arrives while that build is still running gets
+# its result instead of starting a duplicate one. A request that starts
+# once the build is idle always gets a fresh build — this never serves a
+# result computed before that request even arrived.
+_APP_PAYLOAD_INFLIGHT_LOCK = RLock()
+_APP_PAYLOAD_INFLIGHT: _InFlightBuild | None = None
+
+
+def app_payload(config: WebConfig) -> dict:
+    global _APP_PAYLOAD_INFLIGHT
+    with _APP_PAYLOAD_INFLIGHT_LOCK:
+        inflight = _APP_PAYLOAD_INFLIGHT
+        if inflight is not None:
+            is_builder = False
+        else:
+            inflight = _APP_PAYLOAD_INFLIGHT = _InFlightBuild()
+            is_builder = True
+
+    if not is_builder:
+        inflight.done.wait()
+        if inflight.error is not None:
+            raise inflight.error
+        return inflight.result
+
+    try:
+        inflight.result = _build_app_payload(config)
+    except BaseException as exc:
+        inflight.error = exc
+        raise
+    finally:
+        with _APP_PAYLOAD_INFLIGHT_LOCK:
+            _APP_PAYLOAD_INFLIGHT = None
+        inflight.done.set()
+    return inflight.result
 
 
 class BymRequestHandler(BaseHTTPRequestHandler):

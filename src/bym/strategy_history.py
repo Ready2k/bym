@@ -33,6 +33,7 @@ from __future__ import annotations
 import copy
 import json
 import os
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping, Sequence
@@ -98,11 +99,21 @@ def load_history(path: Path = DEFAULT_STRATEGY_PATH) -> dict[str, Any]:
 
 
 def save_history(store: Mapping[str, Any], path: Path = DEFAULT_STRATEGY_PATH) -> None:
-    """Atomically save, so an interrupted write keeps the prior history."""
+    """Atomically save, so an interrupted write keeps the prior history.
+
+    Unique temp file per call — see `prediction_history.save_history`'s
+    docstring for why a fixed `.tmp` name races under the web UI's
+    concurrent `/api/app` requests.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_suffix(path.suffix + ".tmp")
-    temporary.write_text(json.dumps(store, indent=2, sort_keys=True) + "\n")
-    os.replace(temporary, path)
+    fd, temporary = tempfile.mkstemp(dir=path.parent, prefix=path.name + ".", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w") as handle:
+            handle.write(json.dumps(store, indent=2, sort_keys=True) + "\n")
+        os.replace(temporary, path)
+    except BaseException:
+        Path(temporary).unlink(missing_ok=True)
+        raise
 
 
 def opponent_snapshot(

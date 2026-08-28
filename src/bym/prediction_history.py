@@ -18,6 +18,7 @@ from __future__ import annotations
 import copy
 import json
 import os
+import tempfile
 from collections.abc import Iterable, Mapping
 from datetime import datetime, timezone
 from pathlib import Path
@@ -218,11 +219,23 @@ def load_history(path: Path = DEFAULT_HISTORY_PATH) -> dict[str, Any]:
 
 
 def save_history(store: Mapping[str, Any], path: Path = DEFAULT_HISTORY_PATH) -> None:
-    """Atomically save the store so an interrupted refresh keeps prior history."""
+    """Atomically save the store so an interrupted refresh keeps prior history.
+
+    The temp file name is unique per call (`tempfile.mkstemp`), not a fixed
+    `path + ".tmp"` — the web UI's `ThreadingHTTPServer` can run two
+    `/api/app` requests concurrently, and a shared temp name let one
+    thread's `os.replace` consume the file a second thread was still
+    about to rename, raising `FileNotFoundError` on the loser.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_suffix(path.suffix + ".tmp")
-    temporary.write_text(json.dumps(store, indent=2, sort_keys=True) + "\n")
-    os.replace(temporary, path)
+    fd, temporary = tempfile.mkstemp(dir=path.parent, prefix=path.name + ".", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w") as handle:
+            handle.write(json.dumps(store, indent=2, sort_keys=True) + "\n")
+        os.replace(temporary, path)
+    except BaseException:
+        Path(temporary).unlink(missing_ok=True)
+        raise
 
 
 def _changes(before: list[dict[str, Any]], after: list[dict[str, Any]]) -> list[dict[str, Any]]:
