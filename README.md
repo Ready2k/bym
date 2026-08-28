@@ -99,6 +99,18 @@ UI only. `restart` and `logs` are also available (`logs` shows both
 processes); the script uses `.venv` when it is present, and `BYM_PORT`,
 `BYM_DB`, or `BYM_SUBMISSIONS` override its local defaults.
 
+`bym-service` itself does not survive a reboot or logout — nothing
+restarts it unless something is watching. On macOS,
+`./scripts/install_bym_service_launchd.sh` installs a LaunchAgent
+(`com.bym.service`, from the `scripts/com.bym.service.plist` template)
+that runs `bym-service start` at login and re-checks every 5 minutes as a
+self-heal; `start` already no-ops on anything still running, so the
+recheck is a cheap poll, not a repeated restart. Re-run the install
+script any time the repo directory moves — the plist needs an absolute
+path baked in. This is the same pattern
+[`scripts/install_fpl_harvest_launchd.sh`](scripts/install_fpl_harvest_launchd.sh)
+uses for the FPL corpus harvest.
+
 Walk-forward backtest against the §16/§28 baselines — MARKET-AVAILABLE
 (early odds — the fair target), MARKET-ORACLE (closing odds — theoretical
 gold standard), pure Poisson, and Dixon-Coles pooled vs per-division. See

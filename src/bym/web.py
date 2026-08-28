@@ -1231,9 +1231,17 @@ def _results_payload(rnd: Round, summary: dict, state: dict) -> dict:
 
 
 def _league_payload(
-    rnd: Round, state: dict, config: WebConfig, recommendation=None
+    rnd: Round, state: dict, config: WebConfig, recommendation=None,
+    router=None, matches=None,
 ) -> dict:
-    """Score only the participant picks and results the user has recorded."""
+    """Score only the participant picks and results the user has recorded.
+
+    `router`/`matches` let a caller that already fitted one for the round
+    (`app_payload`, via `_model_context`) hand it over instead of paying
+    for a second fit inside `_season_strategy_payload` below — the same
+    trade `lms_payload` makes. A bare `_league_payload(...)` call fits its
+    own.
+    """
     from .league import (
         OpponentRound, league_standings, load_opponent_history, opponent_profiles,
     )
@@ -1332,7 +1340,8 @@ def _league_payload(
     round_strategy = _strategy_payload(rnd, table, history, state, recommendation)
     payload.update(round_strategy)
     payload["season_strategy"] = _season_strategy_payload(
-        rnd, table, history, favourite, recommendation, state, config
+        rnd, table, history, favourite, recommendation, state, config,
+        router=router, matches=matches,
     )
 
     # §19: persist whichever recommendations were actually produced, so a
@@ -1373,6 +1382,7 @@ SEASON_SIMULATIONS = 1000
 
 def _season_strategy_payload(
     rnd: Round, table, history, favourite, recommendation, state: dict, config: WebConfig,
+    router=None, matches=None,
 ) -> dict:
     """§12-13 season-length strategy — a genuine season Monte Carlo
     (`season_simulation.py`) layered on top of `_strategy_payload`'s
@@ -1429,13 +1439,14 @@ def _season_strategy_payload(
     synthetic_rounds: list = []
     extra_rounds = min(rounds_remaining - 1, MAX_SYNTHETIC_ROUNDS)
     if extra_rounds > 0:
-        matches = load_matches(
-            config.data_path,
-            list(range(config.seasons[0], config.seasons[1] + 1)),
-            config.divisions,
-            fetch=False,
-        )
-        router = _fit_router(matches)
+        if router is None or matches is None:
+            matches = load_matches(
+                config.data_path,
+                list(range(config.seasons[0], config.seasons[1] + 1)),
+                config.divisions,
+                fetch=False,
+            )
+            router = _fit_router(matches)
         synthetic_rounds = [
             ss.sample_synthetic_round(matches, router, FROZEN_PHASE1_V1, seed=ss.DEFAULT_SEED, slot=slot)
             for slot in range(extra_rounds)
@@ -2755,7 +2766,7 @@ def app_payload(config: WebConfig) -> dict:
         _, _, known_teams = _model_context(config)
         return {"onboarding": True, "teams": sorted(known_teams)}
     payload, engine_result = _dashboard(config)
-    _, router, known_teams = _model_context(config)
+    matches, router, known_teams = _model_context(config)
     rnd = load_round(_active_round_path(config))
     state = load_ui_state(config.ui_state_path)
     registry = load_registry(config.registry_path)
@@ -2776,7 +2787,8 @@ def app_payload(config: WebConfig) -> dict:
             "results": _results_payload(rnd, payload["round"], state),
             "opponents": state["opponents"],
             "league": _league_payload(
-                rnd, state, config, engine_result.recommendation
+                rnd, state, config, engine_result.recommendation,
+                router=router, matches=matches,
             ),
             "sources": sources,
             "secrets": secrets.describe_available(config.secrets_path),
@@ -2867,10 +2879,21 @@ class BymRequestHandler(BaseHTTPRequestHandler):
         except (ValueError, KeyError) as exc:
             self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": str(exc)})
         except OSError:
-            logging.exception("Internal server error handling GET %s", path)
+            self._report_internal_error(path, "GET")
+
+    def _report_internal_error(self, path: str, verb: str) -> None:
+        logging.exception("Internal server error handling %s %s", verb, path)
+        try:
             self._send_json(
                 HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "An internal error occurred."}
             )
+        except OSError:
+            # The client that triggered this (e.g. the UI's 30s request
+            # abort) is already gone — the OSError above was probably a
+            # broken pipe from the first write, and trying to write a
+            # second error response to the same dead socket would just
+            # raise again, uncaught, past this handler.
+            pass
 
     def do_POST(self) -> None:  # noqa: N802
         path = urlparse(self.path).path
@@ -2919,10 +2942,7 @@ class BymRequestHandler(BaseHTTPRequestHandler):
         except (ValueError, KeyError, json.JSONDecodeError) as exc:
             self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
         except OSError:
-            logging.exception("Internal server error handling POST %s", path)
-            self._send_json(
-                HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "An internal error occurred."}
-            )
+            self._report_internal_error(path, "POST")
 
 
 def missing_state_warnings(config: WebConfig) -> list[str]:

@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Template — launchd requires absolute paths baked in, so this is not
+     installed as-is. Run scripts/install_bym_service_launchd.sh, which
+     substitutes __REPO_DIR__ for wherever the repo actually lives and
+     installs the result into ~/Library/LaunchAgents/.
+
+     `bym-service start` backgrounds the UI and worker with nohup and
+     exits once both are reachable, so launchd is supervising the launcher
+     script, not the long-running UI/worker processes themselves — a
+     KeepAlive on this job would only restart the (already-exited)
+     launcher, not the processes it started. RunAtLoad covers login/reboot;
+     StartInterval re-runs `start` every 5 minutes as a self-heal against
+     either process dying in between — `start` already no-ops per-process
+     when its PID file shows it's alive (see pid_file_is_running in
+     bym-service), so this is a cheap, idempotent poll, not a repeated
+     restart.
+
+     AbandonProcessGroup matters here: launchd's default is to kill a
+     job's whole process group when its main process exits, and
+     `bym-service start` exits (successfully) right after backgrounding
+     the UI/worker with nohup — without this key launchd reaps the very
+     processes it just watched start, seconds after "started" is logged. -->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.bym.service</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>__REPO_DIR__/scripts/bym-service</string>
+        <string>start</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>StartInterval</key>
+    <integer>300</integer>
+    <key>AbandonProcessGroup</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>__REPO_DIR__/.run/bym-service-launchd.log</string>
+    <key>StandardErrorPath</key>
+    <string>__REPO_DIR__/.run/bym-service-launchd.err.log</string>
+</dict>
+</plist>

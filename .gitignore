@@ -2,6 +2,7 @@
 __pycache__/
 *.pyc
 *.egg-info/
+.DS_Store
 # The Football-Data corpus, at the repo root only. Anchored deliberately:
 # an unanchored `data/` matches a directory of that name at ANY depth, and
 # silently excluded the whole of src/bym/data/ — the Football-Data
