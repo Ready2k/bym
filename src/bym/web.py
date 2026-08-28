@@ -12,6 +12,7 @@ import logging
 import mimetypes
 import os
 import re
+import time
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from threading import Event, RLock
@@ -2816,6 +2817,7 @@ class _InFlightBuild:
         self.done = Event()
         self.result: dict | None = None
         self.error: BaseException | None = None
+        self.waiters = 0
 
 
 # `/api/app` is CPU-bound (score-matrix eval, JSON assembly) and the GIL
@@ -2832,6 +2834,11 @@ class _InFlightBuild:
 # result computed before that request even arrived.
 _APP_PAYLOAD_INFLIGHT_LOCK = RLock()
 _APP_PAYLOAD_INFLIGHT: _InFlightBuild | None = None
+# Below the UI's 30s abort, but well above a normal build (~2-4s once the
+# corpus fit is warm) — a log line at this threshold is a lead indicator of
+# the next timeout, with the one thing earlier incidents couldn't show:
+# how long the build actually took and how many requests were riding it.
+_SLOW_BUILD_WARN_SECONDS = 8.0
 
 
 def app_payload(config: WebConfig) -> dict:
@@ -2839,6 +2846,7 @@ def app_payload(config: WebConfig) -> dict:
     with _APP_PAYLOAD_INFLIGHT_LOCK:
         inflight = _APP_PAYLOAD_INFLIGHT
         if inflight is not None:
+            inflight.waiters += 1
             is_builder = False
         else:
             inflight = _APP_PAYLOAD_INFLIGHT = _InFlightBuild()
@@ -2850,14 +2858,22 @@ def app_payload(config: WebConfig) -> dict:
             raise inflight.error
         return inflight.result
 
+    started = time.monotonic()
     try:
         inflight.result = _build_app_payload(config)
     except BaseException as exc:
         inflight.error = exc
         raise
     finally:
+        elapsed = time.monotonic() - started
         with _APP_PAYLOAD_INFLIGHT_LOCK:
             _APP_PAYLOAD_INFLIGHT = None
+            waiters = inflight.waiters
+        if elapsed > _SLOW_BUILD_WARN_SECONDS:
+            logging.warning(
+                "/api/app build took %.1fs (%d request(s) coalesced onto it) "
+                "— the UI's own timeout is 30s.", elapsed, waiters + 1,
+            )
         inflight.done.set()
     return inflight.result
 
@@ -3021,6 +3037,15 @@ def missing_state_warnings(config: WebConfig) -> list[str]:
 
 def serve(config: WebConfig, host: str = "127.0.0.1", port: int = 8000) -> None:
     """Run the local UI. Press Ctrl-C to stop it."""
+    # Every prior log entry from this server (exceptions, slow-build
+    # warnings) had no clock on it at all, which made a "this happened
+    # again" report impossible to line up against what else was
+    # happening at the time. Root-logger config, so it covers every
+    # `logging.exception`/`logging.warning` call in this module too, not
+    # just ones added after this.
+    logging.basicConfig(
+        level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s"
+    )
     # Fetch first, explicitly. _model_context always reads with
     # fetch=False (an unexpected background fetch mid-request would be a
     # bad surprise on an ordinary page load), which is fine once data/
