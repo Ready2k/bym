@@ -458,6 +458,7 @@ def run_due_jobs(
     extractor_mode: str = "shadow",
     season: int = 2026,
     known_teams: set[str] | None = None,
+    web_config=None,
     **poll_kwargs,
 ) -> list[PollOutcome]:
     """Claim and run every due job, dispatching by job type and
@@ -467,8 +468,19 @@ def run_due_jobs(
     knowledge investigation — the one place the knowledge layer runs
     without being separately scheduled, because that is exactly the
     event-driven case it exists for.
+
+    `web_config` is threaded through explicitly rather than built here
+    with defaults: `refresh_and_notify` reads and writes real files
+    (ui_state.json, prediction_history.json, the event log, submissions),
+    so a caller under test that does not pass an isolated one would
+    otherwise have every one of those default to the real production
+    paths — silently, since nothing about a passing test would say so.
     """
     now = now or datetime.now(timezone.utc)
+    if web_config is None:
+        from .web import WebConfig
+
+        web_config = WebConfig()
     scheduler.reclaim_stuck_jobs(conn)
     outcomes: list[PollOutcome] = []
     # A tick can claim several job types (odds, availability, knowledge)
@@ -521,10 +533,10 @@ def run_due_jobs(
             if rnd.round_number not in forecast_checked:
                 forecast_checked.add(rnd.round_number)
                 try:
-                    from .web import WebConfig, refresh_and_notify
+                    from .web import refresh_and_notify
 
                     refresh_and_notify(
-                        rnd, WebConfig(), router_factory(), known_teams, now,
+                        rnd, web_config, router_factory(), known_teams, now,
                     )
                 except Exception as exc:  # never let this stop the job loop
                     events.append(

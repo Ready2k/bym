@@ -19,8 +19,26 @@ from bym.round import Fixture, Round
 from bym.sources import pipeline
 from bym.sources.consensus import build_consensus
 from bym.sources.odds_api import BookmakerOdds, EventOdds
+from bym.web import WebConfig
 
 from test_dixon_coles import synthetic_matches
+
+
+def isolated_web_config(tmp_path):
+    """`run_due_jobs` now also calls `refresh_and_notify`, which reads and
+    writes real files (ui_state.json, prediction_history.json, the event
+    log, submissions) through a `WebConfig`. Without this, any test whose
+    poll actually succeeds — not just the ones about notifications —
+    would silently fall through to `WebConfig()`'s production-relative
+    defaults and write synthetic round data into the real data/ files.
+    """
+    return WebConfig(
+        ui_state_path=tmp_path / "ui_state.json",
+        event_log_path=tmp_path / "events.jsonl",
+        database_path=tmp_path / "sched.db",
+        submissions_path=tmp_path / "submissions.json",
+        prediction_history_path=tmp_path / "prediction_history.json",
+    )
 
 NOW = datetime(2026, 8, 15, 12, 0, tzinfo=timezone.utc)
 DEADLINE = datetime(2026, 8, 15, 14, 0, tzinfo=timezone.utc)
@@ -276,6 +294,7 @@ def test_restart_continues_scheduled_polling(monkeypatch, tmp_path, router):
             consensus_path=tmp_path / "c.csv",
             odds_snapshot_path=tmp_path / "o.csv",
             divisions=("E0",),
+            web_config=isolated_web_config(tmp_path),
         )
         assert len(outcomes) == 1
         assert scheduler.get_job(conn, 1).status == "PENDING"  # rescheduled
@@ -291,6 +310,7 @@ def test_polling_stops_after_deadline(monkeypatch, tmp_path, router):
         outcomes = worker.run_due_jobs(
             conn, "fake-key", lambda: router, now=DEADLINE + timedelta(minutes=5),
             event_log=tmp_path / "events.jsonl",
+            web_config=isolated_web_config(tmp_path),
         )
         assert outcomes == []
         assert scheduler.get_job(conn, job.id).status == "DONE"
@@ -307,7 +327,10 @@ def test_poll_failure_does_not_kill_the_loop(monkeypatch, tmp_path, router):
     log = tmp_path / "events.jsonl"
     with scheduler.connect(db) as conn:
         job = scheduler.schedule_round(conn, 1, str(round_path), DEADLINE, first_run_at=NOW)
-        worker.run_due_jobs(conn, "fake-key", lambda: router, now=NOW, event_log=log)
+        worker.run_due_jobs(
+            conn, "fake-key", lambda: router, now=NOW, event_log=log,
+            web_config=isolated_web_config(tmp_path),
+        )
         reloaded = scheduler.get_job(conn, job.id)
         assert reloaded.status == "PENDING"  # retried, not abandoned
         assert "API timeout" in reloaded.last_error
@@ -430,6 +453,7 @@ def test_scheduled_polling_resolves_club_names(monkeypatch, tmp_path, router):
             odds_snapshot_path=tmp_path / "o.csv",
             divisions=("E0",),
             known_teams={"Strong", "Weak", "Middling A", "Middling B"},
+            web_config=isolated_web_config(tmp_path),
         )
 
     assert seen, "poll_round was never reached"
@@ -464,5 +488,6 @@ def test_polling_without_known_teams_is_left_untouched(monkeypatch, tmp_path, ro
             consensus_path=tmp_path / "c.csv",
             odds_snapshot_path=tmp_path / "o.csv",
             divisions=("E0",),
+            web_config=isolated_web_config(tmp_path),
         )
     assert ("Strong FC", "weak") == seen[0]

@@ -305,6 +305,7 @@ def cmd_tick(args) -> int:
     from . import scheduler, worker
     from .config import FROZEN_PHASE1_V1
     from .data.football_data import load_matches
+    from .web import WebConfig
 
     api_key = os.environ.get("ODDS_API_KEY")
     if not api_key:
@@ -313,11 +314,18 @@ def cmd_tick(args) -> int:
     matches = load_matches(Path(args.data), _season_range(args), tuple(args.divisions))
     router = _fit_router(matches, FROZEN_PHASE1_V1.xi, FROZEN_PHASE1_V1)
     known_teams = set(matches["home_team"]) | set(matches["away_team"])
+    # ui_state.json/the event log/submissions/prediction_history have no
+    # `tick`-specific flags of their own — `bym serve` does not override
+    # them either, so they stay at WebConfig's shared repo-root-relative
+    # defaults. Only --db is threaded through, since a deployment can
+    # legitimately point that elsewhere and refresh_and_notify must land
+    # on the same database `bym serve` reads.
+    web_config = WebConfig(database_path=Path(args.db))
 
     with scheduler.connect(Path(args.db)) as conn:
         outcomes = worker.run_due_jobs(
             conn, api_key, lambda: router,
-            known_teams=known_teams, **_layer_credentials()
+            known_teams=known_teams, web_config=web_config, **_layer_credentials()
         )
     if not outcomes:
         print("No jobs due.")
