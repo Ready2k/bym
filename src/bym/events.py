@@ -50,6 +50,9 @@ class EventType(str, Enum):
     # Increment 5 — deadline reminders. A missed deadline scores nothing,
     # which costs more than any forecasting improvement can recover.
     DEADLINE_APPROACHING = "DEADLINE_APPROACHING"
+    # Increment 6 — a final, copy-paste-ready picks email near the
+    # deadline, sent by the always-on worker rather than a page load.
+    FINAL_SCORES_SENT = "FINAL_SCORES_SENT"
 
 
 class Severity(str, Enum):

@@ -3,6 +3,7 @@
 import json
 import os
 from dataclasses import fields
+from datetime import timedelta
 from pathlib import Path
 
 import pytest
@@ -28,10 +29,13 @@ from bym.web import (
     save_results,
     save_secret,
     save_settings,
+    send_final_summary_if_due,
+    refresh_and_notify,
     web_extractor_config,
 )
 from bym.fpl import harvest as fpl_harvest
 from bym.sources.api_football import ApiFootballFixture
+from bym import events as ev
 from bym import prediction_history
 from bym.prospective import load_ledger
 
@@ -497,6 +501,174 @@ def test_settings_opponents_and_results_use_local_explicit_state(tmp_path):
         {"results": ["2-0", "1-1", None, "1-2", "3-0", "1-2"]}, config
     )
     assert saved["results"][2] is None
+
+
+# --- the always-on final-summary email --------------------------------------
+#
+# `_emit_deadline_reminders` and `_append_forecast_change_events` only run
+# from a page load; this is the one email path meant to work with no
+# browser open, so it is exercised directly rather than through app_payload.
+
+
+def _configure_email(config, monkeypatch):
+    monkeypatch.delenv("BYM_SMTP_HOST", raising=False)
+    save_settings(
+        {
+            "notification_delivery": {"email": True},
+            "notification_email": "you@example.com",
+            "smtp_settings": {"host": "smtp.example.com", "port": 587},
+        },
+        config,
+    )
+
+
+def test_send_final_summary_if_due_emails_the_round_and_guards_against_a_repeat(
+    tmp_path, monkeypatch
+):
+    from bym.model import dixon_coles
+
+    from test_dixon_coles import synthetic_matches
+
+    config = configured_round(tmp_path)
+    _configure_email(config, monkeypatch)
+    rnd = load_round(config.round_path)
+    now = rnd.deadline_at - timedelta(minutes=45)
+    router = dixon_coles.fit(synthetic_matches(), xi=0.0)
+
+    sent = []
+    monkeypatch.setattr(
+        "bym.notifications.send_email_alert",
+        lambda **kwargs: sent.append(kwargs),
+    )
+
+    with db.connect(config.database_path):
+        pass  # ensure the schema exists before send_final_summary_if_due opens it
+    send_final_summary_if_due(rnd, config, lambda home, away: router, None, now)
+
+    assert len(sent) == 1
+    assert sent[0]["destination"] == "you@example.com"
+    assert "Round 14" in sent[0]["subject"]
+    logged = ev.load(config.event_log_path)
+    assert any(event.event_type == ev.EventType.FINAL_SCORES_SENT.value for event in logged)
+
+    # A second check within the same hour must not send again.
+    send_final_summary_if_due(rnd, config, lambda home, away: router, None, now)
+    assert len(sent) == 1
+
+
+def test_send_final_summary_if_due_is_silent_when_email_delivery_is_off(tmp_path, monkeypatch):
+    config = configured_round(tmp_path)
+    rnd = load_round(config.round_path)
+    now = rnd.deadline_at - timedelta(minutes=45)
+
+    sent = []
+    monkeypatch.setattr(
+        "bym.notifications.send_email_alert",
+        lambda **kwargs: sent.append(kwargs),
+    )
+    send_final_summary_if_due(rnd, config, lambda home, away: None, None, now)
+    assert sent == []
+
+
+def test_send_final_summary_if_due_is_silent_more_than_an_hour_out(tmp_path, monkeypatch):
+    config = configured_round(tmp_path)
+    _configure_email(config, monkeypatch)
+    rnd = load_round(config.round_path)
+    now = rnd.deadline_at - timedelta(hours=3)
+
+    sent = []
+    monkeypatch.setattr(
+        "bym.notifications.send_email_alert",
+        lambda **kwargs: sent.append(kwargs),
+    )
+    send_final_summary_if_due(rnd, config, lambda home, away: None, None, now)
+    assert sent == []
+
+
+# --- the worker's unattended equivalent of a page load ----------------------
+#
+# refresh_and_notify is what `worker.run_due_jobs` calls instead of relying
+# on `_dashboard()` ever running. It must do the same two things a page
+# load does — detect a material forecast change, and check the final-hour
+# summary — but pay for exactly one `run_engine` call to do both.
+
+
+def test_refresh_and_notify_shares_one_engine_run_across_both_checks(tmp_path, monkeypatch):
+    from bym.model import dixon_coles
+
+    from test_dixon_coles import synthetic_matches
+
+    config = configured_round(tmp_path)
+    _configure_email(config, monkeypatch)
+    rnd = load_round(config.round_path)
+    # Inside the final hour, so both the material-change and final-summary
+    # checks are live for this one call.
+    now = rnd.deadline_at - timedelta(minutes=45)
+    router = dixon_coles.fit(synthetic_matches(), xi=0.0)
+
+    engine_calls = []
+    real_run_engine = web.run_engine
+    monkeypatch.setattr(
+        web, "run_engine",
+        lambda *a, **k: (engine_calls.append(1), real_run_engine(*a, **k))[1],
+    )
+    sent = []
+    monkeypatch.setattr(
+        "bym.notifications.send_email_alert", lambda **kwargs: sent.append(kwargs)
+    )
+
+    refresh_and_notify(rnd, config, lambda home, away: router, None, now)
+
+    assert len(engine_calls) == 1
+    assert len(sent) == 1  # the final-summary email, at least
+    logged = ev.load(config.event_log_path)
+    assert any(event.event_type == ev.EventType.FINAL_SCORES_SENT.value for event in logged)
+
+
+def test_refresh_and_notify_is_silent_when_email_delivery_is_off(tmp_path, monkeypatch):
+    config = configured_round(tmp_path)
+    rnd = load_round(config.round_path)
+    now = rnd.deadline_at - timedelta(minutes=45)
+
+    engine_calls = []
+    monkeypatch.setattr(web, "run_engine", lambda *a, **k: engine_calls.append(1))
+
+    refresh_and_notify(rnd, config, lambda home, away: None, None, now)
+
+    # Not configured at all, so it must not even pay for a forecast pass.
+    assert engine_calls == []
+
+
+def test_refresh_and_notify_reports_a_material_change_outside_the_final_hour(
+    tmp_path, monkeypatch
+):
+    """A score/basis/confidence change matters at any point in the
+    monitoring window, not just the last hour — only the full-summary
+    email is deadline-gated."""
+    from bym.model import dixon_coles
+
+    from test_dixon_coles import synthetic_matches
+
+    config = configured_round(tmp_path)
+    _configure_email(config, monkeypatch)
+    rnd = load_round(config.round_path)
+    now = rnd.deadline_at - timedelta(days=2)
+    router = dixon_coles.fit(synthetic_matches(), xi=0.0)
+
+    created = []
+    monkeypatch.setattr(
+        web, "_append_forecast_change_events",
+        lambda snapshot, rnd, config: created.append(snapshot),
+    )
+    sent = []
+    monkeypatch.setattr(
+        "bym.notifications.send_email_alert", lambda **kwargs: sent.append(kwargs)
+    )
+
+    refresh_and_notify(rnd, config, lambda home, away: router, None, now)
+
+    assert len(created) == 1  # the diff check ran
+    assert sent == []  # far from the deadline, so no final-summary email
 
 
 def test_golden_goal_guess_and_actual_are_saved_and_validated(tmp_path):

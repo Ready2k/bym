@@ -314,6 +314,64 @@ def test_poll_failure_does_not_kill_the_loop(monkeypatch, tmp_path, router):
     assert any(e.event_type == "POLL_FAILED" for e in events.load(log))
 
 
+def test_run_due_jobs_refreshes_and_notifies_once_per_round_per_tick(
+    monkeypatch, tmp_path, router
+):
+    """A tick can claim POLL_ODDS and POLL_AVAILABILITY for the same round
+    at once — refresh_and_notify must not run (and so not risk a second
+    `run_engine` call) once per job, only once per round."""
+    monkeypatch.setattr(
+        pipeline.odds_api, "fetch_odds", lambda division, key, **kw: feed(TIGHT)
+    )
+    monkeypatch.setattr(worker, "budget_constrained", lambda *a, **k: False)
+    db = tmp_path / "sched.db"
+    round_path = write_round(tmp_path)
+    near_deadline = DEADLINE - timedelta(minutes=45)
+
+    calls = []
+    monkeypatch.setattr(
+        "bym.web.refresh_and_notify", lambda *a, **k: calls.append(a)
+    )
+
+    with scheduler.connect(db) as conn:
+        scheduler.schedule_all_layers(
+            conn, 1, str(round_path), DEADLINE, first_run_at=near_deadline,
+        )
+        worker.run_due_jobs(
+            conn, "fake-key", lambda: router, now=near_deadline,
+            event_log=tmp_path / "events.jsonl",
+            consensus_path=tmp_path / "c.csv",
+            odds_snapshot_path=tmp_path / "o.csv",
+            divisions=("E0",),
+        )
+    assert len(calls) == 1
+
+
+def test_run_due_jobs_survives_a_refresh_and_notify_failure(monkeypatch, tmp_path, router):
+    """A broken SMTP relay must not stop odds polling for the round."""
+    monkeypatch.setattr(
+        pipeline.odds_api, "fetch_odds", lambda division, key, **kw: feed(TIGHT)
+    )
+    monkeypatch.setattr(worker, "budget_constrained", lambda *a, **k: False)
+    db = tmp_path / "sched.db"
+    round_path = write_round(tmp_path)
+    log = tmp_path / "events.jsonl"
+
+    def boom(*a, **k):
+        raise RuntimeError("smtp exploded")
+
+    monkeypatch.setattr("bym.web.refresh_and_notify", boom)
+
+    with scheduler.connect(db) as conn:
+        job = scheduler.schedule_round(conn, 1, str(round_path), DEADLINE, first_run_at=NOW)
+        outcomes = worker.run_due_jobs(
+            conn, "fake-key", lambda: router, now=NOW, event_log=log,
+        )
+        assert len(outcomes) == 1
+        assert scheduler.get_job(conn, job.id).status == "PENDING"
+    assert any(e.event_type == "POLL_FAILED" for e in events.load(log))
+
+
 def test_a_sweep_is_skipped_rather_than_paid_for_when_the_model_is_silent(monkeypatch):
     """Every recorded extraction failure connected fine and then timed out,
     so the searches were paid for and the claims never arrived. The credits

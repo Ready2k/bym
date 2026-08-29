@@ -74,3 +74,30 @@ def test_time_remaining_is_stated_not_just_the_threshold():
     event = emitted(at(minutes=42))[0]
     assert "42m" in event.summary
     assert event.detail["minutes_remaining"] == 42
+
+
+def due(now, state="READY", existing=None):
+    return reminders.final_summary_due(DEADLINE, now, state, existing or [], ROUND)
+
+
+def test_final_summary_fires_once_inside_the_last_hour():
+    assert due(at(hours=2)) is False
+    assert due(at(minutes=45)) is True
+
+
+def test_final_summary_does_not_fire_twice():
+    already_sent = [ev.make_event(
+        ev.EventType.FINAL_SCORES_SENT, ev.Severity.IMPORTANT,
+        "Final recommended picks emailed.", ROUND,
+    )]
+    assert due(at(minutes=30), existing=already_sent) is False
+
+
+def test_final_summary_is_silent_once_the_round_is_entered():
+    assert due(at(minutes=30), state="MARKED_AS_SUBMITTED") is False
+    assert due(at(minutes=30), state="ROUND_CLOSED") is False
+
+
+def test_final_summary_does_not_fire_after_the_deadline_has_passed():
+    assert due(DEADLINE) is False
+    assert due(DEADLINE + timedelta(minutes=5)) is False

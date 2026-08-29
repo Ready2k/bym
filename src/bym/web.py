@@ -502,6 +502,147 @@ def _emit_deadline_reminders(rnd: Round, submission_state: str, config: WebConfi
         )], config.event_log_path)
 
 
+def _final_summary_is_due(
+    rnd: Round, config: WebConfig, state: dict, now: datetime,
+) -> bool:
+    """The cheap half of the final-summary check — no `run_engine` call —
+    so callers can skip the expensive forecast pass entirely when it is
+    not going to be used. Split out so `send_final_summary_if_due` can
+    check this *before* forecasting (its only reason to forecast at all)
+    while `refresh_and_notify` checks it *after* a forecast pass it is
+    already paying for regardless.
+    """
+    if not (
+        state["notifications"].get("deadline_reminder")
+        and state["notification_delivery"]["email"]
+        and state["notification_email"]
+    ):
+        return False
+    from . import reminders
+
+    season = _season_for(rnd)
+    record = submission.get(season, rnd.round_number, path=config.submissions_path)
+    existing = events.load(config.event_log_path)
+    return reminders.final_summary_due(
+        rnd.deadline_at, now, record.state, existing, rnd.round_number
+    )
+
+
+def _email_final_summary(
+    rnd: Round, config: WebConfig, state: dict, round_summary,
+) -> None:
+    """Compose and send the final-summary email. Caller must already have
+    confirmed `_final_summary_is_due` and computed `round_summary`."""
+    from smtplib import SMTPException
+
+    from .notifications import (
+        FinalPick, compose_final_summary, email_delivery_status, send_email_alert,
+    )
+
+    smtp = resolve_smtp_config(config)
+    if email_delivery_status(True, state["notification_email"], smtp) != "READY":
+        return
+
+    override_picks = state["overrides"].get(_round_key(rnd), {})
+    fixtures = [
+        FinalPick(
+            home_team=fixture.home_team,
+            away_team=fixture.away_team,
+            pick=override_picks.get(str(index)) or fixture.pick,
+            modellable=fixture.modellability.modellable,
+        )
+        for index, fixture in enumerate(round_summary.fixtures)
+    ]
+    golden_goal_minute = (
+        round_summary.golden_goal.minute if round_summary.golden_goal else None
+    )
+    subject, body = compose_final_summary(
+        rnd.round_number, rnd.deadline_at, fixtures, golden_goal_minute
+    )
+    try:
+        send_email_alert(
+            destination=state["notification_email"], subject=subject, body=body,
+            smtp=smtp,
+        )
+        events.append([events.make_event(
+            events.EventType.FINAL_SCORES_SENT, events.Severity.IMPORTANT,
+            "Final recommended picks emailed.", rnd.round_number,
+        )], config.event_log_path)
+    except (OSError, RuntimeError, ValueError, SMTPException) as exc:
+        events.append([events.make_event(
+            events.EventType.POLL_FAILED, events.Severity.INFORMATIONAL,
+            f"Final scores email was not delivered: {exc}", rnd.round_number,
+        )], config.event_log_path)
+
+
+def send_final_summary_if_due(
+    rnd: Round, config: WebConfig, router, known_teams: set[str] | None,
+    now: datetime | None = None,
+) -> None:
+    """Email the full six-pick recommendation once, near the deadline.
+
+    Checks `_final_summary_is_due` before forecasting at all — the only
+    reason this function would forecast — so it never pays for a
+    `run_engine` pass it is not going to use. Runs its own fresh pass
+    rather than reusing a stale one, so whatever lineup or market news
+    has landed by the deadline is reflected in what gets sent. Kept as a
+    standalone entry point (used directly by tests, and usable on its
+    own); `refresh_and_notify` shares one `run_engine` call across this
+    and the material-change check instead.
+    """
+    now = now or datetime.now(timezone.utc)
+    state = load_ui_state(config.ui_state_path)
+    if not _final_summary_is_due(rnd, config, state, now):
+        return
+    season = _season_for(rnd)
+    with db.connect(config.database_path) as conn:
+        result = run_engine(
+            conn, rnd, router, season=season, known_teams=known_teams,
+            corpus=_corpus_label(config.divisions),
+            submission_path=config.submissions_path, now=now,
+        )
+    _email_final_summary(rnd, config, state, result.round_summary)
+
+
+def refresh_and_notify(
+    rnd: Round, config: WebConfig, router, known_teams: set[str] | None,
+    now: datetime | None = None,
+) -> None:
+    """The worker's unattended equivalent of a `_dashboard()` page load.
+
+    `_append_forecast_change_events` (material score/basis/confidence
+    changes) and the final-summary email both previously only ran when a
+    browser happened to load the dashboard — so "you'll be emailed if
+    something changes" only held while someone was already looking. This
+    runs the same forecast pass from the worker's tick loop instead
+    (`worker.run_due_jobs`), which ticks on its own schedule regardless of
+    whether a tab is open. It shares one `run_engine` call and one
+    `prediction_history` snapshot with the browser path, so whichever of
+    the two runs first is the one that reports a given change — no
+    duplicate email either way.
+    """
+    now = now or datetime.now(timezone.utc)
+    state = load_ui_state(config.ui_state_path)
+    if not (state["notification_delivery"]["email"] and state["notification_email"]):
+        return
+
+    from .prediction_history import capture_round_summary
+
+    season = _season_for(rnd)
+    with db.connect(config.database_path) as conn:
+        result = run_engine(
+            conn, rnd, router, season=season, known_teams=known_teams,
+            corpus=_corpus_label(config.divisions),
+            submission_path=config.submissions_path, now=now,
+        )
+    snapshot = capture_round_summary(
+        season, result.round_summary, now=now, path=config.prediction_history_path,
+    )
+    _append_forecast_change_events(snapshot, rnd, config)
+    if _final_summary_is_due(rnd, config, state, now):
+        _email_final_summary(rnd, config, state, result.round_summary)
+
+
 def _fixture_history_payload(season: int, summary: dict, config: WebConfig) -> None:
     """Attach compact, human-readable audit versions to each fixture."""
     from .prediction_history import fixture_history

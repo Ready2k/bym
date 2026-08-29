@@ -471,6 +471,11 @@ def run_due_jobs(
     now = now or datetime.now(timezone.utc)
     scheduler.reclaim_stuck_jobs(conn)
     outcomes: list[PollOutcome] = []
+    # A tick can claim several job types (odds, availability, knowledge)
+    # for the same round in one pass; refresh_and_notify's own guard
+    # events only prevent a *second email*, not a second `run_engine`
+    # call, so this keeps it to one attempt per round per tick.
+    forecast_checked: set[int] = set()
 
     for job in scheduler.claim_due_jobs(conn, now):
         if cadence.poll_interval(job.deadline, now) is None:
@@ -512,6 +517,26 @@ def run_due_jobs(
             events.append(outcome.events, event_log)
             scheduler.complete_job(conn, job.id, outcome.next_run_at)
             outcomes.append(outcome)
+
+            if rnd.round_number not in forecast_checked:
+                forecast_checked.add(rnd.round_number)
+                try:
+                    from .web import WebConfig, refresh_and_notify
+
+                    refresh_and_notify(
+                        rnd, WebConfig(), router_factory(), known_teams, now,
+                    )
+                except Exception as exc:  # never let this stop the job loop
+                    events.append(
+                        [events.make_event(
+                            events.EventType.POLL_FAILED,
+                            events.Severity.INFORMATIONAL,
+                            f"Forecast refresh/notify check failed: {exc}",
+                            round_number=job.round_number,
+                            now=now,
+                        )],
+                        event_log,
+                    )
         except Exception as exc:  # a bad poll must not kill the loop
             events.append(
                 [

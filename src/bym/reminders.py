@@ -136,3 +136,33 @@ def build_events(
             deadline, now, submission_state, existing, round_number
         )
     ]
+
+
+def final_summary_due(
+    deadline: datetime,
+    now: datetime,
+    submission_state: str,
+    existing: list[ev.Event],
+    round_number: int,
+) -> bool:
+    """Whether it is time to email the full six-pick recommendation.
+
+    Fires once, at the same tightest threshold (currently 1 hour) that
+    already means "do it now" for a plain reminder — by then lineups have
+    usually landed, so the picks are as final as they will get. Reuses
+    `THRESHOLDS[-1]` rather than a separate constant so the two notions of
+    "last call" cannot drift apart. Silent once the round is settled: a
+    submitted user does not need to be handed picks again.
+    """
+    if submission_state in SETTLED_STATES:
+        return False
+    remaining = deadline - now
+    if not (timedelta(0) < remaining <= THRESHOLDS[-1]):
+        return False
+    for event in existing:
+        if (
+            event.event_type == ev.EventType.FINAL_SCORES_SENT.value
+            and event.round_number == round_number
+        ):
+            return False
+    return True
