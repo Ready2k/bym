@@ -279,7 +279,11 @@ def cmd_watch(args) -> int:
             while True:
                 outcomes = worker.run_due_jobs(
                     conn, api_key, lambda: router,
-                    known_teams=known_teams, **_layer_credentials()
+                    known_teams=known_teams,
+                    ui_state_path=Path(args.ui_state),
+                    submissions_path=Path(args.submissions),
+                    secrets_path=Path(args.secrets),
+                    **_layer_credentials()
                 )
                 for o in outcomes:
                     print(
@@ -317,7 +321,11 @@ def cmd_tick(args) -> int:
     with scheduler.connect(Path(args.db)) as conn:
         outcomes = worker.run_due_jobs(
             conn, api_key, lambda: router,
-            known_teams=known_teams, **_layer_credentials()
+            known_teams=known_teams,
+            ui_state_path=Path(args.ui_state),
+            submissions_path=Path(args.submissions),
+            secrets_path=Path(args.secrets),
+            **_layer_credentials()
         )
     if not outcomes:
         print("No jobs due.")
@@ -1755,6 +1763,11 @@ def main(argv: list[str] | None = None) -> int:
     )
     p.set_defaults(func=cmd_record)
 
+    def deadline_reminder_args(p):
+        p.add_argument("--ui-state", default="data/ui_state.json")
+        p.add_argument("--submissions", default="data/submissions.json")
+        p.add_argument("--secrets", default="secrets")
+
     p = sub.add_parser("watch", help="schedule automatic polling for a round (§9)")
     common(p)
     p.add_argument("--round", required=True)
@@ -1766,11 +1779,13 @@ def main(argv: list[str] | None = None) -> int:
         help="also schedule routine knowledge research (costs search credits; "
              "market-triggered investigation runs regardless)",
     )
+    deadline_reminder_args(p)
     p.set_defaults(func=cmd_watch)
 
     p = sub.add_parser("tick", help="run one scheduler pass (for cron/systemd)")
     common(p)
     p.add_argument("--db", default="data/scheduler.db")
+    deadline_reminder_args(p)
     p.set_defaults(func=cmd_tick)
 
     p = sub.add_parser("jobs", help="list scheduled polling jobs")

@@ -379,6 +379,85 @@ def test_scheduled_polling_resolves_club_names(monkeypatch, tmp_path, router):
     assert "Strong FC" not in [team for pair in seen for team in pair]
 
 
+# ---- deadline reminders driven by the scheduler, not a page load -------
+
+
+def test_tick_emits_and_emails_the_one_hour_reminder_unattended(
+    monkeypatch, tmp_path, router
+):
+    """The dashboard being closed must not swallow the final warning.
+
+    Reminders used to fire only from a browser page load; a deployment
+    running `bym tick` unattended got no 1-hour email at all. `run_due_jobs`
+    now checks every round it touches.
+    """
+    import json
+
+    from bym import notifications
+
+    monkeypatch.setattr(
+        pipeline.odds_api, "fetch_odds", lambda division, key, **kw: feed(TIGHT)
+    )
+    monkeypatch.setattr(worker, "budget_constrained", lambda *a, **k: False)
+
+    ui_state_path = tmp_path / "ui_state.json"
+    ui_state_path.write_text(json.dumps({
+        "notifications": {"deadline_reminder": True},
+        "notification_delivery": {"email": True},
+        "notification_email": "me@example.com",
+        "smtp_settings": {"host": "smtp.example.com", "port": 587, "from_address": "bym@example.com"},
+    }))
+
+    sent = {}
+
+    def fake_smtp(host, port, timeout=10):
+        class _Client:
+            def __enter__(self_inner):
+                return self_inner
+
+            def __exit__(self_inner, *exc):
+                return False
+
+            def starttls(self_inner, context=None):
+                pass
+
+            def send_message(self_inner, message):
+                sent["subject"] = message["Subject"]
+                sent["to"] = message["To"]
+                sent["body"] = message.get_content()
+
+        assert (host, port) == ("smtp.example.com", 587)
+        return _Client()
+
+    monkeypatch.setattr(notifications.smtplib, "SMTP", fake_smtp)
+
+    round_path = write_round(tmp_path)
+    log = tmp_path / "events.jsonl"
+    db = tmp_path / "sched.db"
+    close_to_deadline = DEADLINE - timedelta(minutes=45)
+
+    with scheduler.connect(db) as conn:
+        scheduler.schedule_round(
+            conn, 1, str(round_path), DEADLINE, first_run_at=close_to_deadline
+        )
+        worker.run_due_jobs(
+            conn, "fake-key", lambda: router, now=close_to_deadline,
+            event_log=log,
+            ui_state_path=ui_state_path,
+            submissions_path=tmp_path / "submissions.json",
+            secrets_path=tmp_path / "secrets",
+            consensus_path=tmp_path / "c.csv",
+            odds_snapshot_path=tmp_path / "o.csv",
+            divisions=("E0",),
+        )
+
+    logged = events.load(log)
+    reminder = next(e for e in logged if e.event_type == "DEADLINE_APPROACHING")
+    assert reminder.detail["threshold_hours"] == 1
+    assert sent["to"] == "me@example.com"
+    assert "deadline approaching" in sent["subject"]
+
+
 def test_polling_without_known_teams_is_left_untouched(monkeypatch, tmp_path, router):
     """Callers that cannot supply a corpus still get the old behaviour
     rather than a crash — resolution is additive."""

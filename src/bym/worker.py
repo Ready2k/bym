@@ -425,6 +425,77 @@ def knowledge_budget_low(quota_path: Path | None = None) -> bool:
     return remaining <= TAVILY_FREE_TIER_MONTHLY_CREDITS * KNOWLEDGE_DEGRADE_AT
 
 
+def emit_deadline_reminders(
+    rnd: Round,
+    now: datetime,
+    event_log: Path = events.DEFAULT_EVENT_LOG,
+    ui_state_path: Path = Path("data/ui_state.json"),
+    submissions_path: Path = Path("data/submissions.json"),
+    secrets_path: Path = Path("secrets"),
+) -> list[events.Event]:
+    """Deadline-threshold reminders, driven by the scheduler rather than a
+    page load.
+
+    `web._emit_deadline_reminders` does the same thing but only runs when
+    someone happens to have the dashboard open at the right moment — no
+    help to anyone who isn't watching a browser in the final hour before a
+    deadline. This is the always-on counterpart: `run_due_jobs` calls it
+    for every round it touches, so the 1-hour email still goes out from an
+    unattended `bym tick`/`bym-service` deployment.
+    """
+    from smtplib import SMTPException
+
+    from . import reminders, submission
+    from .notifications import email_delivery_status, send_email_alert
+    from .web import WebConfig, load_ui_state, resolve_smtp_config
+
+    record = submission.get(
+        rnd.deadline_at.year, rnd.round_number, path=submissions_path
+    )
+    existing = events.load(event_log)
+    created = reminders.build_events(
+        rnd.deadline_at, now, record.state, existing, rnd.round_number,
+    )
+    if not created:
+        return []
+    events.append(created, event_log)
+
+    state = load_ui_state(ui_state_path)
+    if not (
+        state["notifications"].get("deadline_reminder")
+        and state["notification_delivery"]["email"]
+        and state["notification_email"]
+    ):
+        return created
+
+    smtp = resolve_smtp_config(
+        WebConfig(ui_state_path=ui_state_path, secrets_path=secrets_path)
+    )
+    if email_delivery_status(True, state["notification_email"], smtp) != "READY":
+        return created
+    try:
+        send_email_alert(
+            destination=state["notification_email"],
+            subject=f"Super 6 — Round {rnd.round_number} deadline approaching",
+            body="\n\n".join(event.summary for event in created),
+            smtp=smtp,
+        )
+    except (OSError, RuntimeError, ValueError, SMTPException) as exc:
+        events.append(
+            [
+                events.make_event(
+                    events.EventType.POLL_FAILED,
+                    events.Severity.INFORMATIONAL,
+                    f"Deadline reminder email was not delivered: {exc}",
+                    round_number=rnd.round_number,
+                    now=now,
+                )
+            ],
+            event_log,
+        )
+    return created
+
+
 def _investigate_unexplained(
     conn: sqlite3.Connection,
     outcome: PollOutcome,
@@ -458,6 +529,9 @@ def run_due_jobs(
     extractor_mode: str = "shadow",
     season: int = 2026,
     known_teams: set[str] | None = None,
+    ui_state_path: Path = Path("data/ui_state.json"),
+    submissions_path: Path = Path("data/submissions.json"),
+    secrets_path: Path = Path("secrets"),
     **poll_kwargs,
 ) -> list[PollOutcome]:
     """Claim and run every due job, dispatching by job type and
@@ -471,6 +545,7 @@ def run_due_jobs(
     now = now or datetime.now(timezone.utc)
     scheduler.reclaim_stuck_jobs(conn)
     outcomes: list[PollOutcome] = []
+    reminded_rounds: set[int] = set()
 
     for job in scheduler.claim_due_jobs(conn, now):
         if cadence.poll_interval(job.deadline, now) is None:
@@ -486,6 +561,18 @@ def run_due_jobs(
             # availability and knowledge key on the club name too.
             if known_teams is not None:
                 rnd, _ = resolve_round_teams(rnd, known_teams)
+
+            # Checked whenever any job fires for this round, not just the
+            # market poll — near the deadline that is every 10-15 minutes
+            # (cadence.LADDER), tight enough to catch the 1-hour threshold
+            # without a dedicated scheduler job type for it.
+            if rnd.round_number not in reminded_rounds:
+                emit_deadline_reminders(
+                    rnd, now,
+                    event_log=event_log, ui_state_path=ui_state_path,
+                    submissions_path=submissions_path, secrets_path=secrets_path,
+                )
+                reminded_rounds.add(rnd.round_number)
 
             if job.job_type == scheduler.JobType.POLL_AVAILABILITY.value:
                 outcome = _run_availability_job(
