@@ -61,6 +61,7 @@ class WebConfig:
     lms_gameweek_path: Path = Path("data/lms_gameweek.json")
     lms_state_path: Path = Path("data/lms_state.json")
     lms_archive_path: Path = Path("data/lms_archive.json")
+    fpl_lineup_state_path: Path = Path("data/fpl_lineup_state.json")
     seasons: tuple[int, int] = (2019, 2025)
     divisions: tuple[str, ...] = ("E0", "E1")
 
@@ -2313,7 +2314,15 @@ def fpl_status_payload(config: WebConfig) -> dict:
             seasons.append({"season": season, "fetched": fetched, "total": total})
         complete = fpl_harvest.harvest_complete(conn)
 
-    return {"status": "live" if complete else "under_construction", "seasons": seasons}
+    from .fpl import dashboard as fpl_dashboard
+
+    with db.connect(config.database_path) as conn:
+        dashboard = fpl_dashboard.dashboard_payload(conn, config.fpl_lineup_state_path)
+    return {
+        "status": "live" if complete else "under_construction",
+        "seasons": seasons,
+        "dashboard": dashboard,
+    }
 
 
 def lms_payload(config: WebConfig, router=None, known_teams: set[str] | None = None) -> dict:

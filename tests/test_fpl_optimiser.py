@@ -38,7 +38,6 @@ def basic_pool():
 def test_squad_has_legal_composition():
     result = optimise_squad(basic_pool(), bank=100.0)
     assert len(result.squad_ids) == 15
-    by_pos = {1: "GK", 2: "GK"}
     positions = {c.player_id: c.position for c in basic_pool()}
     counts = {"GK": 0, "DEF": 0, "MID": 0, "FWD": 0}
     for pid in result.squad_ids:

@@ -30,7 +30,6 @@ def test_legal_xi_by_nominal_xp_respects_formation_minimums():
 def test_legal_xi_by_nominal_xp_picks_the_highest_value_players():
     pool = basic_pool()
     xi = dq.legal_xi_by_nominal_xp(pool)
-    points = {c.player_id: c.expected_points for c in pool}
     # The single best GK/MID/FWD (unambiguous top scorers in basic_pool)
     # must always make a highest-value XI.
     best_gk = max((c for c in pool if c.position == "GK"), key=lambda c: c.expected_points)

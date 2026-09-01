@@ -46,6 +46,7 @@ Import JSON shape (documented here since there is no schema file yet):
   "free_transfers": 2,
   "active_chip": null,
   "chips_available": ["wildcard", "bench_boost", "triple_captain", "free_hit"],
+  "candidate_universe_complete": true,
   "candidate_players": [
     {"name": "Erling Haaland", "club": "Man City", "position": "FWD", "price": 15.0}
   ],
@@ -96,6 +97,7 @@ REQUIRED_KEYS = (
     "bank",
     "free_transfers",
     "chips_available",
+    "candidate_universe_complete",
     "candidate_players",
     "squad",
     "starters",
@@ -199,6 +201,17 @@ def parse_import(
 
     universe, candidates_by_name = _parse_candidate_universe(conn, payload["candidate_players"])
     squad_players, name_to_player_id = _parse_squad(payload["squad"], candidates_by_name)
+
+    complete = payload["candidate_universe_complete"]
+    _require(
+        isinstance(complete, bool),
+        "candidate_universe_complete must be a boolean",
+    )
+    if complete:
+        _require(
+            len(universe) > len(squad_players),
+            "a complete candidate universe must include at least one unowned player",
+        )
 
     starter_ids = _resolve_named_group(
         payload["starters"], 11, "starters", name_to_player_id
@@ -333,11 +346,16 @@ def _resolve_named_group(
     return ids
 
 
-def _normalised_state(universe: dict[int, CandidatePrice], snapshot: SquadSnapshot) -> dict:
+def _normalised_state(
+    universe: dict[int, CandidatePrice],
+    snapshot: SquadSnapshot,
+    candidate_universe_complete: bool,
+) -> dict:
     """The parsed, resolved payload — a normalised structure a caller can
     reconstruct `CandidatePrice`/`SquadSnapshot` from, not a copy of the
     arbitrary JSON the user actually sent."""
     return {
+        "candidate_universe_complete": candidate_universe_complete,
         "candidate_players": [
             {
                 "player_id": c.player_id,
@@ -440,7 +458,9 @@ def store_import(
         return game_state, _row_to_squad_snapshot(squad_row)
 
     universe, snapshot = parse_import(conn, payload, season)
-    normalised = _normalised_state(universe, snapshot)
+    normalised = _normalised_state(
+        universe, snapshot, payload["candidate_universe_complete"]
+    )
     observed_at = to_iso(now or utcnow())
 
     cursor = conn.execute(
@@ -508,3 +528,40 @@ def candidate_universe(game_state: GameStateSnapshot) -> dict[int, CandidatePric
         c["player_id"]: CandidatePrice(**c)
         for c in game_state.normalised_state["candidate_players"]
     }
+
+
+def candidate_universe_is_complete(game_state: GameStateSnapshot) -> bool:
+    """Whether the import author explicitly attested that prices cover the
+    full transfer universe, not merely the current fifteen.
+
+    This is deliberately an attestation rather than a guessed player-count
+    threshold: the permitted import source is the only component that can
+    know it supplied every eligible player for this FPL season.
+    """
+    return bool(game_state.normalised_state.get("candidate_universe_complete", False))
+
+
+def load_snapshot(
+    conn: sqlite3.Connection, game_state_snapshot_id: int
+) -> tuple[GameStateSnapshot, SquadSnapshot]:
+    """Load one immutable FPL state and its decoded squad snapshot.
+
+    Recommendation code must be anchored to a particular observed state,
+    rather than silently selecting whichever import happened to be latest.
+    Keeping that choice explicit is what makes a later recommendation row
+    reproducible when several pre-deadline imports exist for one Gameweek.
+    """
+    state_row = conn.execute(
+        "SELECT * FROM fpl_game_state_snapshots WHERE id = ?", (game_state_snapshot_id,)
+    ).fetchone()
+    if state_row is None:
+        raise ValueError(f"FPL game-state snapshot #{game_state_snapshot_id} does not exist")
+    squad_row = conn.execute(
+        "SELECT * FROM fpl_squad_snapshots WHERE game_state_snapshot_id = ?",
+        (game_state_snapshot_id,),
+    ).fetchone()
+    if squad_row is None:
+        raise ValueError(
+            f"FPL game-state snapshot #{game_state_snapshot_id} has no squad snapshot"
+        )
+    return _row_to_game_state(state_row), _row_to_squad_snapshot(squad_row)

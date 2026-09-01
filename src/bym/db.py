@@ -426,6 +426,35 @@ MIGRATIONS: list[str] = [
     CREATE INDEX IF NOT EXISTS idx_fpl_harvest_state_status
         ON fpl_fixture_harvest_state (season, competition, player_stats_status);
     """,
+    # 0013 — fixture-time club identity for FPL player statistics. A
+    # `fpl_player_seasons` row describes a player's latest snapshot in a
+    # season, so it cannot safely stand in for the club the player
+    # represented in an earlier fixture after a transfer. Phase 1B's
+    # causal evaluation must therefore retain the provider's fixture-time
+    # team alongside the stat line. Existing rows can only be backfilled
+    # when that latest snapshot is one of the fixture's two clubs; the
+    # remaining transferred-player rows stay NULL rather than guessed.
+    """
+    ALTER TABLE fpl_player_match_stats ADD COLUMN team TEXT;
+
+    UPDATE fpl_player_match_stats
+       SET team = (
+           SELECT ps.team
+             FROM fpl_player_seasons ps
+            WHERE ps.player_id = fpl_player_match_stats.player_id
+              AND ps.season = fpl_player_match_stats.season
+       )
+     WHERE EXISTS (
+           SELECT 1
+             FROM fpl_player_seasons ps
+             JOIN fpl_fixture_harvest_state hs
+               ON hs.fixture_id = fpl_player_match_stats.fixture_id
+              AND hs.season = fpl_player_match_stats.season
+            WHERE ps.player_id = fpl_player_match_stats.player_id
+              AND ps.season = fpl_player_match_stats.season
+              AND ps.team IN (hs.home_team, hs.away_team)
+       );
+    """,
 ]
 
 

@@ -1152,6 +1152,7 @@ economics:
 ```text
 player id / name / club / season-scoped FPL position
 current FPL buy price for every candidate player
+explicit completeness attestation for that candidate universe
 user purchase + selling price for owned players
 bank + free transfers + chip availability
 current squad / XI / bench / captain / vice
@@ -1166,6 +1167,18 @@ If direct FPL reads are prohibited, a `FPLGameStateProvider` implementation must
 populate that state from a **permitted provider or explicit user import**
 (JSON/CSV/paste). Phase 1 cannot claim to work by asking only for the user's
 squad while lacking legal current prices for every potential replacement.
+
+Where no permitted full market source is available, a fixed-squad
+**lineup/captain-only** mode is allowed. It must state that it does not make a
+transfer recommendation, must not introduce an unowned player, and remains
+separate from the full-market optimiser described above.
+
+A manager-selected **shortlist-only** comparison is also permitted: it may
+compare hold against a bounded set of explicitly nominated, one-for-one
+transfers. It must require current/selling prices only for the existing fifteen
+and nominated targets, label every result `SHORTLIST_ONLY`, enforce ordinary
+FPL affordability/composition/club limits, include a hold option, and never
+claim that its preferred option is the best available market transfer.
 
 ## 13.4 Data Minimisation
 

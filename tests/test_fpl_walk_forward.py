@@ -8,7 +8,7 @@ from bym.backtest.fpl_walk_forward import (
     evaluate_fixture,
     run_walk_forward,
 )
-from bym.fpl import player_store
+from bym.fpl import player_store, projection
 from bym.fpl.player_match_stats import PlayerMatchStats, record_match_stats
 from bym.fpl.players import FplPlayerSeason, Position
 from bym.model import dixon_coles
@@ -180,3 +180,26 @@ def test_run_walk_forward_processes_every_fixture_in_the_given_order(conn, roste
     predictions = run_walk_forward(conn, fixtures, params_for)
     assert seen_order == ["fx_a", "fx_b"]
     assert {p.fixture_id for p in predictions} == {"fx_a", "fx_b"}
+
+
+def test_evaluate_fixture_uses_resolved_model_team_names_not_provider_names(conn, rosters, params):
+    """API-Football's names need not be the names Dixon-Coles was fitted on.
+    The evaluator must consume the explicit mapping rather than silently
+    treating a known provider-side name as an unseen league-average club."""
+    renamed_matches = synthetic_matches().replace(
+        {"home_team": {HOME: "Model Strong", AWAY: "Model Weak"},
+         "away_team": {HOME: "Model Strong", AWAY: "Model Weak"}}
+    )
+    model_params = dixon_coles.fit(renamed_matches, xi=0.0)
+    fixture = WalkForwardFixture(
+        fixture_id="fx_mapped", season=SEASON, gameweek=GW,
+        home=HOME, away=AWAY, kickoff_at=LATE,
+        model_home="Model Strong", model_away="Model Weak",
+    )
+    predictions = evaluate_fixture(conn, fixture, model_params)
+    home_mid = next(p for p in predictions if p.player_id == rosters["home_mid"].id)
+    profile = projection.historical_profile(
+        conn, rosters["home_mid"].id, SEASON, HOME, before=LATE
+    )
+    expected_lambda, _ = model_params.lambdas("Model Strong", "Model Weak")
+    assert home_mid.projection.goal_lambda == pytest.approx(expected_lambda * profile.goal_share)

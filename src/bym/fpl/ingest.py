@@ -118,6 +118,7 @@ def ingest_fixture_player_stats(
             source_record_version=f"fixture:{fixture_id}",
             observed_at=observed_at,
             kickoff_at=kickoff_at,
+            team=record.team,
             minutes=record.minutes,
             goals=record.goals,
             assists=record.assists,

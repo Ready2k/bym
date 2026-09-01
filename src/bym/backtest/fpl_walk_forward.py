@@ -58,6 +58,13 @@ class WalkForwardFixture:
     home: str
     away: str
     kickoff_at: str
+    # The player-stat provider and the frozen match model use different
+    # canonical club names (e.g. "Manchester City" vs "Man City"). Keep
+    # the stats-side names above for roster/profile reads, and carry the
+    # resolved model-side names separately so an evaluation never turns a
+    # known club into the Dixon-Coles league-average fallback by accident.
+    model_home: str | None = None
+    model_away: str | None = None
 
 
 @dataclass(frozen=True)
@@ -149,6 +156,7 @@ def evaluate_fixture(
     conn: sqlite3.Connection,
     fixture: WalkForwardFixture,
     params: DixonColesParams,
+    excluded_player_ids: frozenset[int] = frozenset(),
 ) -> list[WalkForwardPrediction]:
     """Predict every rostered player for one historical fixture using only
     data strictly before its kickoff, then compare each to what actually
@@ -157,9 +165,11 @@ def evaluate_fixture(
     no historical match corpus to check it against), only the player-side
     cutoff.
     """
+    model_home = fixture.model_home or fixture.home
+    model_away = fixture.model_away or fixture.away
     outlook = fixture_outlooks(
         params,
-        Gameweek(fixture.gameweek, (GameweekFixture(fixture.home, fixture.away),)),
+        Gameweek(fixture.gameweek, (GameweekFixture(model_home, model_away),)),
     )[0]
 
     actual_by_player = {
@@ -170,7 +180,7 @@ def evaluate_fixture(
     for team, is_home in ((fixture.home, True), (fixture.away, False)):
         team_conceded = _team_goals_conceded(conn, fixture.fixture_id, team, fixture.season)
         for player_season in player_store.player_seasons_for_season(conn, fixture.season):
-            if player_season.team != team:
+            if player_season.team != team or player_season.player_id in excluded_player_ids:
                 continue
             profile = projection.historical_profile(
                 conn, player_season.player_id, fixture.season, team,
@@ -208,6 +218,7 @@ def run_walk_forward(
     conn: sqlite3.Connection,
     fixtures: list[WalkForwardFixture],
     params_for: "callable[[WalkForwardFixture], DixonColesParams]",
+    excluded_player_ids: frozenset[int] = frozenset(),
 ) -> list[WalkForwardPrediction]:
     """Walk forward through `fixtures` IN THE ORDER GIVEN, calling
     `params_for(fixture)` to get a causally-fit team environment for each
@@ -217,5 +228,7 @@ def run_walk_forward(
     — this function only enforces the player-side cutoff itself."""
     predictions: list[WalkForwardPrediction] = []
     for fixture in fixtures:
-        predictions.extend(evaluate_fixture(conn, fixture, params_for(fixture)))
+        predictions.extend(
+            evaluate_fixture(conn, fixture, params_for(fixture), excluded_player_ids)
+        )
     return predictions

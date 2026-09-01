@@ -197,6 +197,106 @@ def cmd_backtest(args) -> int:
     return 0
 
 
+def cmd_fpl_evaluate(args) -> int:
+    """Run the frozen FPL baseline against the completed historical corpus.
+
+    The command is deliberately read-only with respect to the corpus: Phase
+    1B evaluates a frozen baseline; it does not pull more data, retune a
+    parameter, or write a recommendation.
+    """
+    from . import db
+    from .backtest import fpl_evaluation
+    from .data.football_data import load_matches
+
+    matches = load_matches(
+        Path(args.data), _season_range(args), tuple(args.divisions), fetch=False
+    )
+    with db.connect(Path(args.db)) as conn:
+        try:
+            corpus = fpl_evaluation.prepare_corpus(
+                conn, matches, tuple(args.fpl_seasons)
+            )
+            result = fpl_evaluation.run(conn, matches, corpus)
+        except fpl_evaluation.EvaluationCorpusError as exc:
+            print(f"REFUSED. {exc}", file=sys.stderr)
+            return 2
+
+    report = fpl_evaluation.render_markdown(result)
+    if args.output:
+        output = Path(args.output)
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(report)
+        print(f"Wrote {output}")
+    else:
+        print(report)
+    return 0
+
+
+def cmd_fpl_decision_evaluate(args) -> int:
+    """Run the fixture-independent Phase 1B optimiser stability evidence.
+
+    This deliberately needs no live or historical FPL market feed: it proves
+    the decision layer's behaviour on a canonical adverse scenario, rather
+    than inventing a historical transfer backtest from incomplete inputs.
+    """
+    from .backtest import fpl_decision_evaluation
+
+    result = fpl_decision_evaluation.run(tuple(args.ks))
+    report = fpl_decision_evaluation.render_markdown(result)
+    if args.output:
+        output = Path(args.output)
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(report)
+        print(f"Wrote {output}")
+    else:
+        print(report)
+    return 0
+
+
+def cmd_fpl_import(args) -> int:
+    """Persist one explicit, user-supplied FPL game-state snapshot.
+
+    This is the prospective acquisition path for the FPL mode. It does not
+    contact FPL, authenticate a user, or retain the raw import payload; the
+    normalised minimum needed to reconstruct a later recommendation is what
+    `fpl.game_state.store_import` persists.
+    """
+    import json
+
+    from . import db
+    from .fpl import game_state
+
+    source = Path(args.input)
+    try:
+        payload = json.loads(source.read_text())
+    except OSError as exc:
+        print(f"REFUSED. Cannot read {source}: {exc}", file=sys.stderr)
+        return 2
+    except json.JSONDecodeError as exc:
+        print(f"REFUSED. {source} is not valid JSON: {exc.msg}", file=sys.stderr)
+        return 2
+
+    with db.connect(Path(args.db)) as conn:
+        try:
+            state, squad = game_state.store_import(conn, payload, args.season)
+        except game_state.ImportValidationError as exc:
+            print(f"REFUSED. Invalid FPL state import: {exc}", file=sys.stderr)
+            return 2
+
+        universe = game_state.candidate_universe(state)
+
+    print(
+        f"Imported FPL state #{state.id}: season {squad.season}/{squad.season + 1}, "
+        f"GW{squad.gameweek}, {len(squad.players)} squad players, "
+        f"{len(universe)} priced candidates."
+    )
+    print(
+        "The raw JSON was not retained. This immutable snapshot is ready for "
+        "a future pre-deadline projection and optimiser run."
+    )
+    return 0
+
+
 def cmd_tune_xi(args) -> int:
     from .backtest.walk_forward import tune_xi
     from .data.football_data import load_matches
@@ -1733,6 +1833,47 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--test-season", type=int, required=True)
     p.add_argument("--xi", type=float, default=DEFAULT_MODEL.xi)
     p.set_defaults(func=cmd_backtest)
+
+    p = sub.add_parser(
+        "fpl-evaluate",
+        help="causal Phase 1B evaluation of frozen BASELINE_FPL_001",
+    )
+    p.add_argument("--data", default="data", help="cached Football-Data match corpus")
+    p.add_argument(
+        "--seasons", nargs=2, type=int, metavar=("START", "END"), default=[2019, 2024],
+        help="match-model season start-years, inclusive (default: 2019 2024)",
+    )
+    p.add_argument("--divisions", nargs="+", default=["E0"])
+    p.add_argument("--db", default="data/bym.db")
+    p.add_argument(
+        "--fpl-seasons", nargs="+", type=int, default=[2022, 2023, 2024],
+        help="harvested Premier League season start-years to evaluate",
+    )
+    p.add_argument(
+        "--output",
+        help="optional Markdown report path; otherwise print to stdout",
+    )
+    p.set_defaults(func=cmd_fpl_evaluate)
+
+    p = sub.add_parser(
+        "fpl-decision-evaluate",
+        help="Phase 1B optimiser baseline and top-K stability evidence",
+    )
+    p.add_argument(
+        "--ks", nargs="+", type=int, default=[1, 5, 10, 25, 50, 100],
+        help="strictly increasing top-K search widths to compare",
+    )
+    p.add_argument("--output", help="optional Markdown report path; otherwise print to stdout")
+    p.set_defaults(func=cmd_fpl_decision_evaluate)
+
+    p = sub.add_parser(
+        "fpl-import",
+        help="store an explicit user-supplied FPL squad and candidate-price snapshot",
+    )
+    p.add_argument("--input", required=True, help="FPL state JSON (§13.3)")
+    p.add_argument("--season", type=int, default=2026)
+    p.add_argument("--db", default="data/bym.db")
+    p.set_defaults(func=cmd_fpl_import)
 
     p = sub.add_parser("tune-xi", help="select ξ by walk-forward validation (§29.2)")
     common(p)

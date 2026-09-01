@@ -98,27 +98,54 @@ Git:          uncommitted at freeze time — record the commit SHA here
               of pinning provenance to a real commit, not a working tree
 ```
 
-## Open item — historical data corpus is NOT yet frozen
+## Corpus freeze — completed 2026-08-31
 
-Unlike `PHASE1_MODEL_V1` (which had real, hashed CSV files to pin), this
-baseline's CODE is frozen but its **input corpus is not yet pulled**:
-`fpl.ingest.ingest_fixture_player_stats` exists and is tested against
-mocked payloads, but no live `api_football` historical pull (2022-2024,
-the approved free-tier scope — §5.2, §5.6) has actually run against this
-codebase's database. Walk-forward evaluation results reported before that
-pull happens are necessarily synthetic/illustrative, not this baseline's
-real performance.
+The approved historical corpus is complete: 1,140 Premier League fixtures
+across 2022/23–2024/25, carrying 34,296 player-stat rows. The ordered
+fixture-status/content-hash fingerprint is
+`669542301254be8970ba40ae778105c67e669cdcea9c04dffdf8c154974e7b92`.
+Field completeness and identity gate results are recorded in
+[`results/fpl_corpus_report.md`](../results/fpl_corpus_report.md).
 
-Pulling the real corpus spends real, metered `api_football` quota
-(100 requests/day) against the user's account — that is a live-resource
-decision, not a code change, and is called out separately rather than
-run silently as part of "freezing the baseline."
+The first causal fixture-level baseline evaluation is recorded in
+[`results/fpl_baseline_fpl_001.md`](../results/fpl_baseline_fpl_001.md).
+It is descriptive evidence, not a tuning or promotion result: no baseline
+parameter was changed after seeing it.
 
-## Interpretation thresholds — to be agreed before the corpus pull
+Migration 0013 preserves the provider's fixture-time club on every future
+ingest. The original harvested rows for 37 transferred/unknown-team players
+cannot be reconstructed safely from a season-end player snapshot, so they
+are explicitly excluded from this initial stable-club evaluation cohort
+rather than attributed to the wrong club.
 
-Following `MANIFEST.md`'s discipline of recording interpretation
-thresholds *before* seeing results: Phase 1B's metrics table (§18) should
-have its "good enough to keep" bar agreed once the real corpus size is
-known (a walk-forward evaluation over a handful of fixtures cannot
-support the same confidence as one over several seasons), not retrofitted
-after the numbers come in.
+## Recommendation-run guard — added 2026-09-01
+
+`fpl.recommendation.recommend_from_snapshot` now joins exactly one immutable
+FPL game-state snapshot with projections bearing `BASELINE_FPL_001`, runs the
+existing optimiser, and appends its result to `fpl_recommendation_snapshots`.
+It refuses an incomplete projection universe, an unproved/expired deadline,
+or missing per-fixture availability data. This is orchestration and
+reproducibility control only: it does not change the frozen model, scoring or
+optimiser logic above.
+
+## Optimiser baseline and stability — completed 2026-09-01
+
+[`results/fpl_decision_baseline_fpl_001.md`](../results/fpl_decision_baseline_fpl_001.md)
+records the named single-solve nominal baseline against the contingency-aware
+top-K search on a canonical bench-reliability stress case. The wider search
+improves evaluated xP from 32.097 to 32.598, changes two XI/captain decisions,
+and has stabilised by K=10 through the required K=10/25/50/100 sweep.
+
+This is deliberately algorithmic evidence, not a historical transfer-return
+claim: the project has no permitted historical FPL price/squad snapshots.
+It validates the decision layer's stated reason for top-K enumeration, but
+does not promote a new default K or stand in for prospective live results.
+
+## Interpretation threshold status
+
+No "good enough to keep" threshold is retrofitted to the first baseline
+run. It is the reference point that later `FPL_00N` challengers must beat,
+not a candidate selected after seeing its own score. Before evaluating a
+challenger, record its comparison metrics and minimum practical effect
+size against this report; do not promote a component merely because one
+aggregate number moves favourably.

@@ -524,6 +524,87 @@ test("fplView tolerates a missing appData.fpl entirely", () => {
   assert.match(app.fplView(), /UNDER CONSTRUCTION/);
 });
 
+test("fplView explains the free fallback when no squad snapshot exists", () => {
+  const app = loadApp(appData({
+    fpl: { status: "live", seasons: [], dashboard: {
+      status: "AWAITING_SQUAD", squad: null, recommendation: null,
+      message: "No FPL squad snapshot is stored locally.",
+    } },
+  }));
+
+  assert.match(app.fplView(), /Your squad is not stored here yet/);
+  assert.match(app.fplView(), /No FPL squad snapshot is stored locally/);
+});
+
+test("fplView labels an incomplete market snapshot as shortlist-only", () => {
+  const app = loadApp(appData({
+    fpl: { status: "live", seasons: [], dashboard: {
+      status: "SHORTLIST_ONLY",
+      message: "This snapshot supports squad display and shortlist-only advice.",
+      recommendation: null,
+      squad: {
+        gameweek: 3, deadline: "2026-09-04T18:30:00+01:00", bank: 0.9,
+        free_transfers: 2, candidate_universe_complete: false,
+        players: [
+          { name: "M. Sangaré", position: "MID", club: "Brentford", current_price: 5.6, is_starter: true, is_captain: false, is_vice_captain: false, bench_order: null },
+          { name: "Scarlett", position: "FWD", club: "Spurs", current_price: 4.5, is_starter: false, is_captain: false, is_vice_captain: false, bench_order: 1 },
+        ],
+      },
+    } },
+  }));
+
+  const html = app.fplView();
+  assert.match(html, /SHORTLIST ONLY/);
+  assert.match(html, /M\. Sangaré/);
+  assert.match(html, /Scarlett/);
+  assert.match(html, /No recorded recommendation/);
+});
+
+test("fplView shows an explicitly user-visible lineup snapshot and its shortlist", () => {
+  const app = loadApp(appData({
+    fpl: { status: "live", seasons: [], dashboard: {
+      status: "LINEUP_ONLY",
+      message: "This is a local snapshot of the manager's user-visible squad.",
+      recommendation: null,
+      source: { kind: "MANUAL_SNAPSHOT", label: "Manager-provided screenshot", observed_at: "2026-09-01T09:03:00+01:00", current_player_feed: false },
+      lineup_estimate: {
+        scope: "CURRENT SQUAD ONLY", model_version: "MANUAL_SQUAD_PRIOR_001",
+        message: "Provisional historical-rate estimate.", captain: "B. Fernandes", vice_captain: "Palmer",
+        starters: ["B. Fernandes"], bench: ["Palmer"],
+        players: [{ name: "B. Fernandes", expected_points: 4.12, evidence: "historical profile (90 team fixtures)", uncertainty: "MODERATE" }],
+        reasoning: { captain: "B. Fernandes has the highest provisional estimate.", vice_captain: "Palmer is the contingency." },
+        downside: [{ title: "Not a live player forecast", detail: "Current form is not present." }],
+      },
+      shortlist: {
+        source_label: "Manager-provided screenshot",
+        recommendation: "Wilson → M. Sangaré",
+        reasoning: "Visible shortlist evidence only.",
+        candidates: [{ name: "M. Sangaré", club: "Brentford", position: "MID", current_price: 5.6, total_points: 18, fixture: "SUN (H)" }],
+      },
+      squad: {
+        gameweek: 3, deadline: "2026-09-04T18:30:00+01:00", bank: 0,
+        free_transfers: 2, candidate_universe_complete: false,
+        players: [
+          { name: "B. Fernandes", position: "MID", club: "Man Utd", current_price: 12, fixture: "EVE (A)", is_starter: true, is_captain: true, is_vice_captain: false, bench_order: null },
+          { name: "Palmer", position: "GK", club: "Ipswich", current_price: 4, fixture: "LIV (H)", is_starter: false, is_captain: false, is_vice_captain: false, bench_order: 1 },
+        ],
+      },
+    } },
+  }));
+
+  const html = app.fplView();
+  assert.match(html, /B\. Fernandes/);
+  assert.match(html, /Provisional squad estimate/);
+  assert.match(html, /Wide-uncertainty estimate/);
+  assert.match(html, /MANUAL_SQUAD_PRIOR_001/);
+  assert.match(html, /Why this setup/);
+  assert.match(html, /Downside before action/);
+  assert.match(html, /Manual Snapshot/);
+  assert.match(html, /no live player feed/);
+  assert.match(html, /Wilson → M\. Sangaré/);
+  assert.match(html, /18 total points/);
+});
+
 // ---- LMS competition reset ------------------------------------------------
 
 const LMS_BASE = {

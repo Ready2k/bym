@@ -135,6 +135,8 @@ def test_harvest_next_batch_marks_a_successful_fixture_fetched(conn, monkeypatch
     assert row["player_stats_status"] == "FETCHED"
     assert row["row_count"] == 1
     assert row["content_hash"] is not None
+    stat = conn.execute("SELECT team FROM fpl_player_match_stats").fetchone()
+    assert stat["team"] == "Chelsea"  # fixture-time provider identity, not a later snapshot
 
 
 def test_harvest_next_batch_marks_an_empty_response_as_no_data_not_fetched(conn, monkeypatch):

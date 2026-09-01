@@ -1011,9 +1011,37 @@ function fplView() {
         return `<div class="fpl-progress-row"><span>${escapeHtml(seasonLabel(s.season))}</span><div class="fpl-progress-track"><div class="fpl-progress-fill" style="width:${pct}%"></div></div><span>${s.fetched}/${s.total} fixtures</span></div>`;
       }).join("")}</section>`
     : "";
-  const body = live
-    ? emptyState("FPL data is ready", "The historical player-data corpus has finished harvesting. Squad recommendations are coming soon.")
-    : emptyState("FPL is under construction", "The historical player-data corpus is still being harvested automatically, a limited number of fixtures per day to respect the data provider's free-tier limit. Player projections and the squad optimiser go live here once every season is fully fetched.");
+  const dashboard = fpl.dashboard;
+  if (!dashboard) {
+    const body = live
+      ? emptyState("FPL data is ready", "The historical player-data corpus has finished harvesting. Squad recommendations are coming soon.")
+      : emptyState("FPL is under construction", "The historical player-data corpus is still being harvested automatically, a limited number of fixtures per day to respect the data provider's free-tier limit. Player projections and the squad optimiser go live here once every season is fully fetched.");
+    return `${header}<p>${fplStatusPill(fpl.status)}</p>${body}${progress}`;
+  }
+  if (!dashboard.squad) {
+    return `${header}<p>${fplStatusPill(fpl.status)}</p>${emptyState("Your squad is not stored here yet", dashboard.message)}${progress}`;
+  }
+  const squad = dashboard.squad;
+  const playerRow = (player) => `<li><strong>${escapeHtml(player.name)}</strong><span>${escapeHtml(player.position)} · ${escapeHtml(player.club)} · £${Number(player.current_price).toFixed(1)}${player.fixture ? ` · ${escapeHtml(player.fixture)}` : ""}${player.is_captain ? " · C" : ""}${player.is_vice_captain ? " · VC" : ""}${player.bench_order ? ` · Bench ${player.bench_order}` : ""}</span></li>`;
+  const recommendation = dashboard.recommendation;
+  const recommendationPanel = recommendation
+    ? `<section class="form-card"><p class="eyebrow">Latest recorded recommendation</p><h2>${escapeHtml(recommendation.captain.name)} captain · ${escapeHtml(recommendation.vice_captain.name)} vice</h2><p class="subtitle">XI: ${recommendation.starters.map((player) => escapeHtml(player.name)).join(", ")}</p><p class="subtitle">Bench: ${recommendation.bench.map((player) => escapeHtml(player.name)).join(", ")}</p><p class="subtitle">${recommendation.transfers_in.length ? `Transfers: ${recommendation.transfers_out.map((player) => escapeHtml(player.name)).join(", ")} → ${recommendation.transfers_in.map((player) => escapeHtml(player.name)).join(", ")}.` : "No transfer in this recorded recommendation."} ${recommendation.hit_cost ? `Hit: −${recommendation.hit_cost}.` : ""}</p></section>`
+    : `<section class="callout muted"><strong>No recorded recommendation</strong><span>${dashboard.status === "FULL_MARKET_READY" ? "This squad has market coverage, but no pre-deadline projection run has been recorded." : "The free mode remains shortlist-only: it will not claim a best market-wide transfer."}</span></section>`;
+  const scope = squad.candidate_universe_complete ? "FULL MARKET" : "SHORTLIST ONLY";
+  const shortlist = dashboard.shortlist;
+  const source = dashboard.source;
+  const shortlistPanel = shortlist?.candidates?.length
+    ? `<section class="form-card"><p class="eyebrow">Named transfer shortlist</p><h2>${shortlist.recommendation ? escapeHtml(shortlist.recommendation) : "No transfer recommendation"}</h2><p class="subtitle">${escapeHtml(shortlist.reasoning || "User-visible shortlist evidence only.")}</p><ul class="fpl-player-list">${shortlist.candidates.map((candidate) => `<li><strong>${escapeHtml(candidate.name)}</strong><span>${escapeHtml(candidate.club)} · £${Number(candidate.current_price).toFixed(1)} · ${candidate.total_points == null ? "points unavailable" : `${candidate.total_points} total points`} · ${escapeHtml(candidate.fixture)}</span></li>`).join("")}</ul><p class="subtitle">Source: ${escapeHtml(shortlist.source_label)}. This is not a full-market search or xP model.</p></section>`
+    : "";
+  const estimate = dashboard.lineup_estimate;
+  const estimatePanel = estimate
+    ? `<section class="form-card"><p class="eyebrow">Provisional squad estimate · ${escapeHtml(estimate.scope)}</p><h2>${escapeHtml(estimate.captain)} captain · ${escapeHtml(estimate.vice_captain)} vice</h2><p class="subtitle">Recommended XI: ${estimate.starters.map(escapeHtml).join(", ")}</p><p class="subtitle">Bench: ${estimate.bench.map(escapeHtml).join(", ")}</p><p class="subtitle">${escapeHtml(estimate.message)}</p>${estimate.reasoning ? `<section class="callout muted"><strong>Why this setup</strong><span>${escapeHtml(estimate.reasoning.captain)} ${escapeHtml(estimate.reasoning.vice_captain)}</span></section>` : ""}<div class="stat-table-card"><table><thead><tr><th>Player</th><th>Est. pts</th><th>Evidence</th><th>Uncertainty</th></tr></thead><tbody>${estimate.players.map((player) => `<tr><td>${escapeHtml(player.name)}</td><td>${Number(player.expected_points).toFixed(2)}</td><td>${escapeHtml(player.evidence)}</td><td>${escapeHtml(player.uncertainty)}</td></tr>`).join("")}</tbody></table></div>${estimate.downside?.length ? `<section class="callout muted"><strong>Downside before action</strong><ul class="fpl-player-list">${estimate.downside.map((item) => `<li><strong>${escapeHtml(item.title)}</strong><span>${escapeHtml(item.detail)}</span></li>`).join("")}</ul></section>` : ""}<p class="subtitle">${escapeHtml(estimate.model_version)} is a separate, uncalibrated fallback—not the frozen full-market model.</p></section>`
+    : "";
+  const dataStatus = dashboard.status === "LINEUP_ONLY"
+    ? `<section class="callout muted"><strong>${estimate ? "Wide-uncertainty estimate" : "xP and uncertainty unavailable"}</strong><span>${estimate ? "This is a current-squad-only ranking. It cannot make a market-wide transfer claim; players without historical coverage use a positional prior." : "No permitted live player-projection feed is connected. The shown XI is the recorded setup, not a newly modelled lineup recommendation."}</span></section>`
+    : "";
+  const sourceCard = source ? `<article><p class="eyebrow">Data status</p><strong>${escapeHtml(titleCase(source.kind))}</strong><small>${escapeHtml(source.label)} · observed ${displayDate(source.observed_at)}${source.current_player_feed ? "" : " · no live player feed"}</small></article>` : "";
+  const body = `<section class="fpl-summary-grid"><article><p class="eyebrow">Gameweek</p><strong>${squad.gameweek}</strong><small>Deadline ${squad.deadline ? displayDate(squad.deadline) : "not recorded"}</small></article><article><p class="eyebrow">Budget</p><strong>£${Number(squad.bank).toFixed(1)}m</strong><small>${squad.free_transfers} free transfer${squad.free_transfers === 1 ? "" : "s"}</small></article><article><p class="eyebrow">Advice scope</p><strong>${scope}</strong><small>${escapeHtml(dashboard.message)}</small></article>${sourceCard}</section>${dataStatus}<section class="split-layout"><section class="form-card"><p class="eyebrow">Current squad</p><h2>Starting XI</h2><ul class="fpl-player-list">${squad.players.filter((player) => player.is_starter).map(playerRow).join("")}</ul><h3>Bench</h3><ul class="fpl-player-list">${squad.players.filter((player) => !player.is_starter).map(playerRow).join("")}</ul></section><div>${estimatePanel}${recommendationPanel}${shortlistPanel}</div></section>`;
   return `${header}<p>${fplStatusPill(fpl.status)}</p>${body}${progress}`;
 }
 

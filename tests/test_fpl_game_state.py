@@ -79,6 +79,7 @@ def sample_payload(**overrides) -> dict:
         "free_transfers": 2,
         "active_chip": None,
         "chips_available": ["wildcard", "bench_boost", "triple_captain", "free_hit"],
+        "candidate_universe_complete": True,
         "candidate_players": candidates,
         "squad": squad,
         "starters": starters,
@@ -127,6 +128,7 @@ def test_store_import_persists_a_provenance_row_and_a_squad_row(conn):
     ).fetchone()
     assert persisted is not None
     normalised = json.loads(persisted["normalised_state"])
+    assert normalised["candidate_universe_complete"] is True
     assert len(normalised["candidate_players"]) == 17
     assert normalised["squad_snapshot"]["captain_id"] == squad_row.captain_id
 
@@ -136,6 +138,16 @@ def test_candidate_universe_reads_back_out_of_a_loaded_snapshot(conn):
     universe = game_state.candidate_universe(game_row)
     assert len(universe) == 17
     assert all(isinstance(p.price, float) for p in universe.values())
+    assert game_state.candidate_universe_is_complete(game_row)
+
+
+def test_partial_candidate_universe_is_stored_but_not_claimed_complete(conn):
+    payload = sample_payload()
+    payload["candidate_universe_complete"] = False
+
+    game_row, _ = game_state.store_import(conn, payload, SEASON)
+
+    assert not game_state.candidate_universe_is_complete(game_row)
 
 
 # ---- idempotency ----------------------------------------------------------
