@@ -10,6 +10,7 @@ state. Turning the LLM on is a deliberate act, twice over.
     OLLAMA_BASE_URL=http://Desktop-HomePC.local:11434
     OLLAMA_MODEL=<model name>
     OLLAMA_TIMEOUT_SECONDS=120
+    OLLAMA_MAX_OUTPUT_TOKENS=1024
 
 The native Ollama API (`/api/chat`) is used rather than the
 OpenAI-compatible `/v1` surface: `/api/chat` accepts a full JSON schema in
@@ -30,6 +31,11 @@ DEFAULT_OLLAMA_BASE_URL = "http://Desktop-HomePC.local:11434"
 DEFAULT_OLLAMA_MODEL = "llama3.1"
 DEFAULT_TIMEOUT_SECONDS = 180  # was 120: measured cold-load alone is ~20s
 DEFAULT_KEEP_ALIVE = "15m"
+# A schema-constrained claim can include a verbatim quotation.  Do not rely
+# on the server's default generation limit: deployments can set that as low
+# as 256 tokens, which leaves a syntactically incomplete JSON object after
+# Tavily has already paid to retrieve the article.
+DEFAULT_MAX_OUTPUT_TOKENS = 1024
 
 
 class ExtractorKind(str, Enum):
@@ -53,6 +59,7 @@ class ExtractorConfig:
     base_url: str = DEFAULT_OLLAMA_BASE_URL
     model: str = DEFAULT_OLLAMA_MODEL
     timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS
+    max_output_tokens: int = DEFAULT_MAX_OUTPUT_TOKENS
     # How long Ollama keeps the model resident after a call. Measured on a
     # real host, loading is ~15-20s and dominates a short extraction, while
     # generation is under a second. Sweeps run 12 teams back to back, so
@@ -89,12 +96,21 @@ def from_env(env: dict[str, str] | None = None) -> ExtractorConfig:
         timeout = int(source.get("OLLAMA_TIMEOUT_SECONDS", DEFAULT_TIMEOUT_SECONDS))
     except ValueError:
         timeout = DEFAULT_TIMEOUT_SECONDS
+    try:
+        max_output_tokens = int(
+            source.get("OLLAMA_MAX_OUTPUT_TOKENS", DEFAULT_MAX_OUTPUT_TOKENS)
+        )
+    except ValueError:
+        max_output_tokens = DEFAULT_MAX_OUTPUT_TOKENS
+    if max_output_tokens < 1:
+        max_output_tokens = DEFAULT_MAX_OUTPUT_TOKENS
     return ExtractorConfig(
         kind=kind,
         mode=mode,
         base_url=source.get("OLLAMA_BASE_URL") or DEFAULT_OLLAMA_BASE_URL,
         model=source.get("OLLAMA_MODEL") or DEFAULT_OLLAMA_MODEL,
         timeout_seconds=timeout,
+        max_output_tokens=max_output_tokens,
     )
 
 

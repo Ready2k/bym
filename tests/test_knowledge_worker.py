@@ -326,6 +326,7 @@ def test_rejected_claims_are_recorded_with_reasons(conn, wired):
             CandidateClaim(
                 claim_type=ClaimType.AVAILABILITY.value,
                 player_name="Cole Palmer",
+                team="Chelsea",
                 availability="CONFIRMED_ABSENT",
                 certainty="CONFIRMED",
                 supporting_evidence="Palmer has been ruled out for the season",

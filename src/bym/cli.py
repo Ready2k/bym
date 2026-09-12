@@ -297,6 +297,60 @@ def cmd_fpl_import(args) -> int:
     return 0
 
 
+def cmd_fpl_plan(args) -> int:
+    """Build a local 2–4 Gameweek Phase 2 plan from explicit input only."""
+    import json
+
+    from .fpl import phase2
+
+    source = Path(args.input)
+    try:
+        data = phase2.parse_input(json.loads(source.read_text()))
+        payload = phase2.as_payload(phase2.build_plan(data))
+    except OSError as exc:
+        print(f"REFUSED. Cannot read {source}: {exc}", file=sys.stderr)
+        return 2
+    except (json.JSONDecodeError, phase2.Phase2InputError) as exc:
+        print(f"REFUSED. Invalid Phase 2 input: {exc}", file=sys.stderr)
+        return 2
+    rendered = json.dumps(payload, indent=2) + "\n"
+    if args.output:
+        output = Path(args.output)
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(rendered)
+        print(f"Wrote {output}")
+    else:
+        print(rendered, end="")
+    return 0
+
+
+def cmd_fpl_relative(args) -> int:
+    """Evaluate named FPL choices against pre-deadline rival scenarios."""
+    import json
+
+    from .fpl import phase3
+
+    source = Path(args.input)
+    try:
+        data = phase3.parse_input(json.loads(source.read_text()))
+        payload = phase3.build_plan(data)
+    except OSError as exc:
+        print(f"REFUSED. Cannot read {source}: {exc}", file=sys.stderr)
+        return 2
+    except (json.JSONDecodeError, phase3.Phase3InputError) as exc:
+        print(f"REFUSED. Invalid Phase 3 input: {exc}", file=sys.stderr)
+        return 2
+    rendered = json.dumps(payload, indent=2) + "\n"
+    if args.output:
+        output = Path(args.output)
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(rendered)
+        print(f"Wrote {output}")
+    else:
+        print(rendered, end="")
+    return 0
+
+
 def cmd_tune_xi(args) -> int:
     from .backtest.walk_forward import tune_xi
     from .data.football_data import load_matches
@@ -315,7 +369,7 @@ def cmd_tune_xi(args) -> int:
     return 0
 
 
-def _layer_credentials() -> dict:
+def _layer_credentials(web_config=None) -> dict:
     """Credentials and extractor for the availability and knowledge layers.
 
     Absent credentials are passed through as None rather than omitted, so
@@ -326,7 +380,17 @@ def _layer_credentials() -> dict:
 
     from .knowledge.config import build_extractor, from_env
 
-    config = from_env()
+    # `bym tick` is the worker behind rounds configured in the browser, so
+    # it must honour the extractor the browser saved.  Previously it read
+    # environment variables only: a UI-enabled Ollama setup therefore paid
+    # for Tavily retrieval but silently used the null extractor and produced
+    # no intelligence events.
+    if web_config is not None:
+        from .web import web_extractor_config
+
+        config = web_extractor_config(web_config)
+    else:
+        config = from_env()
     return {
         "availability_key": os.environ.get("API_FOOTBALL_KEY"),
         "tavily_key": os.environ.get("TAVILY_API_KEY"),
@@ -425,7 +489,8 @@ def cmd_tick(args) -> int:
     with scheduler.connect(Path(args.db)) as conn:
         outcomes = worker.run_due_jobs(
             conn, api_key, lambda: router,
-            known_teams=known_teams, web_config=web_config, **_layer_credentials()
+            known_teams=known_teams, web_config=web_config,
+            **_layer_credentials(web_config)
         )
     if not outcomes:
         print("No jobs due.")
@@ -1874,6 +1939,22 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--season", type=int, default=2026)
     p.add_argument("--db", default="data/bym.db")
     p.set_defaults(func=cmd_fpl_import)
+
+    p = sub.add_parser(
+        "fpl-plan",
+        help="build a shortlist-only 2–4 Gameweek transfer and chip plan",
+    )
+    p.add_argument("--input", required=True, help="manager-provided Phase 2 JSON")
+    p.add_argument("--output", help="optional JSON output path")
+    p.set_defaults(func=cmd_fpl_plan)
+
+    p = sub.add_parser(
+        "fpl-relative",
+        help="evaluate named choices against pre-deadline FPL rival scenarios",
+    )
+    p.add_argument("--input", required=True, help="manager-provided Phase 3 JSON")
+    p.add_argument("--output", help="optional JSON output path")
+    p.set_defaults(func=cmd_fpl_relative)
 
     p = sub.add_parser("tune-xi", help="select ξ by walk-forward validation (§29.2)")
     common(p)

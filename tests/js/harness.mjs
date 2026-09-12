@@ -27,10 +27,11 @@ const EXPOSED = [
   "quality", "submissionMessage", "fixtureCard", "monitorCard",
   "heatmapGrid", "evBreakdown", "sourceFreshness", "surpriseNote",
   "strategyPanel", "submissionRecord", "leagueView", "homeView",
-  "teamBadge", "activityItem", "emptyState", "markScrollableRegions",
+  "opponentsView",
+  "teamBadge", "activityItem", "activityView", "emptyState", "markScrollableRegions",
   "lmsPlanCard", "lmsRecommendationRows", "lmsLineageCard", "lineageChart",
   "lmsView",
-  "healthView", "modelView", "fplView", "fplStatusPill",
+  "healthView", "markOllamaConnected", "modelView", "fplView", "fplStatusPill",
 ];
 
 /** An entrant's lineage as `_lms_lineage_dict` shapes it. */
@@ -99,6 +100,7 @@ export function loadApp(appData = null) {
   const shim = `
     ;globalThis.__harness = {
       set(data) { appData = data; },
+      setActivityFilter(filter) { activityFilter = filter; },
       get() { return appData; },
       fns: { ${EXPOSED.join(", ")} },
     };
@@ -135,7 +137,12 @@ export function loadApp(appData = null) {
 
   const harness = context.__harness;
   if (appData) harness.set(appData);
-  return { ...harness.fns, __setAppData: harness.set, __context: context };
+  return {
+    ...harness.fns,
+    __setAppData: harness.set,
+    __setActivityFilter: harness.setActivityFilter,
+    __context: context,
+  };
 }
 
 /** A minimal, valid fixture as the payload actually shapes it. */

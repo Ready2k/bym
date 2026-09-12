@@ -44,6 +44,7 @@ def claim(**kwargs):
     defaults = dict(
         claim_type=ClaimType.AVAILABILITY.value,
         player_name="Cole Palmer",
+        team="Chelsea",
         availability="DOUBT",
         certainty="REPORTED",
         supporting_evidence="Cole Palmer will be assessed tomorrow",
@@ -204,9 +205,17 @@ def test_claim_without_a_subject_is_rejected():
     )
     incomplete, why = is_incomplete(empty)
     assert incomplete
-    assert "player_name" in why and "availability" in why
+    assert "player_name" in why and "team" in why and "availability" in why
 
-    result = validate([empty], evidence())
+
+def test_availability_claim_without_a_team_is_rejected():
+    from bym.knowledge.extractor import is_incomplete
+
+    missing_team = claim(team=None)
+    incomplete, why = is_incomplete(missing_team)
+    assert incomplete and "team" in why
+
+    result = validate([missing_team], evidence())
     assert len(result.rejected) == 1
 
 

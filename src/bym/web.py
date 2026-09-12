@@ -62,6 +62,10 @@ class WebConfig:
     lms_state_path: Path = Path("data/lms_state.json")
     lms_archive_path: Path = Path("data/lms_archive.json")
     fpl_lineup_state_path: Path = Path("data/fpl_lineup_state.json")
+    fpl_phase2_input_path: Path = Path("data/fpl_phase2_input.json")
+    fpl_phase3_input_path: Path = Path("data/fpl_phase3_input.json")
+    fpl_assisted_actions_path: Path = Path("data/fpl_assisted_actions.json")
+    fpl_decision_history_path: Path = Path("data/fpl_decision_history.json")
     seasons: tuple[int, int] = (2019, 2025)
     divisions: tuple[str, ...] = ("E0", "E1")
 
@@ -822,6 +826,12 @@ def _dashboard(config: WebConfig):
     health_payload["ollama"] = {
         "configured": extractor_config.kind == "ollama",
         "host": extractor_config.host if extractor_config.kind == "ollama" else None,
+        # This is the already-sanitised UI value: credentials are rejected
+        # on save and stripped when read from an environment setting.  It is
+        # used only by the explicit "Check connection" action, never on the
+        # dashboard page-load path.
+        "base_url": extractor_settings_for_ui(config)["base_url"]
+        if extractor_config.kind == "ollama" else None,
         "model": extractor_config.model if extractor_config.kind == "ollama" else None,
         "detail": getattr(ollama_health, "detail", "") if ollama_health else (
             "Ollama status is checked when you request its models."
@@ -1267,23 +1277,70 @@ def import_opponent(payload: dict, config: WebConfig) -> dict:
     for pick in picks:
         _scoreline(pick)
     golden_goal = _golden_goal_minute(payload.get("golden_goal"))
+    _save_opponent_round(
+        name, picks, golden_goal, _season_for(rnd), rnd.round_number, config,
+    )
+    return {"opponents": load_ui_state(config.ui_state_path)["opponents"]}
+
+
+def _save_opponent_round(
+    name: str, picks: list[str], golden_goal: int | None,
+    season: int, round_number: int, config: WebConfig,
+) -> str:
+    """Persist one rival's picks in both the editable UI state and ledger."""
     state = load_ui_state(config.ui_state_path)
-    opponent = state["opponents"].setdefault(name, {"rounds": {}})
-    opponent["rounds"][_round_key(rnd)] = picks
-    opponent.setdefault("golden_goal", {})[_round_key(rnd)] = golden_goal
+    # Treat a differently cased spelling as the existing entrant rather than
+    # making two rows in the same private league.
+    stored_name = next(
+        (existing for existing in state["opponents"] if existing.casefold() == name.casefold()), name
+    )
+    opponent = state["opponents"].setdefault(stored_name, {"rounds": {}})
+    round_key = f"{season}:{round_number}"
+    opponent["rounds"][round_key] = picks
+    opponent.setdefault("golden_goal", {})[round_key] = golden_goal
     save_ui_state(state, config.ui_state_path)
-    from .league import record_opponent_round
+    from .league import record_opponent_round, replace_opponent_round
 
     try:
         record_opponent_round(
-            name, _season_for(rnd), rnd.round_number,
+            stored_name, season, round_number,
             [_scoreline(pick) for pick in picks], golden_goal=golden_goal,
             path=config.opponent_history_path,
         )
     except ValueError as exc:
         if "already recorded" not in str(exc):
             raise
-    return {"opponents": state["opponents"]}
+        replace_opponent_round(
+            stored_name, season, round_number,
+            [_scoreline(pick) for pick in picks], golden_goal=golden_goal,
+            path=config.opponent_history_path,
+        )
+    return stored_name
+
+
+def save_league_opponent_picks(payload: dict, config: WebConfig) -> dict:
+    """Correct a rival's recorded round from the league audit screen."""
+    name = str(payload.get("participant", "")).strip()
+    season = payload.get("season")
+    round_number = payload.get("round_number")
+    picks = payload.get("picks")
+    if not name or len(name) > 80:
+        raise ValueError("Opponent name must be 1–80 characters.")
+    if name.casefold() == load_ui_state(config.ui_state_path)["player_name"].casefold():
+        raise ValueError("Your own submitted Super 6 picks cannot be edited from the league audit.")
+    if isinstance(season, bool) or not isinstance(season, int) or season < 1:
+        raise ValueError("season must be a valid year.")
+    if isinstance(round_number, bool) or not isinstance(round_number, int) or round_number < 1:
+        raise ValueError("round_number must be valid.")
+    if not isinstance(picks, list) or len(picks) != 6:
+        raise ValueError("Provide exactly six opponent predictions.")
+    for pick in picks:
+        _scoreline(pick)
+    golden_goal = _golden_goal_minute(payload.get("golden_goal"))
+    stored_name = _save_opponent_round(
+        name, picks, golden_goal, season, round_number, config,
+    )
+    return {"participant": stored_name, "season": season, "round_number": round_number}
 
 
 def save_results(payload: dict, config: WebConfig) -> dict:
@@ -1460,6 +1517,9 @@ def _league_payload(
     payload = {
         "season": season,
         "standings": [asdict(row) for row in table],
+        "player_rounds": _league_player_rounds_payload(
+            season_history, season_results, season_golden_goal_actual, config,
+        ),
         "profiles": [asdict(profile) for profile in opponent_profiles(history)],
         "favourite_bias": [asdict(item) for item in favourite],
         "team_bias": [asdict(item) for item in team_bias],
@@ -1517,6 +1577,80 @@ def _league_payload(
                     opponent=opponent, config=config,
                 )
     return payload
+
+
+def _league_player_rounds_payload(
+    history, results: dict[tuple[int, int, int], tuple[int, int] | None],
+    golden_goal_actual: dict[tuple[int, int], int | None], config: WebConfig,
+) -> dict[str, list[dict]]:
+    """The score audit behind each row in the private-league table.
+
+    The standings intentionally expose only totals; this companion payload
+    makes every total checkable against the six picks, actual scores and
+    Super 6 points that produced it.
+    """
+    from .scoring import super6_points
+
+    round_fixtures = _saved_round_fixtures(config)
+    player_rounds: dict[str, list[dict]] = {}
+    for record in history:
+        fixtures = round_fixtures.get((record.season, record.round_number), [])
+        entries = []
+        total = exact = 0
+        for index, pick in enumerate(record.picks):
+            key = (record.season, record.round_number, index)
+            actual = results.get(key)
+            if key not in results:
+                status, actual_text, points = "PENDING", "", None
+            elif actual is None:
+                status, actual_text, points = "VOID", None, None
+            else:
+                points = super6_points(*pick, *actual)
+                status, actual_text = "RESULTED", f"{actual[0]}-{actual[1]}"
+                total += points
+                exact += int(pick == actual)
+            fixture = fixtures[index] if index < len(fixtures) else {}
+            entries.append({
+                "home_team": fixture.get("home_team", f"Fixture {index + 1}"),
+                "away_team": fixture.get("away_team", ""),
+                "pick": f"{pick[0]}-{pick[1]}",
+                "actual": actual_text,
+                "status": status,
+                "points": points,
+            })
+        actual_golden_goal = golden_goal_actual.get((record.season, record.round_number))
+        player_rounds.setdefault(record.participant, []).append({
+            "season": record.season,
+            "round_number": record.round_number,
+            "fixtures": entries,
+            "points": total,
+            "exact_scores": exact,
+            "golden_goal": record.golden_goal,
+            "golden_goal_actual": actual_golden_goal,
+            "golden_goal_distance": (
+                abs(record.golden_goal - actual_golden_goal)
+                if record.golden_goal is not None and actual_golden_goal is not None else None
+            ),
+        })
+    for entries in player_rounds.values():
+        entries.sort(key=lambda item: (item["season"], item["round_number"]), reverse=True)
+    return player_rounds
+
+
+def _saved_round_fixtures(config: WebConfig) -> dict[tuple[int, int], list[dict[str, str]]]:
+    """Map retained round files to the fixture labels used in the audit."""
+    paths = [*sorted(config.round_path.parent.glob("*.json")), config.round_path, _active_round_path(config)]
+    saved: dict[tuple[int, int], list[dict[str, str]]] = {}
+    for path in paths:
+        try:
+            rnd = load_round(path)
+        except (OSError, ValueError, KeyError, json.JSONDecodeError):
+            continue
+        saved[(_season_for(rnd), rnd.round_number)] = [
+            {"home_team": fixture.home, "away_team": fixture.away}
+            for fixture in rnd.fixtures
+        ]
+    return saved
 
 
 MAX_SYNTHETIC_ROUNDS = 12
@@ -1921,6 +2055,7 @@ def research_now(payload: dict, config: WebConfig) -> dict:
 
     rnd = load_round(_active_round_path(config))
     accepted = rejected = failures = 0
+    emitted: list[events.Event] = []
     with db.connect(config.database_path) as conn:
         for fixture in rnd.fixtures:
             for team in (fixture.home, fixture.away):
@@ -1932,6 +2067,12 @@ def research_now(payload: dict, config: WebConfig) -> dict:
                 accepted += result.claims_accepted
                 rejected += result.claims_rejected
                 failures += result.extraction_failures
+                emitted.extend(result.events)
+    # Manual research is still real activity.  Previously only scheduled
+    # research appended its structured events, so a successful "Research
+    # now" run could update the database while the Intelligence tab stayed
+    # empty.
+    events.append(emitted, config.event_log_path)
     return {
         "claims_accepted": accepted,
         "claims_rejected": rejected,
@@ -2317,12 +2458,115 @@ def fpl_status_payload(config: WebConfig) -> dict:
     from .fpl import dashboard as fpl_dashboard
 
     with db.connect(config.database_path) as conn:
-        dashboard = fpl_dashboard.dashboard_payload(conn, config.fpl_lineup_state_path)
+        dashboard = fpl_dashboard.dashboard_payload(
+            conn, config.fpl_lineup_state_path, config.fpl_phase2_input_path,
+            config.fpl_phase3_input_path, config.fpl_assisted_actions_path,
+        )
+    from .fpl import review as fpl_review
+
+    dashboard["review"] = fpl_review.payload(config.fpl_decision_history_path, dashboard)
     return {
         "status": "live" if complete else "under_construction",
         "seasons": seasons,
         "dashboard": dashboard,
     }
+
+
+def save_fpl_lineup(payload: dict, config: WebConfig) -> dict:
+    """Validate and save only manager-visible local squad state."""
+    from .fpl import lineup_state
+
+    state = lineup_state.parse(payload)
+    lineup_state.save(state, config.fpl_lineup_state_path)
+    return {"status": "SAVED", "players": len(state.players)}
+
+
+def _save_validated_json(path: Path, payload: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2) + "\n")
+
+
+def save_fpl_phase2_input(payload: dict, config: WebConfig) -> dict:
+    from .fpl import phase2
+
+    data = phase2.parse_input(payload)
+    plan = phase2.as_payload(phase2.build_plan(data))
+    _save_validated_json(config.fpl_phase2_input_path, payload)
+    return {"status": "SAVED", "plan": plan}
+
+
+def save_fpl_phase3_input(payload: dict, config: WebConfig) -> dict:
+    from .fpl import phase3
+
+    data = phase3.parse_input(payload)
+    plan = phase3.build_plan(data)
+    _save_validated_json(config.fpl_phase3_input_path, payload)
+    return {"status": "SAVED", "plan": plan}
+
+
+def _current_fpl_dashboard(config: WebConfig) -> dict:
+    from .fpl import dashboard as fpl_dashboard
+
+    with db.connect(config.database_path) as conn:
+        return fpl_dashboard.dashboard_payload(
+            conn, config.fpl_lineup_state_path, config.fpl_phase2_input_path,
+            config.fpl_phase3_input_path, config.fpl_assisted_actions_path,
+        )
+
+
+def review_fpl_decision(payload: dict, config: WebConfig) -> dict:
+    from .fpl import review
+
+    entry = review.record(config.fpl_decision_history_path, _current_fpl_dashboard(config))
+    return {"status": "REVIEWED", "review": entry}
+
+
+def save_fpl_actual_rival_evidence(payload: dict, config: WebConfig) -> dict:
+    from .fpl import review
+
+    entry = review.add_actual_rival_evidence(
+        config.fpl_decision_history_path,
+        review_id=str(payload.get("review_id", "")),
+        rival=str(payload.get("rival", "")),
+        squad=payload.get("squad", []),
+        captain=str(payload.get("captain", "")),
+        observed_gameweek=int(payload.get("observed_gameweek", 0)),
+        observed_at=str(payload.get("observed_at", "")),
+    )
+    return {"status": "RECORDED_AS_EVALUATION_ONLY", "evidence": entry}
+
+
+def prepare_fpl_assisted_action(payload: dict, config: WebConfig) -> dict:
+    """Record a proposed local-browser action; this does not contact FPL."""
+    from .fpl import assisted
+
+    assisted.prepare(
+        config.fpl_assisted_actions_path,
+        action_type=str(payload.get("action_type", "")),
+        summary=str(payload.get("summary", "")),
+        deadline=payload.get("deadline"),
+    )
+    return assisted.payload(config.fpl_assisted_actions_path)
+
+
+def confirm_fpl_assisted_action(payload: dict, config: WebConfig) -> dict:
+    from .fpl import assisted
+
+    assisted.confirm_for_browser(
+        config.fpl_assisted_actions_path,
+        action_id=str(payload.get("action_id", "")),
+        confirmation=str(payload.get("confirmation", "")),
+    )
+    return assisted.payload(config.fpl_assisted_actions_path)
+
+
+def complete_fpl_assisted_action(payload: dict, config: WebConfig) -> dict:
+    from .fpl import assisted
+
+    assisted.complete_by_manager(
+        config.fpl_assisted_actions_path, action_id=str(payload.get("action_id", ""))
+    )
+    return assisted.payload(config.fpl_assisted_actions_path)
 
 
 def lms_payload(config: WebConfig, router=None, known_teams: set[str] | None = None) -> dict:
@@ -2921,7 +3165,7 @@ def _build_app_payload(config: WebConfig) -> dict:
     rnd = load_round(_active_round_path(config))
     state = load_ui_state(config.ui_state_path)
     registry = load_registry(config.registry_path)
-    activity = [asdict(event) for event in events.load(config.event_log_path)[-100:]][::-1]
+    activity = _activity_payload(config.event_log_path)
     sources = [asdict(record) for _, record in sorted(registry.items())]
     from .transparency import model_summary, performance_summary
 
@@ -2960,6 +3204,27 @@ def _build_app_payload(config: WebConfig) -> dict:
         }
     )
     return payload
+
+
+def _activity_payload(path: Path, limit: int = 100) -> list[dict]:
+    """Keep routine market polling from evicting every material event.
+
+    MARKET_SNAPSHOT is intentionally a high-volume audit record (and is
+    hidden from the default activity view).  Applying one undifferentiated
+    tail limit meant a busy market week could make Predictions,
+    Intelligence and Lineups appear to have no history at all.  Retain a
+    bounded tail for routine snapshots *and* a separate bounded tail for
+    everything material, then restore chronological display order.
+    """
+    recorded = events.load(path)
+    routine = [event for event in recorded if event.event_type == "MARKET_SNAPSHOT"][-limit:]
+    material = [event for event in recorded if event.event_type != "MARKET_SNAPSHOT"][-limit:]
+    return [
+        asdict(event)
+        for event in sorted(
+            [*routine, *material], key=lambda event: event.occurred_at, reverse=True
+        )
+    ]
 
 
 class _InFlightBuild:
@@ -3136,10 +3401,28 @@ class BymRequestHandler(BaseHTTPRequestHandler):
                 self._send_json(HTTPStatus.OK, send_test_email(self.config))
             elif path == "/api/final-test":
                 self._send_json(HTTPStatus.OK, run_final_test(payload, self.config))
+            elif path == "/api/fpl/assisted-actions":
+                self._send_json(HTTPStatus.CREATED, prepare_fpl_assisted_action(payload, self.config))
+            elif path == "/api/fpl/assisted-actions/confirm":
+                self._send_json(HTTPStatus.OK, confirm_fpl_assisted_action(payload, self.config))
+            elif path == "/api/fpl/assisted-actions/complete":
+                self._send_json(HTTPStatus.OK, complete_fpl_assisted_action(payload, self.config))
+            elif path == "/api/fpl/squad":
+                self._send_json(HTTPStatus.OK, save_fpl_lineup(payload, self.config))
+            elif path == "/api/fpl/phase2":
+                self._send_json(HTTPStatus.OK, save_fpl_phase2_input(payload, self.config))
+            elif path == "/api/fpl/phase3":
+                self._send_json(HTTPStatus.OK, save_fpl_phase3_input(payload, self.config))
+            elif path == "/api/fpl/reviews":
+                self._send_json(HTTPStatus.CREATED, review_fpl_decision(payload, self.config))
+            elif path == "/api/fpl/rival-evidence":
+                self._send_json(HTTPStatus.CREATED, save_fpl_actual_rival_evidence(payload, self.config))
             elif path == "/api/ollama/models":
                 self._send_json(HTTPStatus.OK, available_ollama_models(payload))
             elif path == "/api/opponents":
                 self._send_json(HTTPStatus.OK, import_opponent(payload, self.config))
+            elif path == "/api/league/opponent-picks":
+                self._send_json(HTTPStatus.OK, save_league_opponent_picks(payload, self.config))
             elif path == "/api/results":
                 self._send_json(HTTPStatus.OK, save_results(payload, self.config))
             elif path == "/api/cup-prediction":

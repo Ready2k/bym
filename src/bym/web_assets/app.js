@@ -10,6 +10,7 @@ let pendingRound;
 let activityFilter = "ALL";
 let cupForecast;
 let ollamaModels = [];
+let opponentEntryName = "";
 let lmsEntrant = "";
 let lmsPreview = "";
 let lmsGraphWeek = "";
@@ -323,7 +324,11 @@ function fixtureCard(fixture, index, compact = false) {
 }
 
 function updateCountdown() {
-  if (!appData || !appData.round) return;
+  if (!appData) return;
+  const fplDeadline = appData.fpl?.dashboard?.squad?.deadline;
+  const fplNode = document.querySelector("[data-fpl-countdown]");
+  if (fplNode) fplNode.textContent = fplDeadlineText(fplDeadline);
+  if (!appData.round) return;
   const deadline = new Date(appData.round.deadline_at).getTime();
   const delta = deadline - Date.now();
   const node = $("#countdown");
@@ -1000,11 +1005,161 @@ function fplStatusPill(status) {
   return `<span class="status-pill ${live ? "approved" : "neutral"}">${live ? "LIVE" : "UNDER CONSTRUCTION"}</span>`;
 }
 
+const FPL_POSITIONS = ["GK", "GK", "DEF", "DEF", "DEF", "DEF", "DEF", "MID", "MID", "MID", "MID", "MID", "FWD", "FWD", "FWD"];
+const FPL_CHIPS = ["wildcard_first_half", "free_hit_first_half", "bench_boost_first_half", "triple_captain_first_half", "wildcard_second_half", "free_hit_second_half", "bench_boost_second_half", "triple_captain_second_half"];
+const FPL_LINEUP_CHIPS = ["wildcard", "free_hit", "bench_boost", "triple_captain"];
+
+function fplDeadlineText(deadline) {
+  if (!deadline) return "Deadline not recorded";
+  const delta = new Date(deadline).getTime() - Date.now();
+  if (delta <= 0) return "Deadline passed";
+  const minutes = Math.floor(delta / 60000);
+  const days = Math.floor(minutes / 1440);
+  const hours = Math.floor((minutes % 1440) / 60);
+  return days ? `${days}d ${hours}h remaining` : `${hours}h ${minutes % 60}m remaining`;
+}
+
+function fplQuickLinks(hasSquad) {
+  return `<nav class="fpl-quick-links" aria-label="FPL workflow"><button type="button" data-fpl-jump="fpl-squad">${hasSquad ? "Edit squad" : "Set up squad"}</button><button type="button" data-fpl-jump="fpl-horizon">Plan horizon</button><button type="button" data-fpl-jump="fpl-rivals">Add rivals</button><button type="button" data-fpl-jump="fpl-review">Review &amp; history</button></nav>`;
+}
+
+function fplSquadForm(dashboard = {}) {
+  const squad = dashboard.squad || {};
+  const grouped = Object.fromEntries(FPL_POSITIONS.map((position) => [position, []]));
+  (squad.players || []).forEach((player) => (grouped[player.position] || grouped.MID).push(player));
+  const seen = { GK: 0, DEF: 0, MID: 0, FWD: 0 };
+  const defaults = new Set([0, 2, 3, 4, 5, 7, 8, 9, 10, 12, 13]);
+  let nextBench = 1;
+  const players = FPL_POSITIONS.map((position, index) => {
+    const player = grouped[position][seen[position]++] || {};
+    const starter = player.is_starter ?? defaults.has(index);
+    const benchOrder = starter ? "" : (player.bench_order || nextBench++);
+    return { position, index, player, starter, benchOrder };
+  });
+  const storedCaptain = players.findIndex(({ player }) => player.is_captain);
+  const storedVice = players.findIndex(({ player }) => player.is_vice_captain);
+  const captainIndex = storedCaptain >= 0 ? storedCaptain : 7;
+  const viceIndex = storedVice >= 0 ? storedVice : 8;
+  const playerRows = players.map(({ position, index, player, starter, benchOrder }) => `<tr>
+    <td><strong>${position}</strong><input type="hidden" name="position_${index}" value="${position}"></td>
+    <td><input required name="name_${index}" value="${escapeHtml(player.name || "")}" aria-label="${position} player ${index + 1} name"></td>
+    <td><input required name="club_${index}" value="${escapeHtml(player.club || "")}" aria-label="${position} player ${index + 1} club"></td>
+    <td><input required name="price_${index}" type="number" min="0" max="20" step="0.1" value="${player.current_price ?? ""}" aria-label="${position} player ${index + 1} price"></td>
+    <td><input name="fixture_${index}" value="${escapeHtml(player.fixture || "")}" placeholder="e.g. EVE (A)" aria-label="${position} player ${index + 1} fixture"></td>
+    <td><select name="role_${index}" aria-label="${position} player ${index + 1} role"><option value="STARTER" ${starter ? "selected" : ""}>Starter</option><option value="BENCH" ${starter ? "" : "selected"}>Bench</option></select></td>
+    <td><select name="bench_${index}" aria-label="${position} player ${index + 1} bench order"><option value="">—</option>${[1,2,3,4].map((order) => `<option value="${order}" ${Number(benchOrder) === order ? "selected" : ""}>${order}</option>`).join("")}</select></td>
+    <td><input name="captain" type="radio" value="${index}" ${index === captainIndex ? "checked" : ""} aria-label="Captain ${escapeHtml(player.name || position)}"></td>
+    <td><input name="vice" type="radio" value="${index}" ${index === viceIndex ? "checked" : ""} aria-label="Vice-captain ${escapeHtml(player.name || position)}"></td>
+  </tr>`).join("");
+  const shortlist = dashboard.shortlist?.candidates || [];
+  const candidateRows = Array.from({ length: Math.max(3, shortlist.length + 1) }, (_, index) => {
+    const player = shortlist[index] || {};
+    return `<tr><td><input name="candidate_name_${index}" value="${escapeHtml(player.name || "")}" placeholder="Optional name"></td><td><input name="candidate_club_${index}" value="${escapeHtml(player.club || "")}" placeholder="Club"></td><td><select name="candidate_position_${index}">${["GK","DEF","MID","FWD"].map((position) => `<option ${player.position === position ? "selected" : ""}>${position}</option>`).join("")}</select></td><td><input name="candidate_price_${index}" type="number" min="0" step="0.1" value="${player.current_price ?? ""}" placeholder="£m"></td><td><input name="candidate_points_${index}" type="number" min="0" value="${player.total_points ?? ""}" placeholder="Optional"></td><td><input name="candidate_fixture_${index}" value="${escapeHtml(player.fixture || "")}" placeholder="Fixture"></td></tr>`;
+  }).join("");
+  const selectedChips = new Set((squad.chips_available || []).map((chip) => chip.replace(/_(first|second)_half$/, "")));
+  return `<section id="fpl-squad" class="form-card fpl-workflow"><div class="section-heading"><div><p class="eyebrow">Step 1 · local setup</p><h2>${squad.players ? "Edit current squad" : "Set up your current squad"}</h2><p class="subtitle">This saves only what you type in this browser workflow. It is not an FPL account connection and stores no credentials or session data.</p></div></div><form data-fpl-squad>
+    <div class="form-grid"><label>Gameweek<input required name="gameweek" type="number" min="1" max="38" value="${squad.gameweek || 1}"></label><label>Deadline (local time)<input required name="deadline" type="datetime-local" value="${squad.deadline ? localDateTime(squad.deadline) : ""}"></label><label>Bank (£m)<input required name="bank" type="number" min="0" step="0.1" value="${squad.bank ?? 0}"></label><label>Free transfers<input required name="free_transfers" type="number" min="0" max="5" value="${squad.free_transfers ?? 1}"></label><label>Source label<input required name="source_label" value="${escapeHtml(dashboard.source?.label || "Manager-entered FPL screen")}"></label><label>Observed time<input required name="observed_at" type="datetime-local" value="${dashboard.source?.observed_at ? localDateTime(dashboard.source.observed_at) : localDateTime(new Date().toISOString())}"></label></div>
+    <div class="table-scroll"><table class="fpl-entry-table"><thead><tr><th>Pos</th><th>Name</th><th>Club</th><th>Price</th><th>Fixture</th><th>Role</th><th>Bench</th><th>C</th><th>VC</th></tr></thead><tbody>${playerRows}</tbody></table></div>
+    <fieldset><legend>Available chips</legend><div class="choice-grid">${FPL_LINEUP_CHIPS.map((chip) => `<label><input type="checkbox" name="chips" value="${chip}" ${selectedChips.has(chip) ? "checked" : ""}>${escapeHtml(titleCase(chip))}</label>`).join("")}</div></fieldset>
+    <details><summary>Add named shortlist candidates</summary><div class="table-scroll"><table class="fpl-entry-table"><thead><tr><th>Name</th><th>Club</th><th>Pos</th><th>Price</th><th>Total pts</th><th>Fixture</th></tr></thead><tbody>${candidateRows}</tbody></table></div><label>Shortlist recommendation<input name="shortlist_recommendation" value="${escapeHtml(dashboard.shortlist?.recommendation || "")}" placeholder="e.g. Wilson → M. Sangaré"></label><label>Reasoning<textarea name="shortlist_reasoning" rows="3">${escapeHtml(dashboard.shortlist?.reasoning || "")}</textarea></label></details>
+    <p class="form-help">Validation enforces 2 GK / 5 DEF / 5 MID / 3 FWD, a legal 11-player formation, four ordered substitutes, three players per club, and distinct starting captain/vice-captain.</p><div class="form-actions"><button class="button" type="submit">Save local squad</button></div></form></section>`;
+}
+
+function fplProjectionInputs(prefix, projections, startGameweek) {
+  return Array.from({ length: 4 }, (_, offset) => {
+    const gameweek = startGameweek + offset;
+    const item = (projections || []).find((projection) => Number(projection.gameweek) === gameweek) || {};
+    return `<fieldset class="fpl-projection"><legend>GW${gameweek}</legend><label>xP<input required name="${prefix}_xp_${offset}" type="number" min="0" step="0.1" value="${item.expected_points ?? 0}"></label><label>Fixtures<select name="${prefix}_fixtures_${offset}">${[0,1,2,3].map((count) => `<option value="${count}" ${Number(item.fixtures ?? 1) === count ? "selected" : ""}>${count}</option>`).join("")}</select></label><label>Certainty<select name="${prefix}_status_${offset}"><option ${item.fixture_status === "CONFIRMED" ? "selected" : ""}>CONFIRMED</option><option ${item.fixture_status !== "CONFIRMED" ? "selected" : ""}>UNCERTAIN</option></select></label></fieldset>`;
+  }).join("");
+}
+
+function fplPhase2Form(dashboard) {
+  const squad = dashboard.squad;
+  if (!squad) return "";
+  const input = dashboard.phase2?.input;
+  const start = input?.gameweeks?.[0] || squad.gameweek;
+  const owned = input?.owned || squad.players.map((player) => ({ ...player, selling_price: player.selling_price ?? player.current_price, projections: [] }));
+  const seedCandidates = input?.shortlist || (dashboard.shortlist?.candidates || []).map((player) => ({ ...player, buy_price: player.current_price, projections: [] }));
+  const candidates = Array.from({ length: Math.max(3, seedCandidates.length + 1) }, (_, index) => seedCandidates[index] || {});
+  const ownedRows = owned.map((player, index) => `<details class="fpl-asset"><summary>${escapeHtml(player.name)} · ${escapeHtml(player.position)} · selling £${Number(player.selling_price).toFixed(1)}m</summary><input type="hidden" name="owned_name_${index}" value="${escapeHtml(player.name)}"><input type="hidden" name="owned_position_${index}" value="${escapeHtml(player.position)}"><input type="hidden" name="owned_club_${index}" value="${escapeHtml(player.club)}"><label>Selling value (£m)<input required name="owned_price_${index}" type="number" min="0" step="0.1" value="${player.selling_price}"></label><div class="fpl-projection-grid">${fplProjectionInputs(`owned_${index}`, player.projections, start)}</div></details>`).join("");
+  const candidateRows = candidates.map((player, index) => {
+    const risk = (input?.price_risks || []).find((item) => item.name === player.name) || {};
+    return `<details class="fpl-asset"><summary>${player.name ? escapeHtml(player.name) : `Candidate ${index + 1} (optional)`}</summary><div class="form-grid"><label>Name<input name="target_name_${index}" value="${escapeHtml(player.name || "")}"></label><label>Club<input name="target_club_${index}" value="${escapeHtml(player.club || "")}"></label><label>Position<select name="target_position_${index}">${["GK","DEF","MID","FWD"].map((position) => `<option ${player.position === position ? "selected" : ""}>${position}</option>`).join("")}</select></label><label>Buy value (£m)<input name="target_price_${index}" type="number" min="0" step="0.1" value="${player.buy_price ?? ""}"></label><label>Adverse price (£m)<input name="target_risk_price_${index}" type="number" min="0" step="0.1" value="${risk.adverse_buy_price ?? ""}"></label><label>Risk probability<input name="target_risk_probability_${index}" type="number" min="0" max="1" step="0.01" value="${risk.probability ?? ""}"></label></div><div class="fpl-projection-grid">${fplProjectionInputs(`target_${index}`, player.projections, start)}</div></details>`;
+  }).join("");
+  const half = start <= 19 ? "first_half" : "second_half";
+  const chips = new Set(input?.chips_available || (squad.chips_available || []).map((chip) => chip.includes("_half") ? chip : `${chip}_${half}`));
+  return `<section id="fpl-horizon" class="form-card fpl-workflow"><p class="eyebrow">Step 2 · transfer &amp; chip planner</p><h2>Plan a 2–4 Gameweek horizon</h2><p class="subtitle">Every value remains editable. The result searches only your current squad and the named candidates below, and always remains <b>SHORTLIST_ONLY_HORIZON</b>.</p><form data-fpl-phase2 data-owned-count="${owned.length}" data-target-count="${candidates.length}"><div class="form-grid"><label>First Gameweek<input required name="start_gameweek" type="number" min="1" max="38" value="${start}"></label><label>Horizon<select name="horizon"><option value="2" ${input?.gameweeks?.length === 2 ? "selected" : ""}>2 Gameweeks</option><option value="3" ${!input || input.gameweeks.length === 3 ? "selected" : ""}>3 Gameweeks</option><option value="4" ${input?.gameweeks?.length === 4 ? "selected" : ""}>4 Gameweeks</option></select></label><label>Bank (£m)<input required name="bank" type="number" min="0" step="0.1" value="${input?.bank ?? squad.bank}"></label><label>Free transfers<input required name="free_transfers" type="number" min="0" max="5" value="${input?.free_transfers ?? squad.free_transfers}"></label></div><fieldset><legend>Chips available</legend><div class="choice-grid">${FPL_CHIPS.map((chip) => `<label><input type="checkbox" name="phase2_chips" value="${chip}" ${chips.has(chip) ? "checked" : ""}>${escapeHtml(titleCase(chip))}</label>`).join("")}</div></fieldset><h3>Owned selling values and projections</h3>${ownedRows}<h3>Named candidates, buy values and price risk</h3>${candidateRows}<div class="form-actions"><button class="button" type="submit">Compare hold and named paths</button></div></form></section>`;
+}
+
+function fplNames(value) {
+  return (value || []).join("\n");
+}
+
+function fplPlanFields(prefix, plan, gameweeks) {
+  return `<div class="form-grid"><label>Option/scenario name<input name="${prefix}_label" value="${escapeHtml(plan?.label || "")}"></label></div><label>15-player squad<textarea name="${prefix}_squad" rows="5" placeholder="One player per line">${escapeHtml(fplNames(plan?.squad))}</textarea></label><label>11 starters<textarea name="${prefix}_starters" rows="4" placeholder="One player per line">${escapeHtml(fplNames(plan?.starters))}</textarea></label><div class="form-grid">${gameweeks.map((gw, offset) => `<label>GW${gw} captain<input name="${prefix}_captain_${offset}" value="${escapeHtml(plan?.captains?.[gw] || "")}"></label>`).join("")}</div>`;
+}
+
+function fplPhase3Form(dashboard) {
+  const squad = dashboard.squad;
+  if (!squad) return "";
+  const input = dashboard.phase3?.input;
+  const start = input?.gameweeks?.[0] || dashboard.phase2?.input?.gameweeks?.[0] || squad.gameweek;
+  const horizon = input?.gameweeks?.length || Math.min(2, dashboard.phase2?.input?.gameweeks?.length || 2);
+  const gameweeks = Array.from({ length: 4 }, (_, index) => start + index);
+  const defaultPlan = { label: "Hold", squad: squad.players.map((player) => player.name), starters: squad.players.filter((player) => player.is_starter).map((player) => player.name), captains: Object.fromEntries(gameweeks.map((gw) => [gw, squad.players.find((player) => player.is_captain)?.name || ""])) };
+  const options = input?.our_options || [defaultPlan];
+  const optionCards = Array.from({ length: Math.max(2, options.length + 1) }, (_, index) => `<details class="fpl-asset" ${index === 0 ? "open" : ""}><summary>Our option ${index + 1}</summary>${fplPlanFields(`our_${index}`, options[index], gameweeks)}</details>`).join("");
+  const rivals = input?.rivals || [];
+  const rivalCards = Array.from({ length: Math.max(1, rivals.length + 1) }, (_, rivalIndex) => {
+    const rival = rivals[rivalIndex] || {};
+    const scenarios = rival.scenarios || [];
+    const scenarioCards = Array.from({ length: Math.max(2, scenarios.length + 1) }, (_, scenarioIndex) => `<details class="fpl-scenario"><summary>Likely scenario ${scenarioIndex + 1}</summary><label>Probability<input name="rival_${rivalIndex}_scenario_${scenarioIndex}_probability" type="number" min="0" max="1" step="0.01" value="${scenarios[scenarioIndex]?.probability ?? (scenarioIndex === 0 ? 1 : "")}"></label>${fplPlanFields(`rival_${rivalIndex}_scenario_${scenarioIndex}`, scenarios[scenarioIndex], gameweeks)}</details>`).join("");
+    return `<details class="fpl-asset"><summary>${rival.name ? escapeHtml(rival.name) : `Add rival ${rivalIndex + 1}`}</summary><div class="form-grid"><label>Rival name<input name="rival_${rivalIndex}_name" value="${escapeHtml(rival.name || "")}"></label><label>Starting points<input name="rival_${rivalIndex}_points" type="number" min="0" step="1" value="${rival.starting_points ?? ""}"></label><label>Last locked Gameweek<input name="rival_${rivalIndex}_locked_gw" type="number" min="1" max="${start - 1}" value="${rival.previous_locked_gameweek ?? start - 1}"></label></div><label>Last locked 15-player squad<textarea name="rival_${rivalIndex}_locked_squad" rows="5">${escapeHtml(fplNames(rival.previous_locked_squad))}</textarea></label><label>Optional transfer/captain history evidence<textarea name="rival_${rivalIndex}_history" rows="2" placeholder="Evidence note only">${escapeHtml(rival.transfer_history?.map((item) => item.note || JSON.stringify(item)).join("\n") || "")}</textarea></label><p class="warning-copy">Current-GW state is never confirmed here. Add probability-weighted predictions below; scenario probabilities must total 1.</p>${scenarioCards}</details>`;
+  }).join("");
+  const known = new Map();
+  (input?.players || []).forEach((player) => known.set(player.name, player));
+  (dashboard.phase2?.input?.owned || []).concat(dashboard.phase2?.input?.shortlist || []).forEach((player) => known.set(player.name, { name: player.name, expected_points: Object.fromEntries((player.projections || []).map((item) => [item.gameweek, item.expected_points])) }));
+  squad.players.forEach((player) => { if (!known.has(player.name)) known.set(player.name, { name: player.name, expected_points: {} }); });
+  const projectionPlayers = [...known.values(), ...Array.from({ length: 3 }, () => ({ name: "", expected_points: {} }))];
+  const projectionRows = projectionPlayers.map((player, index) => `<tr><td><input name="p3_player_${index}" value="${escapeHtml(player.name)}" placeholder="Player"></td>${gameweeks.map((gw, offset) => `<td><input name="p3_player_${index}_xp_${offset}" type="number" min="0" step="0.1" value="${player.expected_points?.[gw] ?? 0}" aria-label="${escapeHtml(player.name || `Player ${index + 1}`)} GW${gw} xP"></td>`).join("")}</tr>`).join("");
+  return `<section id="fpl-rivals" class="form-card fpl-workflow"><p class="eyebrow">Step 3 · mates-relative planner</p><h2>Compare named plans against likely rival scenarios</h2><p class="subtitle">Rival current-GW teams are predictions, never known pre-deadline facts. Last locked squads provide evidence; later actual picks are captured separately in Review &amp; history.</p><form data-fpl-phase3 data-option-count="${Math.max(2, options.length + 1)}" data-rival-count="${Math.max(1, rivals.length + 1)}" data-player-count="${projectionPlayers.length}"><div class="form-grid"><label>First Gameweek<input name="start_gameweek" type="number" min="1" max="38" value="${start}"></label><label>Horizon<select name="horizon">${[1,2,3,4].map((count) => `<option value="${count}" ${horizon === count ? "selected" : ""}>${count} Gameweek${count === 1 ? "" : "s"}</option>`).join("")}</select></label><label>Your starting points<input name="our_starting_points" type="number" min="0" value="${input?.our_starting_points ?? 0}"></label><label>Simulation trials<input name="trials" type="number" min="100" max="20000" value="${input?.trials ?? 3000}"></label></div><h3>Your named options</h3>${optionCards}<h3>Rivals and likely scenarios</h3>${rivalCards}<details><summary>Player projections required by these plans</summary><div class="table-scroll"><table class="fpl-entry-table"><thead><tr><th>Player</th>${gameweeks.map((gw) => `<th>GW${gw} xP</th>`).join("")}</tr></thead><tbody>${projectionRows}</tbody></table></div></details><div class="form-actions"><button class="button" type="submit">Run mates-relative comparison</button></div></form></section>`;
+}
+
+function fplDecisionPanel(dashboard) {
+  const squad = dashboard.squad;
+  const horizon = dashboard.phase2?.plan;
+  const first = horizon?.best_transfer_plan?.steps?.[0];
+  const recorded = dashboard.recommendation;
+  const estimate = dashboard.lineup_estimate;
+  const captain = first?.captain || recorded?.captain?.name || estimate?.captain || squad.players.find((player) => player.is_captain)?.name || "Not assessed";
+  const vice = recorded?.vice_captain?.name || estimate?.vice_captain || squad.players.find((player) => player.is_vice_captain)?.name || "Not assessed";
+  const starters = recorded?.starters?.map((player) => player.name) || estimate?.starters || squad.players.filter((player) => player.is_starter).map((player) => player.name);
+  const action = first?.transfer_in ? `${first.transfer_out} → ${first.transfer_in}` : "Hold this Gameweek";
+  const scope = squad.candidate_universe_complete ? "FULL MARKET" : (dashboard.shortlist?.candidates?.length || horizon ? "SHORTLIST ONLY" : "CURRENT SQUAD ONLY");
+  const downside = estimate?.downside?.[0]?.detail || horizon?.best_transfer_plan?.fixture_alerts?.[0]?.detail || (dashboard.status === "LINEUP_ONLY" ? "Current player availability and live projection evidence are not connected; this is a wide-uncertainty current-squad view." : "No specific downside has been recorded.");
+  return `<section class="fpl-decision-card"><div><p class="eyebrow">Primary recommendation · ${escapeHtml(scope)}</p><h2>${escapeHtml(action)}</h2><p><strong>Captain ${escapeHtml(captain)}</strong> · Vice ${escapeHtml(vice)}</p><p class="subtitle">Starting XI: ${starters.map(escapeHtml).join(", ")}</p></div><div class="fpl-decision-risk"><span class="status-pill neutral">${dashboard.status === "LINEUP_ONLY" ? "WIDE UNCERTAINTY" : "RECORDED INPUTS"}</span><strong>Downside before action</strong><span>${escapeHtml(downside)}</span></div></section>`;
+}
+
+function fplReviewPanel(dashboard) {
+  const review = dashboard.review || { reviews: [], actual_rival_evidence: [] };
+  const deadlinePassed = dashboard.squad?.deadline && new Date(dashboard.squad.deadline).getTime() <= Date.now();
+  const history = (review.reviews || []).map((entry) => {
+    const phase2 = entry.phase2?.best_transfer_plan;
+    const choice = phase2?.steps?.[0]?.transfer_in ? `${phase2.steps[0].transfer_out} → ${phase2.steps[0].transfer_in}` : "Hold / lineup review";
+    const alternatives = entry.phase2?.alternatives?.map((option) => `${option.label}: ${Number(option.projected_points).toFixed(2)} pts`).join(" · ") || "No transfer alternatives were supplied.";
+    return `<details class="history-entry"><summary>${displayDate(entry.reviewed_at)} · ${escapeHtml(choice)}</summary><p><strong>Scope:</strong> ${escapeHtml(entry.scope || "CURRENT SQUAD ONLY")}</p><p><strong>Provenance:</strong> ${escapeHtml(entry.source?.label || "Manager-entered local state")} · observed ${entry.source?.observed_at ? displayDate(entry.source.observed_at) : "time unavailable"}</p><p><strong>Why this option:</strong> ${escapeHtml(alternatives)}</p><p><strong>Uncertainty and risks:</strong> ${entry.risks?.length ? entry.risks.map((risk) => escapeHtml(risk.detail || risk.title || risk.kind)).join(" · ") : "No additional recorded risks."}</p><p class="subtitle">Snapshot ${escapeHtml(entry.id)} is immutable. Later rival observations do not alter it.</p></details>`;
+  }).join("");
+  const evidence = (review.actual_rival_evidence || []).map((entry) => `<li><strong>${escapeHtml(entry.rival)} · GW${entry.observed_gameweek}</strong><span>${escapeHtml(entry.captain)} captain · ${escapeHtml(entry.use)}</span></li>`).join("");
+  const latest = review.reviews?.[0];
+  const evidenceForm = deadlinePassed && latest ? `<details><summary>Capture actual rival picks after the deadline</summary><form data-fpl-rival-evidence><input type="hidden" name="review_id" value="${escapeHtml(latest.id)}"><div class="form-grid"><label>Rival<input required name="rival"></label><label>Observed Gameweek<input required name="observed_gameweek" type="number" min="1" value="${dashboard.squad.gameweek}"></label><label>Observed time<input required name="observed_at" type="datetime-local"></label><label>Captain<input required name="captain"></label></div><label>Actual 15-player squad<textarea required name="squad" rows="6" placeholder="One player per line"></textarea></label><p class="form-help">Saved as post-deadline evaluation evidence only. It cannot modify the earlier recommendation.</p><button class="button" type="submit">Record evaluation evidence</button></form></details>` : "";
+  return `<section id="fpl-review" class="form-card fpl-workflow"><p class="eyebrow">Step 4 · decision review &amp; history</p><h2>${review.current_reviewed_at ? `Reviewed ${displayDate(review.current_reviewed_at)}` : "Freeze this pre-deadline decision"}</h2><p class="subtitle">A review preserves the exact squad, assumptions, provenance, named alternatives, uncertainty and recommendation currently shown. History is append-only.</p>${deadlinePassed ? '<section class="callout muted"><strong>Deadline passed</strong><span>A new pre-deadline review is no longer allowed. Actual rival picks can only be added as evaluation evidence.</span></section>' : '<form data-fpl-review><button class="button" type="submit">Mark current decision reviewed</button></form>'}${history || emptyState("No reviewed decisions yet", "Review the current advice before the deadline to create the first immutable record.")}${evidence ? `<h3>Post-deadline rival evidence</h3><ul class="fpl-player-list">${evidence}</ul>` : ""}${evidenceForm}</section>`;
+}
+
 function fplView() {
   const fpl = appData.fpl || { status: "under_construction", seasons: [] };
   const seasons = fpl.seasons || [];
   const live = fpl.status === "live";
-  const header = pageHeader("Fantasy Premier League", "FPL", "Player projections and a squad optimiser, built on the same frozen match model as Super 6.");
+  const header = pageHeader("Fantasy Premier League", "FPL decision centre", "Set up your local squad, compare named plans and review the decision. Nothing here connects to or changes your FPL account.");
   const progress = seasons.length
     ? `<section class="form-card">${seasons.map((s) => {
         const pct = s.total ? Math.round((100 * s.fetched) / s.total) : 0;
@@ -1019,15 +1174,15 @@ function fplView() {
     return `${header}<p>${fplStatusPill(fpl.status)}</p>${body}${progress}`;
   }
   if (!dashboard.squad) {
-    return `${header}<p>${fplStatusPill(fpl.status)}</p>${emptyState("Your squad is not stored here yet", dashboard.message)}${progress}`;
+    return `${header}<p>${fplStatusPill(fpl.status)}</p>${fplQuickLinks(false)}${emptyState("Your squad is not stored here yet", `${dashboard.message} Complete the guided 15-player form below to unlock lineup, horizon and rivals-relative advice.`, '<button class="button" type="button" data-fpl-jump="fpl-squad">Set up squad</button>')}${fplSquadForm(dashboard)}${progress}`;
   }
   const squad = dashboard.squad;
   const playerRow = (player) => `<li><strong>${escapeHtml(player.name)}</strong><span>${escapeHtml(player.position)} · ${escapeHtml(player.club)} · £${Number(player.current_price).toFixed(1)}${player.fixture ? ` · ${escapeHtml(player.fixture)}` : ""}${player.is_captain ? " · C" : ""}${player.is_vice_captain ? " · VC" : ""}${player.bench_order ? ` · Bench ${player.bench_order}` : ""}</span></li>`;
   const recommendation = dashboard.recommendation;
   const recommendationPanel = recommendation
     ? `<section class="form-card"><p class="eyebrow">Latest recorded recommendation</p><h2>${escapeHtml(recommendation.captain.name)} captain · ${escapeHtml(recommendation.vice_captain.name)} vice</h2><p class="subtitle">XI: ${recommendation.starters.map((player) => escapeHtml(player.name)).join(", ")}</p><p class="subtitle">Bench: ${recommendation.bench.map((player) => escapeHtml(player.name)).join(", ")}</p><p class="subtitle">${recommendation.transfers_in.length ? `Transfers: ${recommendation.transfers_out.map((player) => escapeHtml(player.name)).join(", ")} → ${recommendation.transfers_in.map((player) => escapeHtml(player.name)).join(", ")}.` : "No transfer in this recorded recommendation."} ${recommendation.hit_cost ? `Hit: −${recommendation.hit_cost}.` : ""}</p></section>`
-    : `<section class="callout muted"><strong>No recorded recommendation</strong><span>${dashboard.status === "FULL_MARKET_READY" ? "This squad has market coverage, but no pre-deadline projection run has been recorded." : "The free mode remains shortlist-only: it will not claim a best market-wide transfer."}</span></section>`;
-  const scope = squad.candidate_universe_complete ? "FULL MARKET" : "SHORTLIST ONLY";
+    : `<section class="callout muted"><strong>No recorded recommendation</strong><span>${dashboard.status === "FULL_MARKET_READY" ? "This squad has market coverage, but no pre-deadline projection run has been recorded." : "SHORTLIST ONLY is the maximum transfer scope in free mode; without named candidates the primary view remains CURRENT SQUAD ONLY."}</span></section>`;
+  const scope = squad.candidate_universe_complete ? "FULL MARKET" : (dashboard.shortlist?.candidates?.length || dashboard.phase2?.plan ? "SHORTLIST ONLY" : "CURRENT SQUAD ONLY");
   const shortlist = dashboard.shortlist;
   const source = dashboard.source;
   const shortlistPanel = shortlist?.candidates?.length
@@ -1037,11 +1192,43 @@ function fplView() {
   const estimatePanel = estimate
     ? `<section class="form-card"><p class="eyebrow">Provisional squad estimate · ${escapeHtml(estimate.scope)}</p><h2>${escapeHtml(estimate.captain)} captain · ${escapeHtml(estimate.vice_captain)} vice</h2><p class="subtitle">Recommended XI: ${estimate.starters.map(escapeHtml).join(", ")}</p><p class="subtitle">Bench: ${estimate.bench.map(escapeHtml).join(", ")}</p><p class="subtitle">${escapeHtml(estimate.message)}</p>${estimate.reasoning ? `<section class="callout muted"><strong>Why this setup</strong><span>${escapeHtml(estimate.reasoning.captain)} ${escapeHtml(estimate.reasoning.vice_captain)}</span></section>` : ""}<div class="stat-table-card"><table><thead><tr><th>Player</th><th>Est. pts</th><th>Evidence</th><th>Uncertainty</th></tr></thead><tbody>${estimate.players.map((player) => `<tr><td>${escapeHtml(player.name)}</td><td>${Number(player.expected_points).toFixed(2)}</td><td>${escapeHtml(player.evidence)}</td><td>${escapeHtml(player.uncertainty)}</td></tr>`).join("")}</tbody></table></div>${estimate.downside?.length ? `<section class="callout muted"><strong>Downside before action</strong><ul class="fpl-player-list">${estimate.downside.map((item) => `<li><strong>${escapeHtml(item.title)}</strong><span>${escapeHtml(item.detail)}</span></li>`).join("")}</ul></section>` : ""}<p class="subtitle">${escapeHtml(estimate.model_version)} is a separate, uncalibrated fallback—not the frozen full-market model.</p></section>`
     : "";
+  const phase2 = dashboard.phase2;
+  let phase2Panel = !phase2 || !phase2.plan
+    ? `<section class="callout muted"><strong>Phase 2 · horizon planner ready</strong><span>${escapeHtml(phase2?.message || "A 2–4 Gameweek sheet has not been supplied.")}</span></section>`
+    : (() => {
+        const plan = phase2.plan.best_transfer_plan;
+        const transfers = plan.steps.map((step) => `<li><strong>GW${step.gameweek}: ${step.transfer_in ? `${escapeHtml(step.transfer_out)} → ${escapeHtml(step.transfer_in)}` : "Hold"}</strong><span>${Number(step.projected_points).toFixed(2)} projected points · ${escapeHtml(step.captain)} captain${step.hit_cost ? ` · −${Number(step.hit_cost).toFixed(0)} hit` : ""} · £${Number(step.bank_after).toFixed(1)}m bank · ${step.free_transfers_after} FT next GW</span></li>`).join("");
+        const alerts = [...plan.price_risks, ...plan.fixture_alerts];
+        const chips = phase2.plan.chip_options.filter((option) => option.status === "EVALUATED");
+        const alternatives = (phase2.plan.alternatives || []).map((option) => `<li><strong>${escapeHtml(option.label)}${option.selected ? " · selected" : ""}</strong><span>${Number(option.projected_points).toFixed(2)} pts · ${option.selected ? "best supplied path" : `${Number(option.difference_from_selected).toFixed(2)} vs selected`} · £${Number(option.end_bank).toFixed(1)}m end bank · ${option.free_transfers_after_horizon} FT</span></li>`).join("");
+        const watch = phase2.plan.chip_options.filter((option) => option.status === "WATCH");
+        return `<section class="form-card"><p class="eyebrow">Phase 2 · ${escapeHtml(phase2.plan.scope)}</p><h2>${Number(plan.projected_points).toFixed(2)} projected points across ${phase2.plan.gameweeks.length} GWs</h2><p class="subtitle">${escapeHtml(phase2.plan.message)}</p><ul class="fpl-player-list">${transfers}</ul>${alternatives ? `<h3>Why this path wins</h3><ul class="fpl-player-list">${alternatives}</ul>` : ""}${alerts.length ? `<section class="callout muted"><strong>Fixture and budget risks</strong><ul class="fpl-player-list">${alerts.map((alert) => `<li><strong>GW${alert.gameweek} · ${escapeHtml(alert.player)}</strong><span>${escapeHtml(alert.detail || `${alert.kind}: ${alert.fixtures} fixture${alert.fixtures === 1 ? "" : "s"} · ${alert.fixture_status}`)}</span></li>`).join("")}</ul></section>` : ""}${chips.length ? `<section class="callout muted"><strong>Chip timing against the same no-chip path</strong><ul class="fpl-player-list">${chips.map((option) => `<li><strong>GW${option.gameweek} · ${escapeHtml(titleCase(option.chip))}</strong><span>+${Number(option.incremental_points).toFixed(2)} projected points · ${escapeHtml(option.confidence)} confidence</span></li>`).join("")}</ul></section>` : ""}${watch.length ? `<p class="subtitle">${watch.map((option) => `${titleCase(option.chip)}: watch only`).join(" · ")}. Complete-market alternatives are required before evaluating these chips.</p>` : '<p class="subtitle">Wildcard and Free Hit remain watch items unless a complete market and same-world alternative squads are supplied.</p>'}</section>`;
+      })();
+  const phase3 = dashboard.phase3;
+  const phase3Panel = !phase3 || !phase3.plan
+    ? '<section class="callout muted"><strong>Phase 3 · mates-relative planner ready</strong><span>' + escapeHtml(phase3?.message || "No rival scenarios have been supplied.") + '</span></section>'
+    : (() => {
+        const relative = phase3.plan;
+        const selected = relative.options.find((option) => option.label === relative.recommended_option) || relative.options[0];
+        const options = relative.options.map((option) => '<li><strong>' + escapeHtml(option.label) + (option.label === relative.recommended_option ? " · selected" : "") + '</strong><span>' + (Number(option.p_sole_lead_after_horizon) * 100).toFixed(1) + '% P(sole lead) · ' + (Number(option.p_lead_or_tied_after_horizon) * 100).toFixed(1) + '% lead or tied · ' + Number(option.expected_total_after_horizon).toFixed(1) + ' expected total</span></li>').join("");
+        const effectiveOwnership = selected?.effective_ownership?.slice(0, 5).map((item) => '<li><strong>' + escapeHtml(item.player) + '</strong><span>' + Number(item.effective_ownership).toFixed(1) + '% effective ownership</span></li>').join("") || "";
+        return '<section class="form-card"><p class="eyebrow">Phase 3 · mates-relative</p><h2>' + escapeHtml(relative.recommended_option) + '</h2><p class="subtitle">' + escapeHtml(relative.objective) + '</p><ul class="fpl-player-list">' + options + '</ul>' + (effectiveOwnership ? '<section class="callout muted"><strong>Private-league effective ownership</strong><ul class="fpl-player-list">' + effectiveOwnership + '</ul></section>' : "") + '<p class="subtitle">' + escapeHtml(relative.message) + '</p></section>';
+      })();
+  phase2Panel += phase3Panel;
+  const assisted = dashboard.assisted || { actions: [], message: "Assisted mode is unavailable." };
+  const activeAssisted = assisted.actions.find((action) => action.status === "PREPARED" || action.status === "CONFIRMED_FOR_BROWSER");
+  const assistedPanel = (() => {
+    const create = '<form data-fpl-assisted-prepare class="inline-score-form"><p class="eyebrow">Assisted FPL action · local browser only</p><label>Action<select name="action_type"><option value="TRANSFER">Transfer</option><option value="CAPTAIN">Captain</option><option value="CHIP">Chip</option></select></label><label>Action summary<input name="summary" required placeholder="e.g. Wilson → M. Sangaré"></label><label>Deadline (optional)<input name="deadline" type="datetime-local"></label><button class="button" type="submit">Prepare for confirmation</button></form>';
+    if (!activeAssisted) return '<section class="form-card"><p class="eyebrow">Assisted mode</p><h2>Prepare, confirm, then act in your browser</h2><p class="subtitle">' + escapeHtml(assisted.message) + '</p>' + create + '</section>';
+    if (activeAssisted.status === "PREPARED") return '<section class="form-card"><p class="eyebrow">Assisted mode · action prepared</p><h2>' + escapeHtml(activeAssisted.action_type) + '</h2><p class="subtitle">' + escapeHtml(activeAssisted.summary) + '</p><form data-fpl-assisted-confirm class="inline-score-form"><input name="action_id" type="hidden" value="' + escapeHtml(activeAssisted.id) + '"><label>Type exactly “I confirm this action”<input name="confirmation" required></label><button class="button" type="submit">Confirm for local browser assistance</button></form></section>';
+    return '<section class="form-card"><p class="eyebrow">Assisted mode · browser confirmed</p><h2>' + escapeHtml(activeAssisted.action_type) + '</h2><p class="subtitle">' + escapeHtml(activeAssisted.summary) + '</p><p class="subtitle">A separate, fresh confirmation in this conversation is still required before an agent operates your browser. Nothing has been submitted.</p><form data-fpl-assisted-complete class="inline-score-form"><input name="action_id" type="hidden" value="' + escapeHtml(activeAssisted.id) + '"><button class="button" type="submit">I completed this manually in FPL</button></form></section>';
+  })();
+  phase2Panel += assistedPanel;
   const dataStatus = dashboard.status === "LINEUP_ONLY"
     ? `<section class="callout muted"><strong>${estimate ? "Wide-uncertainty estimate" : "xP and uncertainty unavailable"}</strong><span>${estimate ? "This is a current-squad-only ranking. It cannot make a market-wide transfer claim; players without historical coverage use a positional prior." : "No permitted live player-projection feed is connected. The shown XI is the recorded setup, not a newly modelled lineup recommendation."}</span></section>`
     : "";
   const sourceCard = source ? `<article><p class="eyebrow">Data status</p><strong>${escapeHtml(titleCase(source.kind))}</strong><small>${escapeHtml(source.label)} · observed ${displayDate(source.observed_at)}${source.current_player_feed ? "" : " · no live player feed"}</small></article>` : "";
-  const body = `<section class="fpl-summary-grid"><article><p class="eyebrow">Gameweek</p><strong>${squad.gameweek}</strong><small>Deadline ${squad.deadline ? displayDate(squad.deadline) : "not recorded"}</small></article><article><p class="eyebrow">Budget</p><strong>£${Number(squad.bank).toFixed(1)}m</strong><small>${squad.free_transfers} free transfer${squad.free_transfers === 1 ? "" : "s"}</small></article><article><p class="eyebrow">Advice scope</p><strong>${scope}</strong><small>${escapeHtml(dashboard.message)}</small></article>${sourceCard}</section>${dataStatus}<section class="split-layout"><section class="form-card"><p class="eyebrow">Current squad</p><h2>Starting XI</h2><ul class="fpl-player-list">${squad.players.filter((player) => player.is_starter).map(playerRow).join("")}</ul><h3>Bench</h3><ul class="fpl-player-list">${squad.players.filter((player) => !player.is_starter).map(playerRow).join("")}</ul></section><div>${estimatePanel}${recommendationPanel}${shortlistPanel}</div></section>`;
+  const body = `${fplQuickLinks(true)}<section class="fpl-summary-grid"><article><p class="eyebrow">Next Gameweek</p><strong>GW${squad.gameweek}</strong><small>${squad.deadline ? displayDate(squad.deadline) : "Deadline not recorded"} · <span data-fpl-countdown>${escapeHtml(fplDeadlineText(squad.deadline))}</span></small></article><article><p class="eyebrow">Budget &amp; chips</p><strong>£${Number(squad.bank).toFixed(1)}m · ${squad.free_transfers} FT</strong><small>${squad.chips_available?.length ? squad.chips_available.map(titleCase).join(" · ") : "No available chips recorded"}</small></article><article><p class="eyebrow">Advice scope</p><strong>${scope}</strong><small>${escapeHtml(dashboard.message)}</small></article>${sourceCard}</section>${fplDecisionPanel(dashboard)}${dataStatus}<section class="split-layout"><section class="form-card"><p class="eyebrow">Current squad</p><h2>Starting XI</h2><ul class="fpl-player-list">${squad.players.filter((player) => player.is_starter).map(playerRow).join("")}</ul><h3>Bench</h3><ul class="fpl-player-list">${squad.players.filter((player) => !player.is_starter).map(playerRow).join("")}</ul></section><div>${estimatePanel}${recommendationPanel}${shortlistPanel}${phase2Panel}</div></section>${fplSquadForm(dashboard)}${fplPhase2Form(dashboard)}${fplPhase3Form(dashboard)}${fplReviewPanel(dashboard)}`;
   return `${header}<p>${fplStatusPill(fpl.status)}</p>${body}${progress}`;
 }
 
@@ -1052,7 +1239,30 @@ function leagueView() {
   if (!league.standings.length) return `${pageHeader(name, "League position", `Add opponent predictions and entered picks, then record final results to build the ${season} private-league table. Every new season starts back at 0-0 automatically.`)}${emptyState("No scored private-league rounds yet", "Opponent selections are kept locally and never collected from Sky.", '<button class="button" data-page="opponents">Import opponent predictions</button>')}`;
   const first = league.finish_first ? percent(league.finish_first.probability) : "Not estimated";
   const seasonHeadline = "League position — " + season + " season";
-  return `${pageHeader(name, seasonHeadline, "Every point below is calculated from your recorded picks and final results, scoped to this season only.")}<section class="stat-table-card"><table><thead><tr><th>Rank</th><th>Player</th><th>Points</th><th>Exact</th><th>Golden Goal avg.</th><th>Rounds</th><th>P(Finish 1st)</th></tr></thead><tbody>${league.standings.map((row) => `<tr class="${row.participant === appData.settings.player_name ? "you-row" : ""}"><td>${row.rank}</td><td>${escapeHtml(row.participant)}</td><td>${row.points}</td><td>${row.exact_scores}</td><td>${row.golden_goal_average_distance === null || row.golden_goal_average_distance === undefined ? "—" : `${row.golden_goal_average_distance} min`}</td><td>${row.rounds_scored}</td><td>${row.participant === appData.settings.player_name ? first : "—"}</td></tr>`).join("")}</tbody></table></section><section class="callout muted"><strong>Tiebreak order (§27)</strong><span>Points, then most correct exact scores, then closest average Golden Goal guess. Only a tie surviving all three actually splits.</span></section>${seasonStrategyPanel()}${strategyPanel()}<section class="callout muted"><strong>How P(1st) is estimated</strong><span>${escapeHtml(league.finish_first_reason)}</span></section>`;
+  return `${pageHeader(name, seasonHeadline, "Every point below is calculated from your recorded picks and final results, scoped to this season only. Select a player to audit the calculation.")}<section class="stat-table-card"><table><thead><tr><th>Rank</th><th>Player</th><th>Points</th><th>Exact</th><th>Golden Goal avg.</th><th>Rounds</th><th>P(Finish 1st)</th></tr></thead><tbody>${league.standings.map((row) => `<tr class="${row.participant === appData.settings.player_name ? "you-row" : ""}"><td>${row.rank}</td><td><button class="text-button" data-league-player="${escapeHtml(row.participant)}">${escapeHtml(row.participant)}</button></td><td>${row.points}</td><td>${row.exact_scores}</td><td>${row.golden_goal_average_distance === null || row.golden_goal_average_distance === undefined ? "—" : `${row.golden_goal_average_distance} min`}</td><td>${row.rounds_scored}</td><td>${row.participant === appData.settings.player_name ? first : "—"}</td></tr>`).join("")}</tbody></table></section><section class="callout muted"><strong>Tiebreak order (§27)</strong><span>Points, then most correct exact scores, then closest average Golden Goal guess. Only a tie surviving all three actually splits.</span></section>${seasonStrategyPanel()}${strategyPanel()}<section class="callout muted"><strong>How P(1st) is estimated</strong><span>${escapeHtml(league.finish_first_reason)}</span></section>`;
+}
+
+function openLeaguePlayer(participant) {
+  const rounds = appData.league.player_rounds?.[participant] || [];
+  const canEdit = participant !== appData.settings.player_name;
+  const fixtureName = (fixture) => fixture.away_team
+    ? `${fixture.home_team} v ${fixture.away_team}` : fixture.home_team;
+  const fixtureRows = (round, editable) => round.fixtures.map((fixture, index) => `<tr>
+    <td>${escapeHtml(fixtureName(fixture))}</td>
+    <td>${editable ? `<input required name="pick_${index}" value="${escapeHtml(fixture.pick)}" aria-label="${escapeHtml(fixtureName(fixture))} prediction">` : escapeHtml(fixture.pick)}</td>
+    <td>${fixture.actual === null ? "VOID" : escapeHtml(fixture.actual || "Pending")}</td>
+    <td>${fixture.points === null || fixture.points === undefined ? "—" : fixture.points}</td>
+  </tr>`).join("");
+  const content = rounds.length ? rounds.map((round) => {
+    const goldenGoal = round.golden_goal === null || round.golden_goal === undefined
+      ? "No Golden Goal guess" : `Golden Goal ${round.golden_goal}${round.golden_goal_actual == null ? " · actual not recorded" : ` · actual ${round.golden_goal_actual} (${round.golden_goal_distance} min away)`}`;
+    const table = `<div class="stat-table-card"><table><thead><tr><th>Fixture</th><th>Prediction</th><th>Actual</th><th>Points</th></tr></thead><tbody>${fixtureRows(round, canEdit)}</tbody></table></div>`;
+    const heading = `<section class="section-heading"><div><p class="eyebrow">${round.season}/${String(round.season + 1).slice(-2)} · Round ${round.round_number}</p><h3>${round.points} pts · ${round.exact_scores} exact</h3><p class="subtitle">${goldenGoal}</p></div></section>`;
+    if (!canEdit) return `<section class="form-card league-audit-round">${heading}${table}</section>`;
+    return `<form class="form-card league-audit-round" data-league-entry data-participant="${escapeHtml(participant)}" data-season="${round.season}" data-round-number="${round.round_number}">${heading}${table}<label>Golden Goal guess (optional)<input name="golden_goal" type="number" min="1" max="90" value="${round.golden_goal ?? ""}"></label><div class="form-actions"><button class="button" type="submit">Save correction</button></div></form>`;
+  }).join("") : emptyState("No saved picks for this player", "There are no recorded predictions to audit yet.");
+  $("#league-player-detail").innerHTML = `<p class="eyebrow">League audit</p><h2>${escapeHtml(participant)}</h2><p class="subtitle">Each total is the sum of the per-fixture Super 6 points below.${canEdit ? " Correct a rival's recorded prediction here, then save to recalculate the table." : " Your submitted picks are read-only here."}</p>${content}`;
+  $("#league-player-dialog").showModal();
 }
 
 // §12-13: judges a candidate by its effect on P(Finish 1st) at the end of
@@ -1107,7 +1317,9 @@ function strategyPanel() {
 }
 
 function roundKey() {
-  return `${new Date(appData.round.deadline_at).getFullYear()}:${appData.round.round_number}`;
+  // This mirrors the server's `datetime.year`. Parsing into the browser's
+  // timezone can otherwise move a New Year's Eve deadline into next year.
+  return `${String(appData.round.deadline_at).slice(0, 4)}:${appData.round.round_number}`;
 }
 
 function opponentBiasLine(participant) {
@@ -1151,8 +1363,15 @@ function predictedPicksPanel(participant) {
 function opponentsView() {
   const profiles = appData.league.profiles || [];
   const round = appData.round;
+  const opponentNames = [...new Set([
+    ...Object.keys(appData.opponents || {}),
+    ...profiles.map((profile) => profile.participant),
+  ])].sort((left, right) => left.localeCompare(right));
+  const selected = opponentNames.includes(opponentEntryName) ? opponentEntryName : "";
+  const savedPicks = appData.opponents?.[selected]?.rounds?.[roundKey()] || [];
+  const savedGoldenGoal = appData.opponents?.[selected]?.golden_goal?.[roundKey()] ?? "";
   return `${pageHeader(`Opponent modelling — Round ${round.round_number}`, "Your private league", `Entering picks for Round ${round.round_number}, deadline ${displayDate(round.deadline_at)}. Import selections supplied through permitted channels. We never collect them from Sky.`)}
-  <section class="split-layout"><div>${profiles.length ? `<div class="opponent-list">${profiles.map((profile) => `<article class="opponent-card"><h2>${escapeHtml(profile.participant)}</h2><p>${profile.picks} recorded picks · ${profile.rounds} round${profile.rounds === 1 ? "" : "s"}</p><small>Home ${percent(profile.home_result_rate)} · Draw ${percent(profile.draw_result_rate)} · Away ${percent(profile.away_result_rate)} · Avg goals ${profile.average_total_goals} · Conservatism ${percent(profile.conservatism)}</small><small>Common scores: ${profile.common_scores.map(([score, count]) => `${score} (${count})`).join(" · ") || "Not enough history"}</small>${opponentBiasLine(profile.participant)}${predictedPicksPanel(profile.participant)}</article>`).join("")}</div>` : emptyState("No opponent history yet", "Add selections after each deadline. The system will learn only from recorded evidence.")}</div><section class="form-card"><p class="eyebrow">Manual import</p><h2>Import six selections</h2><p class="subtitle">Paste six scores in fixture order, one per line — for example 2-0. You will see the saved picks immediately; no Sky integration is used.</p><form id="opponent-form"><label>Name<input required name="name" maxlength="80" placeholder="e.g. Dave"></label><label>Predictions<textarea required name="picks" rows="7" placeholder="2-0&#10;1-1&#10;2-1&#10;1-2&#10;3-0&#10;1-2"></textarea></label><label>Golden Goal guess (optional)<input name="golden_goal" type="number" min="1" max="90" placeholder="e.g. 9"></label><p class="subtitle">Used for the private league's tiebreak — points, then exact scores, then closest Golden Goal (§27).</p><div class="form-actions"><button class="button" type="submit">Import selections</button></div></form></section></section>`;
+  <section class="split-layout"><div>${profiles.length ? `<div class="opponent-list">${profiles.map((profile) => `<article class="opponent-card"><h2>${escapeHtml(profile.participant)}</h2><p>${profile.picks} recorded picks · ${profile.rounds} round${profile.rounds === 1 ? "" : "s"}</p><small>Home ${percent(profile.home_result_rate)} · Draw ${percent(profile.draw_result_rate)} · Away ${percent(profile.away_result_rate)} · Avg goals ${profile.average_total_goals} · Conservatism ${percent(profile.conservatism)}</small><small>Common scores: ${profile.common_scores.map(([score, count]) => `${score} (${count})`).join(" · ") || "Not enough history"}</small>${opponentBiasLine(profile.participant)}${predictedPicksPanel(profile.participant)}</article>`).join("")}</div>` : emptyState("No opponent history yet", "Add selections after each deadline. The system will learn only from recorded evidence.")}</div><section class="form-card"><p class="eyebrow">Opponent selections</p><h2>Record scores against this round's games</h2><p class="subtitle">Choose a saved opponent, then enter their score for each named fixture. Their saved scores for this round are shown so you can amend them. To add someone new, leave the list on “New opponent”.</p><form id="opponent-form" class="result-entry-list"><label>Opponent<select name="selected_opponent" data-opponent-select><option value="">New opponent…</option>${opponentNames.map((name) => `<option value="${escapeHtml(name)}" ${name === selected ? "selected" : ""}>${escapeHtml(name)}</option>`).join("")}</select></label><label>New opponent name<input name="name" maxlength="80" placeholder="e.g. Dave" ${selected ? "disabled" : ""}></label>${round.fixtures.map((fixture, index) => `<label><span>${escapeHtml(fixture.home_team)} v ${escapeHtml(fixture.away_team)}</span><input required name="pick_${index}" value="${escapeHtml(savedPicks[index] || "")}" placeholder="e.g. 2-0"></label>`).join("")}<label>Golden Goal guess (optional)<input name="golden_goal" type="number" min="1" max="90" value="${savedGoldenGoal}" placeholder="e.g. 9"></label><p class="subtitle">Used for the private league's tiebreak — points, then exact scores, then closest Golden Goal (§27).</p><div class="form-actions"><button class="button" type="submit">Save opponent selections</button></div></form></section></section>`;
 }
 
 function performanceView() {
@@ -1166,9 +1385,18 @@ function activityItem(event) {
 }
 
 function activityView() {
-  const filters = { ALL: () => true, PREDICTIONS: (event) => /PREDICTION|CONFIDENCE/.test(event.event_type), INTELLIGENCE: (event) => /CLAIM|AVAILABILITY/.test(event.event_type), MARKETS: (event) => /MARKET/.test(event.event_type), LINEUPS: (event) => /LINEUP/.test(event.event_type), SYSTEM: (event) => /POLL|FORECAST/.test(event.event_type) };
+  // MARKET_SNAPSHOT is the routine polling audit trail.  It belongs under
+  // Markets on demand, but including it in All lets high-frequency polling
+  // drown out the decisions and intelligence this page is for.
+  const filters = { ALL: (event) => event.event_type !== "MARKET_SNAPSHOT", PREDICTIONS: (event) => /PREDICTION|CONFIDENCE/.test(event.event_type), INTELLIGENCE: (event) => /CLAIM|AVAILABILITY|PLAYER_|TEAM_NEWS|KNOWLEDGE/.test(event.event_type), MARKETS: (event) => /MARKET/.test(event.event_type), LINEUPS: (event) => /LINEUP/.test(event.event_type), SYSTEM: (event) => /POLL|FORECAST|DEADLINE|FINAL_SCORES/.test(event.event_type) };
   const visible = appData.activity.filter(filters[activityFilter] || filters.ALL);
-  return `${pageHeader("Decision history", "Activity", "A chronological audit of material forecast, intelligence, strategy, and manual events.")}<div class="tabs activity-tabs">${Object.keys(filters).map((filter) => `<button class="tab ${activityFilter === filter ? "active" : ""}" data-activity-filter="${filter}">${titleCase(filter)}</button>`).join("")}</div>${visible.length ? `<div class="feed-list">${visible.map(activityItem).join("")}</div>` : emptyState("No matching activity", "Routine no-change refreshes are intentionally quiet.")}`;
+  const emptyCopy = {
+    PREDICTIONS: "No recorded recommendation or confidence changes yet. Current picks remain available on the Round page.",
+    INTELLIGENCE: "No validated team-news claims have been recorded yet. Unvalidated search results are deliberately not shown as facts.",
+    LINEUPS: "No confirmed XI has been ingested. This is a coverage gap, not evidence that teams have not announced their lineups: the configured API-Football free account cannot access the current 2026/27 season. Do not use this tab as a live-lineup check.",
+    MARKETS: "No market observations have been recorded yet.",
+  };
+  return `${pageHeader("Decision history", "Activity", "A chronological audit of material forecast, intelligence, strategy, and manual events.")}<div class="tabs activity-tabs">${Object.keys(filters).map((filter) => `<button class="tab ${activityFilter === filter ? "active" : ""}" data-activity-filter="${filter}">${titleCase(filter)}</button>`).join("")}</div>${visible.length ? `<div class="feed-list">${visible.map(activityItem).join("")}</div>` : emptyState("No matching activity", emptyCopy[activityFilter] || "Routine no-change refreshes are intentionally quiet.")}`;
 }
 
 function finalTestSection() {
@@ -1229,9 +1457,18 @@ function sourcesView() {
 function healthView() {
   const health = appData.health;
   const ollama = health.ollama || {};
-  const ollamaLabel = ollama.configured ? health.ollama_reachable : "Not configured";
+  const ollamaLabel = !ollama.configured ? "Not configured"
+    : health.ollama_reachable === "UNKNOWN" ? "Configured · not checked"
+    : health.ollama_reachable;
   const extractorName = String(health.extractor || "").replace(/([a-z])([A-Z])/g, "$1 $2");
-  return `<div class="health-view">${pageHeader("Operational status", "System Health", "Health is visible when needed but stays out of the weekly decision flow.")}<section class="health-grid"><article><span>Scheduler</span><strong>${health.scheduler_jobs_pending ? `${health.scheduler_jobs_pending} pending` : "Ready"}</strong></article><article><span>Database</span><strong>Healthy · schema ${health.database_schema_version}</strong></article><article><span>Knowledge extractor</span><strong>${escapeHtml(extractorName)} · ${escapeHtml(health.extractor_mode)}</strong><small>Research runs on a schedule, six sweeps a round.${health.extraction_recent_total ? ` Last ${health.extraction_recent_total} extractions: ${health.extraction_recent_total - health.extraction_recent_failed} ok, ${health.extraction_recent_failed} failed.` : ""}</small>${health.extractor === "NullExtractor" ? "" : `<button class="plain-button" type="button" data-action="research-now">Research now</button>`}</article><article><span>Ollama</span><strong>${escapeHtml(ollamaLabel)}</strong><small>${escapeHtml(ollama.detail || "")}</small></article></section>${health.warnings.length ? `<section class="warning-list">${health.warnings.map((warning) => `<p>${escapeHtml(warning)}</p>`).join("")}</section>` : ""}<section class="stat-table-card"><table><thead><tr><th>Source</th><th>Status</th><th>Quota</th></tr></thead><tbody>${health.sources.map((source) => `<tr><td>${escapeHtml(source.source_id)}</td><td>${escapeHtml(titleCase(source.usage_status))}</td><td>${source.quota_limit ? `${source.quota_used}/${source.quota_limit} per ${escapeHtml(source.quota_period)}` : "Not metered"}</td></tr>`).join("")}</tbody></table></section></div>`;
+  return `<div class="health-view">${pageHeader("Operational status", "System Health", "Health is visible when needed but stays out of the weekly decision flow.")}<section class="health-grid"><article><span>Scheduler</span><strong>${health.scheduler_jobs_pending ? `${health.scheduler_jobs_pending} pending` : "Ready"}</strong></article><article><span>Database</span><strong>Healthy · schema ${health.database_schema_version}</strong></article><article><span>Knowledge extractor</span><strong>${escapeHtml(extractorName)} · ${escapeHtml(health.extractor_mode)}</strong><small>Research runs on a schedule, six sweeps a round.${health.extraction_recent_total ? ` Last ${health.extraction_recent_total} extractions: ${health.extraction_recent_total - health.extraction_recent_failed} ok, ${health.extraction_recent_failed} failed.` : ""}</small>${health.extractor === "NullExtractor" ? "" : `<button class="plain-button" type="button" data-action="research-now">Research now</button>`}</article><article><span>Ollama</span><strong>${escapeHtml(ollamaLabel)}</strong><small>${escapeHtml(ollama.detail || "")}</small>${ollama.configured ? `<button class="plain-button" type="button" data-action="check-ollama">Check connection</button>` : ""}</article></section>${health.warnings.length ? `<section class="warning-list">${health.warnings.map((warning) => `<p>${escapeHtml(warning)}</p>`).join("")}</section>` : ""}<section class="stat-table-card"><table><thead><tr><th>Source</th><th>Status</th><th>Quota</th></tr></thead><tbody>${health.sources.map((source) => `<tr><td>${escapeHtml(source.source_id)}</td><td>${escapeHtml(titleCase(source.usage_status))}</td><td>${source.quota_limit ? `${source.quota_used}/${source.quota_limit} per ${escapeHtml(source.quota_period)}` : "Not metered"}</td></tr>`).join("")}</tbody></table></section></div>`;
+}
+
+function markOllamaConnected(models) {
+  if (!appData.health?.ollama?.configured) return;
+  const count = Array.isArray(models) ? models.length : 0;
+  appData.health.ollama_reachable = "YES";
+  appData.health.ollama.detail = `Connected — ${count} model${count === 1 ? "" : "s"} available.`;
 }
 
 const SECRET_FIELDS = [
@@ -1596,13 +1833,28 @@ document.addEventListener("change", (event) => {
     lmsPreview = "";
     lmsGraphWeek = "";
     renderPage();
+    return;
+  }
+  if (event.target.matches("[data-opponent-select]")) {
+    opponentEntryName = event.target.value;
+    renderPage();
   }
 });
 document.addEventListener("click", async (event) => {
+  const fplJump = event.target.closest("[data-fpl-jump]");
+  if (fplJump) {
+    document.getElementById(fplJump.dataset.fplJump)?.scrollIntoView({ behavior: "smooth", block: "start" });
+    return;
+  }
   const fixture = event.target.closest("[data-fixture]");
   if (fixture) openFixture(Number(fixture.dataset.fixture));
   const page = event.target.closest("[data-page]");
   if (page) location.hash = `#${page.dataset.page}`;
+  const leaguePlayer = event.target.closest("[data-league-player]");
+  if (leaguePlayer) {
+    openLeaguePlayer(leaguePlayer.dataset.leaguePlayer);
+    return;
+  }
   const tab = event.target.closest("[data-round-tab]");
   if (tab) {
     roundTab = tab.dataset.roundTab;
@@ -1697,13 +1949,27 @@ document.addEventListener("click", async (event) => {
   if (action === "find-ollama-models") {
     try {
       const form = $("#settings-form");
-      const result = await post("/api/ollama/models", { base_url: form.elements.extractor_base_url.value });
+      // Use an explicit selector rather than the legacy named-property
+      // lookup on HTMLFormControlsCollection.  Some embedded webviews do
+      // not expose `form.elements.extractor_base_url`, so they sent an
+      // empty value even though the visible field was populated.
+      const baseUrl = form.querySelector('[name="extractor_base_url"]').value;
+      const result = await post("/api/ollama/models", { base_url: baseUrl });
       ollamaModels = result.models || [];
+      markOllamaConnected(ollamaModels);
       const select = form.elements.extractor_model;
       const selected = select.value;
       const models = [...new Set([selected, ...ollamaModels].filter(Boolean))];
       select.innerHTML = models.map((model) => `<option value="${escapeHtml(model)}" ${model === selected ? "selected" : ""}>${escapeHtml(model)}</option>`).join("");
       toast(ollamaModels.length ? `${ollamaModels.length} model${ollamaModels.length === 1 ? "" : "s"} found. Choose one from the Model menu.` : "No models found on this Ollama host.");
+    } catch (error) { toast(error.message); }
+  }
+  if (action === "check-ollama") {
+    try {
+      const result = await post("/api/ollama/models", { base_url: appData.health.ollama.base_url });
+      markOllamaConnected(result.models || []);
+      renderPage();
+      toast(`Connected — ${result.models?.length || 0} model${result.models?.length === 1 ? "" : "s"} available.`);
     } catch (error) { toast(error.message); }
   }
   if (action === "apply-strategy") {
@@ -1872,11 +2138,206 @@ document.addEventListener("keydown", (event) => {
   renderPage();
 });
 
+function fplLines(value) {
+  return String(value || "").split(/\r?\n|,/).map((item) => item.trim()).filter(Boolean);
+}
+
+function fplSquadPayload(form) {
+  const captain = String(form.elements.captain.value);
+  const vice = String(form.elements.vice.value);
+  const players = FPL_POSITIONS.map((position, index) => {
+    const starter = form.elements[`role_${index}`].value === "STARTER";
+    return {
+      name: form.elements[`name_${index}`].value.trim(),
+      club: form.elements[`club_${index}`].value.trim(),
+      position,
+      current_price: Number(form.elements[`price_${index}`].value),
+      fixture: form.elements[`fixture_${index}`].value.trim(),
+      is_starter: starter,
+      bench_order: starter ? null : Number(form.elements[`bench_${index}`].value),
+      is_captain: captain === String(index),
+      is_vice_captain: vice === String(index),
+    };
+  });
+  const shortlist = [];
+  for (let index = 0; form.elements[`candidate_name_${index}`]; index += 1) {
+    const name = form.elements[`candidate_name_${index}`].value.trim();
+    if (!name) continue;
+    const total = form.elements[`candidate_points_${index}`].value;
+    shortlist.push({
+      name, club: form.elements[`candidate_club_${index}`].value.trim(),
+      position: form.elements[`candidate_position_${index}`].value,
+      current_price: Number(form.elements[`candidate_price_${index}`].value),
+      total_points: total === "" ? null : Number(total),
+      fixture: form.elements[`candidate_fixture_${index}`].value.trim(),
+    });
+  }
+  return {
+    observed_at: new Date(form.elements.observed_at.value).toISOString(),
+    gameweek: Number(form.elements.gameweek.value),
+    deadline: new Date(form.elements.deadline.value).toISOString(),
+    bank: Number(form.elements.bank.value),
+    free_transfers: Number(form.elements.free_transfers.value),
+    source_label: form.elements.source_label.value.trim(),
+    players, shortlist,
+    shortlist_recommendation: form.elements.shortlist_recommendation.value.trim() || null,
+    shortlist_reasoning: form.elements.shortlist_reasoning.value.trim() || null,
+    chips_available: [...form.querySelectorAll('input[name="chips"]:checked')].map((input) => input.value),
+  };
+}
+
+function fplReadProjections(form, prefix, start, horizon) {
+  return Array.from({ length: horizon }, (_, offset) => ({
+    gameweek: start + offset,
+    expected_points: Number(form.elements[`${prefix}_xp_${offset}`].value),
+    fixtures: Number(form.elements[`${prefix}_fixtures_${offset}`].value),
+    fixture_status: form.elements[`${prefix}_status_${offset}`].value,
+  }));
+}
+
+function fplPhase2Payload(form) {
+  const start = Number(form.elements.start_gameweek.value);
+  const horizon = Number(form.elements.horizon.value);
+  const owned = Array.from({ length: Number(form.dataset.ownedCount) }, (_, index) => ({
+    name: form.elements[`owned_name_${index}`].value,
+    position: form.elements[`owned_position_${index}`].value,
+    club: form.elements[`owned_club_${index}`].value,
+    selling_price: Number(form.elements[`owned_price_${index}`].value),
+    projections: fplReadProjections(form, `owned_${index}`, start, horizon),
+  }));
+  const shortlist = [];
+  const priceRisks = [];
+  for (let index = 0; index < Number(form.dataset.targetCount); index += 1) {
+    const name = form.elements[`target_name_${index}`].value.trim();
+    if (!name) continue;
+    shortlist.push({
+      name, club: form.elements[`target_club_${index}`].value.trim(),
+      position: form.elements[`target_position_${index}`].value,
+      buy_price: Number(form.elements[`target_price_${index}`].value),
+      projections: fplReadProjections(form, `target_${index}`, start, horizon),
+    });
+    const adverse = form.elements[`target_risk_price_${index}`].value;
+    if (adverse !== "") priceRisks.push({
+      name, gameweek: start, adverse_buy_price: Number(adverse),
+      probability: form.elements[`target_risk_probability_${index}`].value === "" ? null : Number(form.elements[`target_risk_probability_${index}`].value),
+    });
+  }
+  return {
+    observed_at: new Date().toISOString(),
+    gameweeks: Array.from({ length: horizon }, (_, offset) => start + offset),
+    bank: Number(form.elements.bank.value),
+    free_transfers: Number(form.elements.free_transfers.value),
+    chips_available: [...form.querySelectorAll('input[name="phase2_chips"]:checked')].map((input) => input.value),
+    owned, shortlist, price_risks: priceRisks,
+  };
+}
+
+function fplPhase3Payload(form) {
+  const start = Number(form.elements.start_gameweek.value);
+  const horizon = Number(form.elements.horizon.value);
+  const gameweeks = Array.from({ length: horizon }, (_, offset) => start + offset);
+  const readPlan = (prefix) => ({
+    label: form.elements[`${prefix}_label`].value.trim(),
+    squad: fplLines(form.elements[`${prefix}_squad`].value),
+    starters: fplLines(form.elements[`${prefix}_starters`].value),
+    captains: Object.fromEntries(gameweeks.map((gameweek, offset) => [gameweek, form.elements[`${prefix}_captain_${offset}`].value.trim()])),
+  });
+  const ourOptions = Array.from({ length: Number(form.dataset.optionCount) }, (_, index) => readPlan(`our_${index}`)).filter((plan) => plan.label || plan.squad.length);
+  const rivals = [];
+  for (let rivalIndex = 0; rivalIndex < Number(form.dataset.rivalCount); rivalIndex += 1) {
+    const name = form.elements[`rival_${rivalIndex}_name`].value.trim();
+    if (!name) continue;
+    const scenarios = [];
+    for (let scenarioIndex = 0; form.elements[`rival_${rivalIndex}_scenario_${scenarioIndex}_label`]; scenarioIndex += 1) {
+      const plan = readPlan(`rival_${rivalIndex}_scenario_${scenarioIndex}`);
+      if (!plan.label && !plan.squad.length) continue;
+      scenarios.push({ ...plan, probability: Number(form.elements[`rival_${rivalIndex}_scenario_${scenarioIndex}_probability`].value) });
+    }
+    const history = form.elements[`rival_${rivalIndex}_history`].value.trim();
+    rivals.push({
+      name, starting_points: Number(form.elements[`rival_${rivalIndex}_points`].value),
+      previous_locked_gameweek: Number(form.elements[`rival_${rivalIndex}_locked_gw`].value),
+      previous_locked_squad: fplLines(form.elements[`rival_${rivalIndex}_locked_squad`].value),
+      transfer_history: history ? [{ note: history }] : [], scenarios,
+    });
+  }
+  const players = [];
+  for (let index = 0; index < Number(form.dataset.playerCount); index += 1) {
+    const name = form.elements[`p3_player_${index}`].value.trim();
+    if (!name) continue;
+    players.push({ name, expected_points: Object.fromEntries(gameweeks.map((gameweek, offset) => [gameweek, Number(form.elements[`p3_player_${index}_xp_${offset}`].value)])) });
+  }
+  return {
+    observed_at: new Date().toISOString(), gameweeks,
+    our_starting_points: Number(form.elements.our_starting_points.value),
+    our_options: ourOptions, rivals, players,
+    trials: Number(form.elements.trials.value), seed: 202627,
+  };
+}
+
 document.addEventListener("submit", async (event) => {
   event.preventDefault();
   const form = event.target;
   try {
-    if (form.id === "override-form") {
+    if (form.matches("[data-fpl-squad]")) {
+      await post("/api/fpl/squad", fplSquadPayload(form));
+      toast("Local squad saved and validated.");
+      await loadApp();
+    } else if (form.matches("[data-fpl-phase2]")) {
+      await post("/api/fpl/phase2", fplPhase2Payload(form));
+      toast("Named horizon compared. Review the selected path and downside.");
+      await loadApp();
+    } else if (form.matches("[data-fpl-phase3]")) {
+      await post("/api/fpl/phase3", fplPhase3Payload(form));
+      toast("Mates-relative scenarios compared.");
+      await loadApp();
+    } else if (form.matches("[data-fpl-review]")) {
+      await post("/api/fpl/reviews", {});
+      toast("Immutable pre-deadline decision review saved locally.");
+      await loadApp();
+    } else if (form.matches("[data-fpl-rival-evidence]")) {
+      await post("/api/fpl/rival-evidence", {
+        review_id: form.elements.review_id.value,
+        rival: form.elements.rival.value,
+        observed_gameweek: Number(form.elements.observed_gameweek.value),
+        observed_at: new Date(form.elements.observed_at.value).toISOString(),
+        captain: form.elements.captain.value.trim(),
+        squad: fplLines(form.elements.squad.value),
+      });
+      toast("Post-deadline rival evidence recorded without changing the review.");
+      await loadApp();
+    } else if (form.matches("[data-fpl-assisted-prepare]")) {
+      await post("/api/fpl/assisted-actions", {
+        action_type: form.elements.action_type.value,
+        summary: form.elements.summary.value,
+        deadline: form.elements.deadline.value || null,
+      });
+      toast("Action prepared. Review it, then confirm it explicitly.");
+      await loadApp();
+    } else if (form.matches("[data-fpl-assisted-confirm]")) {
+      await post("/api/fpl/assisted-actions/confirm", {
+        action_id: form.elements.action_id.value,
+        confirmation: form.elements.confirmation.value,
+      });
+      toast("Browser assistance confirmed. Nothing has been submitted.");
+      await loadApp();
+    } else if (form.matches("[data-fpl-assisted-complete]")) {
+      await post("/api/fpl/assisted-actions/complete", { action_id: form.elements.action_id.value });
+      toast("Recorded as completed manually in FPL.");
+      await loadApp();
+    } else if (form.matches("[data-league-entry]")) {
+      const picks = Array.from({ length: 6 }, (_, index) => form.elements[`pick_${index}`].value.trim().toUpperCase());
+      await post("/api/league/opponent-picks", {
+        participant: form.dataset.participant,
+        season: Number(form.dataset.season),
+        round_number: Number(form.dataset.roundNumber),
+        picks,
+        golden_goal: form.elements.golden_goal.value,
+      });
+      await loadApp();
+      openLeaguePlayer(form.dataset.participant);
+      toast("Opponent picks corrected and league totals recalculated.");
+    } else if (form.id === "override-form") {
       const picks = appData.round.fixtures.map(effectivePick);
       picks[Number(form.dataset.index)] = `${form.elements.home.value}-${form.elements.away.value}`;
       await saveOverrides(picks); $("#fixture-dialog").close(); toast("Your pick is saved separately from the model recommendation.");
@@ -1887,8 +2348,10 @@ document.addEventListener("submit", async (event) => {
       const fixtures = Array.from({ length: 6 }, (_, index) => ({ home: form.elements[`home_${index}`].value.trim(), away: form.elements[`away_${index}`].value.trim() }));
       openRoundConfirm({ round_number: Number(form.elements.round_number.value), deadline_at: `${form.elements.deadline_at.value}:00`, fixtures });
     } else if (form.id === "opponent-form") {
-      const picks = form.elements.picks.value.trim().split(/[\s,]+/).filter(Boolean);
-      await post("/api/opponents", { name: form.elements.name.value, picks, golden_goal: form.elements.golden_goal.value }); toast("Opponent selections imported."); await loadApp();
+      const name = form.elements.selected_opponent.value || form.elements.name.value.trim();
+      if (!name) throw new Error("Choose an opponent or enter a new name.");
+      const picks = appData.round.fixtures.map((_, index) => form.elements[`pick_${index}`].value.trim().toUpperCase());
+      await post("/api/opponents", { name, picks, golden_goal: form.elements.golden_goal.value }); toast("Opponent selections saved."); await loadApp();
     } else if (form.id === "results-form") {
       const results = Array.from({ length: 6 }, (_, index) => { const value = form.elements[`result_${index}`].value.trim().toUpperCase(); return value === "VOID" ? null : value; });
       await post("/api/results", { results, golden_goal_actual: form.elements.golden_goal_actual.value }); toast("Round results saved."); await loadApp();

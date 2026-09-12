@@ -11,6 +11,8 @@ def test_dashboard_says_when_no_squad_has_been_saved(tmp_path):
     assert result["status"] == "AWAITING_SQUAD"
     assert result["squad"] is None
     assert result["recommendation"] is None
+    assert result["phase2"]["status"] == "AWAITING_HORIZON_INPUT"
+    assert result["phase3"]["status"] == "AWAITING_OPPONENT_INPUT"
 
 
 def test_dashboard_exposes_current_squad_and_its_explicit_market_scope(tmp_path):

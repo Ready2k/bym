@@ -37,7 +37,10 @@ from .models import (
 )
 
 PROMPT_VERSION = "claims-v1"
-EXTRACTOR_VERSION = "ollama-1.0.0"
+# Bump whenever the request/output contract changes.  Reliability is only
+# comparable within that contract; a truncation defect in an older request
+# must not keep a fixed extractor showing as currently unhealthy.
+EXTRACTOR_VERSION = "ollama-1.0.1"
 
 # Guards against a runaway page consuming the context window.
 MAX_EVIDENCE_CHARS = 12000
@@ -132,6 +135,7 @@ def claims_json_schema() -> dict[str, Any]:
                         "claim_type",
                         "supporting_evidence",
                         "player_name",
+                        "team",
                         "certainty",
                         "availability",
                     ],
@@ -161,9 +165,10 @@ Additional rules:
   character. Do not correct spelling, punctuation or grammar in the quote,
   and do not add apostrophes the source does not have. If you cannot
   reproduce it exactly, do not emit the claim.
-- Every AVAILABILITY claim MUST set player_name, availability and
-  certainty. A claim without a named player and an availability value is
-  worthless and will be discarded.
+- Every AVAILABILITY claim MUST set player_name, team, availability and
+  certainty. The team must be explicit in the evidence; if it is not,
+  do not emit the claim. A claim without a named player, named team and
+  availability value is worthless and will be discarded.
 - Never produce forecast or model parameters of any kind.
 
 Return {"claims": []} when the evidence supports no claim.
@@ -226,7 +231,13 @@ class OllamaClaimExtractor:
             "model": self.config.model,
             "stream": False,
             "format": claims_json_schema(),
-            "options": {"temperature": 0},
+            "options": {
+                "temperature": 0,
+                # Never inherit a host-level short generation cap.  A
+                # truncated response is invalid JSON, and at this point the
+                # paid web retrieval has already completed.
+                "num_predict": self.config.max_output_tokens,
+            },
             # Keep the model resident between the dozen calls a sweep
             # makes. Cold-loading costs ~15-20s on a real host and
             # generation costs under a second, so without this a sweep

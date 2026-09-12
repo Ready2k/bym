@@ -162,6 +162,7 @@ def is_incomplete(claim: CandidateClaim) -> tuple[bool, str]:
             name
             for name, value in (
                 ("player_name", claim.player_name),
+                ("team", claim.team),
                 ("availability", claim.availability),
                 ("certainty", claim.certainty),
             )
@@ -174,6 +175,7 @@ def is_incomplete(claim: CandidateClaim) -> tuple[bool, str]:
             name
             for name, value in (
                 ("player_name", claim.player_name),
+                ("team", claim.team),
                 ("expected_role", claim.expected_role),
             )
             if not value

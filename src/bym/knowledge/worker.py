@@ -307,12 +307,33 @@ def _feed_availability_pipeline(
     if event_type is None or not claim.player_name:
         return []
 
+    # Never guess that a team-less claim belongs to the home side.  Live
+    # extraction exposed exactly that failure: a BBC sentence about three
+    # Brighton players was attached to Coventry because `None` fell back to
+    # `home_team`. Completeness validation rejects this earlier; resolution
+    # remains a defence in depth for aliases or direct callers.
+    from ..sources.teams import resolve
+
+    team = resolve(claim.team or "", {home_team, away_team})
+    if team is None:
+        return [ev.make_event(
+            ev.EventType.TEAM_NEWS_CONFLICT,
+            ev.Severity.INFORMATIONAL,
+            f"Could not attach {claim.player_name}'s availability claim to "
+            "either fixture team; retained as intelligence only.",
+            round_number=round_number,
+            home_team=home_team,
+            away_team=away_team,
+            detail={"claimed_team": claim.team, "quantitative_impact": "NONE DIRECTLY"},
+            now=now,
+        )]
+
     tier = AUTHORITY_TO_TIER[OriginAuthority(document.origin_authority)]
     outcome = availability_ingest.ingest_availability(
         conn,
         home_team,
         away_team,
-        claim.team or home_team,
+        team,
         claim.player_name,
         event_type,
         ClaimStatus(claim.certainty or ClaimStatus.REPORTED.value),

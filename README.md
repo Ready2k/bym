@@ -557,7 +557,7 @@ benchmark. Honest caveat: hyperparameters (ξ, w) were selected on 2024/25,
 so its numbers are biased upward by selection — the real verdict comes
 from the untouched 2025/26 final test once the design freezes.
 
-## What's deliberately not here yet
+## What’s deliberately not here yet
 
 Per the phase gates in §23 and the ablation rule in §28. For what would
 actually unblock each of these — not just that they're missing — see

@@ -464,6 +464,53 @@ def configured_round(tmp_path):
     )
 
 
+def test_activity_payload_keeps_material_history_when_snapshots_are_busy(tmp_path):
+    from bym import events
+    from bym.web import _activity_payload
+
+    path = tmp_path / "activity.jsonl"
+    events.append([
+        events.make_event(
+            events.EventType.PREDICTION_CHANGED,
+            events.Severity.IMPORTANT,
+            "Recommendation changed.",
+        )
+    ], path)
+    events.append([
+        events.make_event(
+            events.EventType.MARKET_SNAPSHOT,
+            events.Severity.INFORMATIONAL,
+            f"Snapshot {index}",
+        )
+        for index in range(150)
+    ], path)
+
+    activity = _activity_payload(path, limit=100)
+    assert len(activity) == 101
+    assert any(item["event_type"] == "PREDICTION_CHANGED" for item in activity)
+    assert sum(item["event_type"] == "MARKET_SNAPSHOT" for item in activity) == 100
+
+
+def test_tick_credentials_honour_browser_extractor_setting(tmp_path):
+    from bym.cli import _layer_credentials
+
+    state_path = tmp_path / "ui_state.json"
+    state_path.write_text(json.dumps({
+        "knowledge_extractor": {
+            "configured": True,
+            "enabled": True,
+            "mode": "active",
+            "base_url": "http://ollama.test:11434",
+            "model": "claims-model",
+        }
+    }))
+    credentials = _layer_credentials(WebConfig(ui_state_path=state_path))
+
+    assert credentials["extractor"].config.base_url == "http://ollama.test:11434"
+    assert credentials["extractor"].config.model == "claims-model"
+    assert credentials["extractor_mode"] == "active"
+
+
 def test_overrides_are_saved_separately_from_the_model_pick(tmp_path):
     config = configured_round(tmp_path)
     result = save_pick_overrides(
@@ -726,6 +773,38 @@ def test_league_payload_ranks_by_golden_goal_after_a_points_and_exact_tie(tmp_pa
     assert standings["Dave"]["rank"] < standings["Steve"]["rank"]
     assert standings["Dave"]["golden_goal_average_distance"] == 1
     assert standings["Steve"]["golden_goal_average_distance"] == 20
+
+
+def test_league_player_audit_shows_fixture_points_and_corrects_a_rivals_pick(tmp_path):
+    """The league total must be traceable to (and correctable from) six picks."""
+    from bym.web import _league_payload, save_league_opponent_picks
+
+    config = configured_round(tmp_path)
+    scores = ["2-0", "1-1", "2-1", "1-2", "3-0", "1-2"]
+    import_opponent({"name": "Wayne", "picks": scores, "golden_goal": 9}, config)
+    save_results({"results": scores, "golden_goal_actual": 10}, config)
+
+    rnd = load_round(config.round_path)
+    before = _league_payload(rnd, load_ui_state(config.ui_state_path), config)
+    audited = before["player_rounds"]["Wayne"][0]
+    assert audited["points"] == 30
+    assert audited["fixtures"][0] == {
+        "home_team": "Arsenal", "away_team": "Everton", "pick": "2-0",
+        "actual": "2-0", "status": "RESULTED", "points": 5,
+    }
+
+    saved = save_league_opponent_picks(
+        {
+            "participant": "Wayne", "season": 2026, "round_number": 14,
+            "picks": ["0-0", *scores[1:]], "golden_goal": 9,
+        }, config,
+    )
+    assert saved["participant"] == "Wayne"
+
+    after = _league_payload(rnd, load_ui_state(config.ui_state_path), config)
+    assert after["player_rounds"]["Wayne"][0]["fixtures"][0]["pick"] == "0-0"
+    assert after["player_rounds"]["Wayne"][0]["points"] == 25
+    assert next(row for row in after["standings"] if row["participant"] == "Wayne")["points"] == 25
 
 
 def test_league_table_resets_each_season_but_opponent_profiles_keep_history(tmp_path):

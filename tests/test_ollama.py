@@ -61,7 +61,7 @@ class FakeSession:
         self.calls = []
 
     def post(self, url, json=None, timeout=None):
-        self.calls.append(("post", url, timeout))
+        self.calls.append(("post", url, timeout, json))
         if self.exc:
             raise self.exc
         return self.response
@@ -113,6 +113,13 @@ def test_configurable_host_and_model():
     assert config.model == "mistral"
 
 
+def test_output_budget_is_configurable_and_safe():
+    config = from_env({"OLLAMA_MAX_OUTPUT_TOKENS": "2048"})
+    assert config.max_output_tokens == 2048
+    assert from_env({"OLLAMA_MAX_OUTPUT_TOKENS": "0"}).max_output_tokens == 1024
+    assert from_env({"OLLAMA_MAX_OUTPUT_TOKENS": "not-a-number"}).max_output_tokens == 1024
+
+
 def test_invalid_config_values_fall_back_safely():
     config = from_env({"CLAIM_EXTRACTOR": "gpt9", "CLAIM_EXTRACTOR_MODE": "yolo"})
     assert config.kind == "null"
@@ -149,6 +156,8 @@ def test_valid_structured_claim():
     assert len(claims) == 1
     assert claims[0].player_name == "Cole Palmer"
     assert extractor.last_failure is None
+    request_payload = extractor._session.calls[0][3]
+    assert request_payload["options"]["num_predict"] == CONFIG.max_output_tokens
 
 
 def test_provenance_recorded():

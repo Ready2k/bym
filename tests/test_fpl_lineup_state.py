@@ -37,11 +37,14 @@ def _payload():
 
 
 def test_parse_validates_a_complete_lineup_only_snapshot():
-    state = lineup_state.parse(_payload())
+    payload = _payload()
+    payload["chips_available"] = ["wildcard", "bench_boost", "triple_captain", "free_hit"]
+    state = lineup_state.parse(payload)
 
     assert len(state.players) == 15
     assert state.players[2].is_captain
     assert state.shortlist[0].name == "Target"
+    assert "wildcard" in state.chips_available
 
 
 def test_parse_rejects_a_non_starting_captain():
@@ -51,6 +54,22 @@ def test_parse_rejects_a_non_starting_captain():
 
     with pytest.raises(lineup_state.LineupStateError, match="captain"):
         lineup_state.parse(payload)
+
+
+def test_parse_rejects_an_illegal_starting_formation_and_fourth_player_from_a_club():
+    invalid_formation = _payload()
+    invalid_formation["players"][4]["is_starter"] = False
+    invalid_formation["players"][14]["is_starter"] = True
+    invalid_formation["players"][4]["bench_order"] = 4
+    invalid_formation["players"][14].pop("bench_order", None)
+    with pytest.raises(lineup_state.LineupStateError, match="formation"):
+        lineup_state.parse(invalid_formation)
+
+    too_many = _payload()
+    for index in (2, 3, 4, 5):
+        too_many["players"][index]["club"] = "Same Club"
+    with pytest.raises(lineup_state.LineupStateError, match="three-per-club"):
+        lineup_state.parse(too_many)
 
 
 def test_dashboard_uses_the_lineup_only_snapshot_when_no_game_state_exists(tmp_path):

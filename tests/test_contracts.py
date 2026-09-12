@@ -184,6 +184,32 @@ def test_system_health_has_no_warnings_when_all_approved(conn, tmp_path):
     assert health.warnings == []
 
 
+def test_system_health_does_not_report_a_previous_extractor_contract_as_current(conn):
+    """A fixed extraction request starts a new reliability window; the
+    previous version's rows remain in the audit table."""
+    from bym.knowledge.config import ExtractorConfig
+
+    for run_id in range(5):
+        conn.execute(
+            "INSERT INTO extraction_runs (provider, prompt_version, "
+            "extractor_version, mode, requested_at, evidence_hash, status, "
+            "claims_emitted, claims_accepted, claims_rejected, promoted, error) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                "ollama", "claims-v1", "ollama-1.0.0", "active",
+                f"2026-09-02T11:3{run_id}:00+00:00", f"hash-{run_id}", "FAILED",
+                0, 0, 0, 0, "MALFORMED_JSON: old contract",
+            ),
+        )
+
+    health = service.build_system_health(
+        conn, extractor_config=ExtractorConfig(kind="ollama")
+    )
+    assert health.extraction_recent_total == 0
+    assert health.extraction_recent_failed == 0
+    assert not any("knowledge extraction failing" in warning for warning in health.warnings)
+
+
 def test_prospective_contract_carries_sample_warning():
     import pandas as pd
 

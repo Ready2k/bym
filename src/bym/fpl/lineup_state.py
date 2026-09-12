@@ -11,9 +11,13 @@ from __future__ import annotations
 
 import json
 from dataclasses import asdict, dataclass, field
+from datetime import datetime
 from pathlib import Path
 
-from .optimiser import SQUAD_COMPOSITION
+from .optimiser import MAX_PER_CLUB, SQUAD_COMPOSITION
+from .transfer_horizon import MAX_BANKED_FREE_TRANSFERS
+
+LINEUP_CHIPS = frozenset({"wildcard", "free_hit", "bench_boost", "triple_captain"})
 
 
 class LineupStateError(ValueError):
@@ -59,20 +63,37 @@ class LineupState:
 
 
 def _validate(state: LineupState) -> None:
+    if not state.source_label.strip():
+        raise LineupStateError("source label is required")
+    for label, value in (("observed_at", state.observed_at), ("deadline", state.deadline)):
+        if value is None and label == "deadline":
+            continue
+        try:
+            parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise LineupStateError(f"{label} must be an ISO-8601 timestamp") from exc
+        if parsed.tzinfo is None:
+            raise LineupStateError(f"{label} must include a timezone")
+    if set(state.chips_available) - LINEUP_CHIPS:
+        raise LineupStateError("chips_available contains an unknown FPL chip")
     if len(state.players) != 15:
         raise LineupStateError(f"lineup state needs 15 players, got {len(state.players)}")
     names = [player.name.casefold() for player in state.players]
     if len(set(names)) != 15:
         raise LineupStateError("lineup state players must have distinct names")
     counts = {position: 0 for position in SQUAD_COMPOSITION}
+    clubs: dict[str, int] = {}
     starters = []
     bench = []
     for player in state.players:
+        if not player.name.strip() or not player.club.strip():
+            raise LineupStateError("every player needs a name and club")
         if player.position not in counts:
             raise LineupStateError(f"unknown FPL position {player.position!r}")
         if player.current_price < 0:
             raise LineupStateError("player prices cannot be negative")
         counts[player.position] += 1
+        clubs[player.club.casefold()] = clubs.get(player.club.casefold(), 0) + 1
         if player.is_starter:
             starters.append(player)
             if player.bench_order is not None:
@@ -81,14 +102,35 @@ def _validate(state: LineupState) -> None:
             bench.append(player)
     if counts != SQUAD_COMPOSITION:
         raise LineupStateError(f"lineup state has invalid composition: {counts}")
+    if any(count > MAX_PER_CLUB for count in clubs.values()):
+        raise LineupStateError("lineup state exceeds the three-per-club limit")
     if len(starters) != 11 or len(bench) != 4:
         raise LineupStateError("lineup state needs 11 starters and 4 bench players")
+    starter_counts = {
+        position: sum(player.position == position for player in starters)
+        for position in SQUAD_COMPOSITION
+    }
+    if not (
+        starter_counts["GK"] == 1
+        and 3 <= starter_counts["DEF"] <= 5
+        and 2 <= starter_counts["MID"] <= 5
+        and 1 <= starter_counts["FWD"] <= 3
+    ):
+        raise LineupStateError(f"starting XI has an invalid formation: {starter_counts}")
     if sorted(player.bench_order for player in bench) != [1, 2, 3, 4]:
         raise LineupStateError("bench players need orders 1 through 4")
     captains = [player for player in starters if player.is_captain]
     vices = [player for player in starters if player.is_vice_captain]
     if len(captains) != 1 or len(vices) != 1 or captains == vices:
         raise LineupStateError("lineup state needs distinct starting captain and vice captain")
+    shortlist_names = [candidate.name.casefold() for candidate in state.shortlist]
+    if len(shortlist_names) != len(set(shortlist_names)) or set(shortlist_names) & set(names):
+        raise LineupStateError("shortlist and owned player names must be distinct")
+    for candidate in state.shortlist:
+        if not candidate.name.strip() or not candidate.club.strip():
+            raise LineupStateError("every shortlist candidate needs a name and club")
+        if candidate.position not in SQUAD_COMPOSITION or candidate.current_price < 0:
+            raise LineupStateError("shortlist candidates need a valid position and price")
 
 
 def parse(payload: dict) -> LineupState:
@@ -111,8 +153,8 @@ def parse(payload: dict) -> LineupState:
         )
     except (KeyError, TypeError, ValueError) as exc:
         raise LineupStateError(f"invalid lineup-state payload: {exc}") from exc
-    if state.gameweek < 1 or state.bank < 0 or state.free_transfers < 0:
-        raise LineupStateError("gameweek, bank and free transfers must be non-negative")
+    if state.gameweek < 1 or state.bank < 0 or not 0 <= state.free_transfers <= MAX_BANKED_FREE_TRANSFERS:
+        raise LineupStateError("gameweek/bank must be non-negative and free transfers must be 0–5")
     _validate(state)
     return state
 

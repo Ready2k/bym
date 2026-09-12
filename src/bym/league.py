@@ -167,6 +167,43 @@ def record_opponent_round(
     return record
 
 
+def replace_opponent_round(
+    participant: str,
+    season: int,
+    round_number: int,
+    picks: Sequence[Sequence[int]],
+    *,
+    golden_goal: int | None = None,
+    path: Path = DEFAULT_OPPONENT_HISTORY_PATH,
+) -> OpponentRound:
+    """Correct one explicitly chosen participant round in the local ledger.
+
+    Normal imports remain append-only. This is deliberately a separate
+    operation for the audit screen: the caller has selected the participant
+    and round they intend to correct, so replacing an existing record is not
+    an accidental duplicate import.
+    """
+    history = list(load_opponent_history(path))
+    key = (participant.casefold(), season, round_number)
+    for index, existing in enumerate(history):
+        if (existing.participant.casefold(), existing.season, existing.round_number) != key:
+            continue
+        corrected = OpponentRound(
+            participant=existing.participant,
+            season=season,
+            round_number=round_number,
+            picks=_validated_picks(picks),
+            recorded_at=existing.recorded_at,
+            golden_goal=golden_goal,
+        )
+        history[index] = corrected
+        save_opponent_history(history, path)
+        return corrected
+    raise ValueError(
+        f"No recorded picks exist for {participant} in season {season}, round {round_number}."
+    )
+
+
 def history_for_participant(
     history: Iterable[OpponentRound], participant: str
 ) -> tuple[OpponentRound, ...]:

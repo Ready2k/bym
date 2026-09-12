@@ -11,6 +11,26 @@ import { loadApp, appData, fixture, lmsPlan , lmsLineage } from "./harness.mjs";
 
 const HOSTILE = '<img src=x onerror="alert(1)">';
 
+test("activity defaults to material events while category tabs retain audit records", () => {
+  const data = appData({ activity: [
+    { event_type: "MARKET_SNAPSHOT", severity: "INFORMATIONAL", summary: "routine", occurred_at: "2026-09-12T12:00:00Z" },
+    { event_type: "PREDICTION_CHANGED", severity: "IMPORTANT", summary: "changed", occurred_at: "2026-09-12T12:01:00Z" },
+  ] });
+  const app = loadApp(data);
+  const html = app.activityView();
+  assert.ok(html.includes("changed"));
+  assert.ok(!html.includes("routine"));
+});
+
+test("empty lineup activity reports the live-season coverage gap", () => {
+  const app = loadApp(appData({ activity: [] }));
+  app.__setActivityFilter("LINEUPS");
+  const html = app.activityView();
+  assert.match(html, /coverage gap/);
+  assert.match(html, /cannot access the current 2026\/27 season/);
+  assert.match(html, /Do not use this tab as a live-lineup check/);
+});
+
 // ---- escaping ------------------------------------------------------------
 
 test("escapeHtml neutralises every character that can break out of markup", () => {
@@ -74,6 +94,38 @@ test("a hostile opponent name cannot inject markup into the league view", () => 
   const html = app.leagueView();
   assert.ok(!html.includes("<img src=x"));
   assert.ok(html.includes("&lt;img"));
+});
+
+test("each league player opens a score audit", () => {
+  const app = loadApp(appData({
+    league: {
+      standings: [{ rank: 1, participant: "Wayne", points: 19, exact_scores: 2, rounds_scored: 1 }],
+      player_rounds: {}, profiles: [], finish_first: null, finish_first_reason: "r",
+      strategy: { mode: "NORMAL", active: false, reason: "r" },
+    },
+  }));
+  const html = app.leagueView();
+  assert.ok(html.includes('data-league-player="Wayne"'));
+  assert.ok(html.includes("Select a player to audit the calculation."));
+});
+
+test("opponent entry selects a rival and aligns every score with its fixture", () => {
+  const app = loadApp(appData({
+    round: {
+      ...appData().round,
+      fixtures: [fixture(), fixture({ home_team: "Chelsea", away_team: "Newcastle" })],
+    },
+    opponents: {
+      Dave: { rounds: { "2026:1": ["2-0", "1-1"] }, golden_goal: { "2026:1": 9 } },
+    },
+  }));
+  const html = app.opponentsView();
+  assert.ok(html.includes('name="selected_opponent"'));
+  assert.ok(html.includes('option value="Dave"'));
+  assert.ok(html.includes("Arsenal v Everton"));
+  assert.ok(html.includes("Chelsea v Newcastle"));
+  assert.ok(html.includes('name="pick_0"'));
+  assert.ok(html.includes('name="pick_1"'));
 });
 
 // ---- forecast basis ------------------------------------------------------
@@ -341,6 +393,22 @@ test("System Health separates camel-cased extractor names for readability", () =
   assert.match(app.healthView(), /Ollama Claim Extractor · active/);
 });
 
+test("System Health calls an unprobed configured Ollama endpoint un-checked, not unknown", () => {
+  const app = loadApp(appData({
+    health: {
+      scheduler_jobs_pending: 0, database_schema_version: 6, warnings: [], sources: [],
+      extractor: "OllamaClaimExtractor", extractor_mode: "active", ollama_reachable: "UNKNOWN",
+      ollama: { configured: true, base_url: "http://ollama.local:11434", detail: "Status is checked on request." },
+    },
+  }));
+
+  assert.match(app.healthView(), /Configured · not checked/);
+  assert.match(app.healthView(), /data-action="check-ollama"/);
+  app.markOllamaConnected(["gemma4:latest"]);
+  assert.match(app.healthView(), />YES</);
+  assert.match(app.healthView(), /Connected — 1 model available/);
+});
+
 // ---- Last Man Standing ---------------------------------------------------
 
 test("the plan card leads with the pick to make now, not the horizon", () => {
@@ -603,6 +671,31 @@ test("fplView shows an explicitly user-visible lineup snapshot and its shortlist
   assert.match(html, /no live player feed/);
   assert.match(html, /Wilson → M\. Sangaré/);
   assert.match(html, /18 total points/);
+  assert.match(html, /Primary recommendation/);
+  assert.match(html, /data-fpl-squad/);
+  assert.match(html, /data-fpl-phase2/);
+  assert.match(html, /data-fpl-phase3/);
+  assert.match(html, /decision review &amp; history/i);
+  assert.match(html, /not an FPL account connection/);
+  assert.match(html, /data-fpl-jump="fpl-squad"/);
+  assert.match(html, /data-fpl-jump="fpl-horizon"/);
+  assert.doesNotMatch(html, /href="#fpl-(squad|horizon|rivals|review)"/);
+});
+
+test("fplView explains when the Phase 2 horizon sheet has not been supplied", () => {
+  const app = loadApp(appData({
+    fpl: { status: "live", seasons: [], dashboard: {
+      status: "LINEUP_ONLY", recommendation: null,
+      phase2: { status: "AWAITING_HORIZON_INPUT", message: "Phase 2 is ready for a manager-provided 2–4 Gameweek projection sheet.", plan: null },
+      squad: { gameweek: 3, deadline: null, bank: 0, free_transfers: 2, candidate_universe_complete: false, players: [
+        { name: "A", position: "GK", club: "A", current_price: 4, is_starter: true, is_captain: true, is_vice_captain: false, bench_order: null },
+      ] },
+    } },
+  }));
+  assert.match(app.fplView(), /Phase 2 · horizon planner ready/);
+  assert.match(app.fplView(), /2–4 Gameweek projection sheet/);
+  assert.match(app.fplView(), /Phase 3 · mates-relative planner ready/);
+  assert.match(app.fplView(), /Assisted mode/);
 });
 
 // ---- LMS competition reset ------------------------------------------------

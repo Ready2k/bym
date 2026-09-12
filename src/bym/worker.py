@@ -333,8 +333,11 @@ def _run_knowledge_job(
     from .knowledge import queries
     from .knowledge import worker as knowledge_worker
 
+    from .knowledge.extractor import NullExtractor
+
     emitted: list[events.Event] = []
-    if not (tavily_key and extractor):
+    research_ran = False
+    if not tavily_key or extractor is None or isinstance(extractor, NullExtractor):
         emitted.append(
             events.make_event(
                 events.EventType.POLL_FAILED,
@@ -354,8 +357,8 @@ def _run_knowledge_job(
         # what they chose and what we observed.
         emitted.append(
             events.make_event(
-                events.EventType.POLL_FAILED,
-                events.Severity.NOTICE,
+                events.EventType.KNOWLEDGE_EXTRACTION_FAILED,
+                events.Severity.INFORMATIONAL,
                 "Knowledge research skipped: the extractor did not answer a "
                 "trivial prompt in three attempts, so no Tavily credits were "
                 "spent. It resumes automatically once the model responds.",
@@ -363,6 +366,7 @@ def _run_knowledge_job(
             )
         )
     else:
+        research_ran = True
         for fixture in rnd.fixtures:
             for team in (fixture.home, fixture.away):
                 result = knowledge_worker.research(
@@ -375,7 +379,7 @@ def _run_knowledge_job(
     spent = len(rnd.fixtures) * 2 * cadence.KNOWLEDGE_CREDITS_PER_PASS // 12
     return PollOutcome(
         round_number=rnd.round_number, fixtures_covered=0,
-        credits_spent=spent if (tavily_key and extractor) else 0,
+        credits_spent=spent if research_ran else 0,
         reforecast=0, events=emitted,
         # The news ladder, not the odds one — six sweeps a round rather
         # than thirty-two (see cadence.KNOWLEDGE_LADDER).

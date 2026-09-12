@@ -13,7 +13,7 @@ import sqlite3
 
 from pathlib import Path
 
-from . import game_state, lineup_state, manual_lineup_estimate
+from . import assisted, game_state, lineup_state, manual_lineup_estimate, phase2, phase3
 
 
 def _selection_names(ids: list[int], names: dict[int, str]) -> list[dict[str, int | str]]:
@@ -84,7 +84,58 @@ def _lineup_only_payload(state: lineup_state.LineupState) -> dict:
     }
 
 
-def dashboard_payload(conn: sqlite3.Connection, lineup_state_path: Path | None = None) -> dict:
+def _phase2_payload(path: Path | None) -> dict:
+    if path is None or not path.exists():
+        return {
+            "status": "AWAITING_HORIZON_INPUT",
+            "message": (
+                "Phase 2 is ready for a manager-provided 2–4 Gameweek projection sheet. "
+                "It uses named players only and needs no paid service."
+            ),
+            "plan": None,
+            "input": None,
+        }
+    data = phase2.load_input(path)
+    assert data is not None
+    return {
+        "status": "READY", "message": "",
+        "plan": phase2.as_payload(phase2.build_plan(data)),
+        "input": json.loads(path.read_text()),
+    }
+
+
+def _phase3_payload(path: Path | None) -> dict:
+    if path is None or not path.exists():
+        return {
+            "status": "AWAITING_OPPONENT_INPUT",
+            "message": (
+                "Phase 3 is ready for previous locked rival squads and named pre-deadline "
+                "scenarios. It does not query or claim to know hidden current rival teams."
+            ),
+            "plan": None,
+            "input": None,
+        }
+    data = phase3.load_input(path)
+    assert data is not None
+    return {
+        "status": "READY", "message": "", "plan": phase3.build_plan(data),
+        "input": json.loads(path.read_text()),
+    }
+
+
+def _assisted_payload(path: Path | None) -> dict:
+    if path is None:
+        return {"mode": "LOCAL_BROWSER_ASSISTED", "actions": [], "message": "Assisted mode is not configured."}
+    return assisted.payload(path)
+
+
+def dashboard_payload(
+    conn: sqlite3.Connection,
+    lineup_state_path: Path | None = None,
+    phase2_input_path: Path | None = None,
+    phase3_input_path: Path | None = None,
+    assisted_actions_path: Path | None = None,
+) -> dict:
     """Return the latest stored squad and its latest immutable recommendation.
 
     Absence is a normal, explicit state.  A user can use chat-based fixed
@@ -102,6 +153,9 @@ def dashboard_payload(conn: sqlite3.Connection, lineup_state_path: Path | None =
                 payload["lineup_estimate"] = manual_lineup_estimate.estimate_lineup(
                     conn, visible_state
                 )
+                payload["phase2"] = _phase2_payload(phase2_input_path)
+                payload["phase3"] = _phase3_payload(phase3_input_path)
+                payload["assisted"] = _assisted_payload(assisted_actions_path)
                 return payload
         return {
             "status": "AWAITING_SQUAD",
@@ -115,6 +169,9 @@ def dashboard_payload(conn: sqlite3.Connection, lineup_state_path: Path | None =
             "lineup_estimate": None,
             "source": None,
             "shortlist": None,
+            "phase2": _phase2_payload(phase2_input_path),
+            "phase3": _phase3_payload(phase3_input_path),
+            "assisted": _assisted_payload(assisted_actions_path),
         }
 
     state, squad = game_state.load_snapshot(conn, int(latest["id"]))
@@ -193,4 +250,7 @@ def dashboard_payload(conn: sqlite3.Connection, lineup_state_path: Path | None =
             "current_player_feed": complete_universe,
         },
         "shortlist": None,
+        "phase2": _phase2_payload(phase2_input_path),
+        "phase3": _phase3_payload(phase3_input_path),
+        "assisted": _assisted_payload(assisted_actions_path),
     }

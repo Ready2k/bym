@@ -333,14 +333,24 @@ def build_system_health(
 
     # Recent extraction reliability. Read from what really ran rather than
     # probed here: a latency probe costs ~20s on a cold model, and putting
-    # that on the page-load path is the exact mistake this replaced.
+    # that on the page-load path is the exact mistake this replaced.  Scope
+    # the signal to the active request/output contract: old failures remain
+    # audit records, but must not represent the reliability of a fixed
+    # extractor version.
     recent_total = recent_failed = 0
     last_error = ""
     try:
-        rows = conn.execute(
-            "SELECT status, error FROM extraction_runs "
-            "ORDER BY id DESC LIMIT 20"
-        ).fetchall()
+        if extractor_config and extractor_config.kind == "ollama":
+            from ..knowledge.ollama import EXTRACTOR_VERSION
+
+            rows = conn.execute(
+                "SELECT status, error FROM extraction_runs "
+                "WHERE provider = 'ollama' AND extractor_version = ? "
+                "ORDER BY id DESC LIMIT 20",
+                (EXTRACTOR_VERSION,),
+            ).fetchall()
+        else:
+            rows = []
         recent_total = len(rows)
         for row in rows:
             if row["status"] != "OK":
