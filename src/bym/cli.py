@@ -659,6 +659,7 @@ def cmd_serve(args) -> int:
             registry_path=Path(args.registry),
             lms_gameweek_path=Path(args.lms_gameweek),
             lms_state_path=Path(args.lms_state),
+            lms_competition_path=Path(args.lms_competition),
             seasons=tuple(args.seasons),
             divisions=tuple(args.divisions),
         ),
@@ -2042,6 +2043,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--registry", default="config/source_registry.json")
     p.add_argument("--lms-gameweek", default="data/lms_gameweek.json")
     p.add_argument("--lms-state", default="data/lms_state.json")
+    p.add_argument("--lms-competition", default="data/lms_competition.json")
     p.add_argument("--host", default="127.0.0.1")
     p.add_argument("--port", default=8000, type=int)
     p.set_defaults(func=cmd_serve)

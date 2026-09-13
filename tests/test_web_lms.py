@@ -41,6 +41,7 @@ def config_with(tmp_path, gameweek: dict, states: dict | None = None) -> WebConf
         lms_gameweek_path=tmp_path / "lms_gameweek.json",
         lms_state_path=tmp_path / "lms_state.json",
         lms_archive_path=tmp_path / "lms_archive.json",
+        lms_competition_path=tmp_path / "lms_competition.json",
     )
 
 
@@ -447,6 +448,23 @@ def test_reset_records_a_hand_typed_winner_even_with_nothing_tracked(tmp_path):
     assert len(archived) == 1
     assert archived[0]["winner"] == "Dave"
     assert archived[0]["entrants"] == {}
+
+
+def test_reset_saves_the_requested_competition_start_date(tmp_path):
+    from bym.web import reset_lms_competition
+
+    config = config_with(tmp_path, GAMEWEEK, {})
+    payload = reset_lms_competition({"start_date": "2026-09-18"}, config)
+
+    assert json.loads(config.lms_competition_path.read_text()) == {"start_date": "2026-09-18"}
+    assert payload["competition"] == {"start_date": "2026-09-18"}
+
+
+def test_reset_rejects_an_invalid_competition_start_date(tmp_path):
+    from bym.web import reset_lms_competition
+
+    with pytest.raises(ValueError, match="YYYY-MM-DD"):
+        reset_lms_competition({"start_date": "next Friday"}, config_with(tmp_path, GAMEWEEK))
 
 
 def test_live_pick_keeps_its_probability_and_suggestion_snapshot(

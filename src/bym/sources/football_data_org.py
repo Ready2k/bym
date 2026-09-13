@@ -20,7 +20,7 @@ Free tier: 10 requests/minute across a limited competition set.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 import requests
@@ -188,7 +188,7 @@ def upcoming_matchdays(matches: list[Match], count: int) -> list[int]:
 
 
 def upcoming_matchdays_with_kickoff(
-    matches: list[Match], count: int
+    matches: list[Match], count: int, *, not_before: date | None = None,
 ) -> list[tuple[int, str]]:
     """As `upcoming_matchdays`, paired with each matchday's first kickoff.
 
@@ -201,6 +201,17 @@ def upcoming_matchdays_with_kickoff(
     for m in matches:
         if m.matchday is None or m.status != FixtureStatus.SCHEDULED.value:
             continue
+        if not_before is not None:
+            try:
+                kickoff_date = datetime.fromisoformat(
+                    m.kickoff_at.replace("Z", "+00:00")
+                ).date()
+            except ValueError:
+                # A malformed kickoff cannot establish that a gameweek is
+                # eligible for an explicitly dated competition.
+                continue
+            if kickoff_date < not_before:
+                continue
         first = upcoming.get(m.matchday)
         if first is None or m.kickoff_at < first:
             upcoming[m.matchday] = m.kickoff_at

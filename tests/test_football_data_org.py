@@ -1,5 +1,7 @@
 """football-data.org adapter — offline, against the real payload shape."""
 
+from datetime import date
+
 import pytest
 
 from bym.scoring import FixtureStatus
@@ -207,6 +209,19 @@ def test_upcoming_matchdays_are_ordered_by_kickoff_not_by_number():
     assert fdo.upcoming_matchdays(matches, 3) == [13, 14, 12]
     assert fdo.upcoming_matchdays(matches, 2) == [13, 14]
     assert fdo.current_matchday(matches) == 13
+
+
+def test_upcoming_matchdays_can_start_from_a_given_date():
+    matches = fdo.parse_matches({"matches": [
+        {"id": 1, "status": "SCHEDULED", "matchday": 4,
+         "utcDate": "2026-09-11T19:00:00Z", "homeTeam": {"name": "A"}, "awayTeam": {"name": "B"}, "score": {"fullTime": {}}},
+        {"id": 2, "status": "SCHEDULED", "matchday": 5,
+         "utcDate": "2026-09-18T19:00:00Z", "homeTeam": {"name": "C"}, "awayTeam": {"name": "D"}, "score": {"fullTime": {}}},
+    ]})
+    assert fdo.upcoming_matchdays(matches, 2) == [4, 5]
+    assert fdo.upcoming_matchdays_with_kickoff(matches, 2, not_before=date(2026, 9, 18)) == [
+        (5, "2026-09-18T19:00:00Z")
+    ]
 
 
 def test_upcoming_matchdays_empty_when_nothing_scheduled():

@@ -898,6 +898,10 @@ function lmsView() {
   const historySection = `<section class="section-heading"><div><p class="eyebrow">Entrants</p><h2>Survival status</h2></div><button class="plain-button" type="button" data-lms-reset>Start new competition</button></section><div class="stat-table-card"><table><thead><tr><th>Entrant</th><th>Status</th><th>Clubs used</th><th>Last result</th></tr></thead><tbody>${lmsHistoryRows(entrants)}</tbody></table></div><p class="subtitle">${LMS_AI_ENTRANT} plays alongside you automatically, always taking bym's own recommendation — a running check on whether following the tool beats your own picks.</p>`;
 
   const archive = lms.archive || [];
+  const startDate = lms.competition?.start_date;
+  const startNote = startDate
+    ? `<p class="subtitle">This competition starts on ${escapeHtml(startDate)}; fixtures before then are excluded.</p>`
+    : "";
   const archiveSection = archive.length
     ? `<section class="section-heading"><div><p class="eyebrow">History</p><h2>Past competitions</h2></div></section><div class="stat-table-card"><table><thead><tr><th>Finished</th><th>Winner</th><th>Entrants</th></tr></thead><tbody>${archive.map((a) => {
         const aiNote = a.ai_alive === true ? ` · ${LMS_AI_ENTRANT} also survived`
@@ -909,6 +913,7 @@ function lmsView() {
   return `<div class="lms-view">${pageHeader("Last Man Standing", "Survivor picks", "Pick one club per gameweek. Win to survive — a draw eliminates too, same as a loss. A club can only be picked once for the whole competition.", '<a class="button secondary-button" href="#lms-replay">Replay a season</a>')}
     ${entrantSection}
     ${lmsFixturesSourceBanner(lms.fixtures_source)}
+    ${startNote}
     ${gw ? lmsAutoSettleBanner(lms.auto_settle) : ""}
     <section class="section-heading"><div><p class="eyebrow">${gw ? `Gameweek ${gw.number}` : "Gameweek"}</p><h2>Planned across the next few gameweeks</h2></div></section>
     ${pickSection}
@@ -2060,10 +2065,13 @@ document.addEventListener("click", async (event) => {
     const winnerInput = prompt("Who won this competition? (optional — leave blank if you don't know)");
     if (winnerInput === null) return;
     const winner = winnerInput.trim();
+    const startDateInput = prompt("When should the new competition start? Use YYYY-MM-DD (leave blank to use the next available fixtures).", "");
+    if (startDateInput === null) return;
+    const start_date = startDateInput.trim();
     if (!confirm("Start a brand new Last Man Standing competition? Every entrant returns to alive with no clubs used. This competition's picks are archived, not deleted.")) return;
     try {
-      appData.lms = await post("/api/lms/reset", { winner });
-      toast(winner ? `New competition started — ${winner} recorded as the winner.` : "New competition started — every entrant is back in.");
+      appData.lms = await post("/api/lms/reset", { winner, start_date });
+      toast(start_date ? `New competition starts on ${start_date}.` : (winner ? `New competition started — ${winner} recorded as the winner.` : "New competition started — every entrant is back in."));
       renderPage();
     } catch (error) { toast(error.message); }
     return;

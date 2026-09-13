@@ -14,7 +14,7 @@ import os
 import re
 import time
 from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from threading import Event, RLock
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -61,6 +61,7 @@ class WebConfig:
     lms_gameweek_path: Path = Path("data/lms_gameweek.json")
     lms_state_path: Path = Path("data/lms_state.json")
     lms_archive_path: Path = Path("data/lms_archive.json")
+    lms_competition_path: Path = Path("data/lms_competition.json")
     fpl_lineup_state_path: Path = Path("data/fpl_lineup_state.json")
     fpl_phase2_input_path: Path = Path("data/fpl_phase2_input.json")
     fpl_phase3_input_path: Path = Path("data/fpl_phase3_input.json")
@@ -2589,6 +2590,7 @@ def lms_payload(config: WebConfig, router=None, known_teams: set[str] | None = N
     from . import lms as lms_mod
 
     states = lms_mod.load_states(config.lms_state_path)
+    competition_start_date = _load_lms_start_date(config.lms_competition_path)
 
     if router is None or known_teams is None:
         matches = load_matches(
@@ -2623,6 +2625,8 @@ def lms_payload(config: WebConfig, router=None, known_teams: set[str] | None = N
             "decision_weeks": {}, "unknown_teams": [],
             "auto_settle": auto_settle_info,
             "fixtures_source": fixtures_info,
+            "competition": {"start_date": competition_start_date.isoformat()
+                            if competition_start_date else None},
             "replay_seasons": _lms_replay_seasons(config),
             "archive": _lms_archive_summaries(config),
         }
@@ -2761,6 +2765,8 @@ def lms_payload(config: WebConfig, router=None, known_teams: set[str] | None = N
         "unknown_teams": unknown,
         "auto_settle": auto_settle_info,
         "fixtures_source": fixtures_info,
+        "competition": {"start_date": competition_start_date.isoformat()
+                        if competition_start_date else None},
         "replay_seasons": _lms_replay_seasons(config),
         "archive": _lms_archive_summaries(config),
     }
@@ -2802,6 +2808,30 @@ def lms_replay(payload: dict, config: WebConfig) -> dict:
     ).to_dict()
 
 
+def _load_lms_start_date(path: Path) -> date | None:
+    """Return a saved LMS start date, ignoring an old or malformed setting."""
+    if not path.exists():
+        return None
+    try:
+        value = json.loads(path.read_text()).get("start_date")
+        return date.fromisoformat(str(value)) if value else None
+    except (AttributeError, OSError, TypeError, ValueError, json.JSONDecodeError):
+        return None
+
+
+def _save_lms_start_date(value: date | None, path: Path) -> None:
+    """Persist the first date of the active competition.
+
+    An omitted date restores the usual "next available gameweek" behaviour
+    instead of silently carrying a previous competition's date forward.
+    """
+    if value is None:
+        path.unlink(missing_ok=True)
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"start_date": value.isoformat()}, indent=2) + "\n")
+
+
 def _lms_current_gameweek(config: WebConfig, known_teams: set[str]):
     """The gameweeks LMS should plan over right now, fetched from
     football-data.org's Premier League fixture list — nobody has to type
@@ -2835,6 +2865,7 @@ def _lms_current_gameweek(config: WebConfig, known_teams: set[str]):
             cached = None
     fallback = [cached] if cached else []
 
+    start_date = _load_lms_start_date(config.lms_competition_path)
     api_key = get_key("FOOTBALL_DATA_ORG_KEY")
     if not api_key:
         note = (
@@ -2849,10 +2880,15 @@ def _lms_current_gameweek(config: WebConfig, known_teams: set[str]):
     try:
         matches = fdo.fetch_matches("E0", _lms_fd_season(), api_key)
         matchdays = fdo.upcoming_matchdays_with_kickoff(
-            matches, DEFAULT_LMS.horizon_gameweeks
+            matches, DEFAULT_LMS.horizon_gameweeks, not_before=start_date
         )
         if not matchdays:
-            note = "football-data.org has no upcoming Premier League fixtures right now."
+            note = (
+                "football-data.org has no Premier League fixtures on or after "
+                "the competition start date."
+                if start_date else
+                "football-data.org has no upcoming Premier League fixtures right now."
+            )
             return fallback, {"mode": "manual" if cached else "none", "note": note}, matches
         gameweeks = [
             lms_mod.Gameweek(
@@ -3139,10 +3175,16 @@ def reset_lms_competition(payload: dict, config: WebConfig) -> dict:
     from . import lms as lms_mod
 
     winner = str(payload.get("winner") or "").strip() or None
+    start_date_value = str(payload.get("start_date") or "").strip()
+    try:
+        start_date = date.fromisoformat(start_date_value) if start_date_value else None
+    except ValueError as exc:
+        raise ValueError("start date must use YYYY-MM-DD.") from exc
     states = lms_mod.load_states(config.lms_state_path)
     if states or winner:
         lms_mod.archive_competition(states, config.lms_archive_path, winner=winner)
     lms_mod.save_states(lms_mod.start_new_competition(states), config.lms_state_path)
+    _save_lms_start_date(start_date, config.lms_competition_path)
     return lms_payload(config)
 
 
