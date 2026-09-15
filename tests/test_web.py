@@ -491,6 +491,22 @@ def test_activity_payload_keeps_material_history_when_snapshots_are_busy(tmp_pat
     assert sum(item["event_type"] == "MARKET_SNAPSHOT" for item in activity) == 100
 
 
+def test_activity_payload_can_be_limited_to_the_active_round(tmp_path):
+    from bym import events
+    from bym.web import _activity_payload
+
+    path = tmp_path / "activity.jsonl"
+    events.append([
+        events.make_event(events.EventType.PREDICTION_CHANGED, events.Severity.IMPORTANT,
+                          "Old round", round_number=1),
+        events.make_event(events.EventType.LINEUP_CONFIRMED, events.Severity.IMPORTANT,
+                          "Current round", round_number=6),
+    ], path)
+
+    activity = _activity_payload(path, round_number=6)
+    assert [item["summary"] for item in activity] == ["Current round"]
+
+
 def test_tick_credentials_honour_browser_extractor_setting(tmp_path):
     from bym.cli import _layer_credentials
 

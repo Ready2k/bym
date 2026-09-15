@@ -711,6 +711,15 @@ test("lmsView always offers a way to start a new competition, win or no winner y
   assert.match(app.lmsView(), /data-lms-reset/);
 });
 
+test("lmsView uses a calendar picker to choose a new competition's first gameweek", () => {
+  const app = loadApp(appData({ lms: LMS_BASE }));
+  app.__setLmsNewCompetition(true);
+  const html = app.lmsView();
+  assert.match(html, /id="lms-reset-form"/);
+  assert.match(html, /name="start_date" type="date"/);
+  assert.match(html, /refresh and begin from that gameweek/);
+});
+
 test("lmsView lists a reset competition's winner and when it finished", () => {
   const app = loadApp(appData({
     lms: { ...LMS_BASE, archive: [

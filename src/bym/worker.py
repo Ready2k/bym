@@ -292,24 +292,19 @@ def _run_availability_job(
     """Structured availability polling (injuries + confirmed XIs)."""
     from .availability import worker as availability_worker
 
-    if not api_key:
-        return PollOutcome(
-            round_number=rnd.round_number, fixtures_covered=0,
-            credits_spent=0, reforecast=0,
-            events=[
-                events.make_event(
-                    events.EventType.POLL_FAILED,
-                    events.Severity.INFORMATIONAL,
-                    "Availability polling skipped: no API_FOOTBALL_KEY.",
-                    round_number=rnd.round_number, now=now,
-                )
-            ],
-            next_run_at=cadence.next_poll_at(rnd.deadline_at, now),
-        )
-
     result = availability_worker.poll_availability(
         conn, rnd, "E0", season, api_key, now=now, kickoff_at=rnd.deadline_at
     )
+    if not api_key:
+        result.events.append(
+            events.make_event(
+                events.EventType.POLL_FAILED,
+                events.Severity.INFORMATIONAL,
+                "Structured availability polling skipped: no API_FOOTBALL_KEY; "
+                "BBC live-page checks remain active.",
+                round_number=rnd.round_number, now=now,
+            )
+        )
     return PollOutcome(
         round_number=rnd.round_number,
         fixtures_covered=result.lineups_ingested,

@@ -87,12 +87,52 @@ def map_round_fixtures(
     return matched
 
 
+def _poll_bbc_live_lineups(
+    conn: sqlite3.Connection, rnd: Round, now: datetime,
+) -> AvailabilityPollResult:
+    """Ingest complete team sheets published on BBC Sport live pages."""
+    from . import bbc_live
+
+    result = AvailabilityPollResult()
+    teams = {team for fixture in rnd.fixtures for team in (fixture.home, fixture.away)}
+    try:
+        reported = bbc_live.fetch_confirmed_xis(teams)
+    except Exception as exc:  # BBC is a free fallback, never a fatal dependency
+        result.skipped.append(f"BBC live-page fetch failed: {exc}")
+        return result
+
+    for item in reported:
+        fixture = next((f for f in rnd.fixtures if item.team in (f.home, f.away)), None)
+        if fixture is None:
+            continue
+        existing = store.lineups_for_fixture(conn, fixture.home, fixture.away)
+        if any(lineup.team == item.team and lineup.kind == LineupKind.CONFIRMED.value for lineup in existing):
+            continue
+        lineup = Lineup(
+            home_team=fixture.home, away_team=fixture.away, team=item.team,
+            kind=LineupKind.CONFIRMED.value, source_id=bbc_live.SOURCE_ID,
+            generated_at=to_iso(now), observed_at=to_iso(now),
+            players=list(item.players), round_number=rnd.round_number,
+        )
+        result.events.extend(ingest.ingest_lineup(conn, lineup, now=now))
+        result.lineups_ingested += 1
+        for player in item.players:
+            outcome = ingest.ingest_availability(
+                conn, fixture.home, fixture.away, item.team, player,
+                EventType.CONFIRMED_STARTER, ClaimStatus.CONFIRMED,
+                source_id=bbc_live.SOURCE_ID, source_tier="ESTABLISHED_JOURNALIST",
+                source_timestamp=now, round_number=rnd.round_number, now=now,
+            )
+            result.events.extend(outcome.events)
+    return result
+
+
 def poll_availability(
     conn: sqlite3.Connection,
     rnd: Round,
     division: str,
     season: int,
-    api_key: str,
+    api_key: str | None,
     now: datetime | None = None,
     kickoff_at: datetime | None = None,
     key_players: set[str] | None = None,
@@ -102,6 +142,17 @@ def poll_availability(
     now = now or utcnow()
     result = AvailabilityPollResult()
     league_id = api_football.LEAGUE_IDS[division]
+
+    within_window = kickoff_at is None or (kickoff_at - now) <= LINEUP_WINDOW
+    if within_window:
+        bbc_result = _poll_bbc_live_lineups(conn, rnd, now)
+        result.lineups_ingested += bbc_result.lineups_ingested
+        result.events.extend(bbc_result.events)
+        result.skipped.extend(bbc_result.skipped)
+
+    if not api_key:
+        result.skipped.append("no API-Football key")
+        return result
 
     fixture_ids: list[str] = []
     id_to_fixture: dict[str, tuple[str, str]] = {}
@@ -154,7 +205,6 @@ def poll_availability(
         result.skipped.append(f"injuries {state} for league {league_id}/{season}")
 
     # ---- confirmed lineups ---------------------------------------------
-    within_window = kickoff_at is None or (kickoff_at - now) <= LINEUP_WINDOW
     if not within_window:
         result.skipped.append("outside confirmed-lineup window")
         return result

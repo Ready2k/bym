@@ -73,6 +73,17 @@ def test_payload_carries_a_plan_per_entrant(tmp_path, router):
     assert "Strong" in {p["team"] for p in payload["plans"]["__all__"]["picks"]}
 
 
+def test_a_stale_cached_gameweek_cannot_override_the_competition_start_date(tmp_path, router):
+    gameweek = {**GAMEWEEK, "deadline_at": "2026-09-11T19:00:00+00:00"}
+    config = config_with(tmp_path, gameweek)
+    config.lms_competition_path.write_text('{"start_date": "2026-09-18"}\n')
+
+    payload = lms_payload(config, router=router, known_teams=set(TEAMS))
+
+    assert payload["gameweek"] is None
+    assert payload["competition"] == {"start_date": "2026-09-18"}
+
+
 def test_lineage_payload_keeps_fixture_context_for_graph_focus(tmp_path, router):
     """A plotted point must be able to name the fixture it represents.
 

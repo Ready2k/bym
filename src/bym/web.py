@@ -85,6 +85,14 @@ def _fit_router(matches):
 # whenever one of its source CSVs changes.
 _MODEL_CONTEXT: dict[tuple, tuple[object, object, set[str]]] = {}
 _MODEL_CONTEXT_LOCK = RLock()
+_FPL_STATUS_CACHE: dict[WebConfig, tuple[float, dict]] = {}
+_FPL_STATUS_CACHE_LOCK = RLock()
+_FPL_STATUS_CACHE_SECONDS = 60.0
+
+
+def _invalidate_fpl_status_cache() -> None:
+    with _FPL_STATUS_CACHE_LOCK:
+        _FPL_STATUS_CACHE.clear()
 
 
 def _model_data_fingerprint(config: WebConfig) -> tuple:
@@ -2443,6 +2451,13 @@ def fpl_status_payload(config: WebConfig) -> dict:
     MANIFEST_FPL.md's Phase 1B "field-completeness gate + freeze" is a
     separate, still human, step after that).
     """
+    # The FPL panel includes a local optimisation. Avoid repeating it on
+    # every Home refresh simply because the app ships one combined payload.
+    with _FPL_STATUS_CACHE_LOCK:
+        cached = _FPL_STATUS_CACHE.get(config)
+        if cached is not None and time.monotonic() - cached[0] < _FPL_STATUS_CACHE_SECONDS:
+            return cached[1]
+
     from .fpl import harvest as fpl_harvest
 
     with db.connect(config.database_path) as conn:
@@ -2466,11 +2481,15 @@ def fpl_status_payload(config: WebConfig) -> dict:
     from .fpl import review as fpl_review
 
     dashboard["review"] = fpl_review.payload(config.fpl_decision_history_path, dashboard)
-    return {
+    result = {
         "status": "live" if complete else "under_construction",
         "seasons": seasons,
         "dashboard": dashboard,
     }
+    with _FPL_STATUS_CACHE_LOCK:
+        _FPL_STATUS_CACHE.clear()
+        _FPL_STATUS_CACHE[config] = (time.monotonic(), result)
+    return result
 
 
 def save_fpl_lineup(payload: dict, config: WebConfig) -> dict:
@@ -2479,6 +2498,7 @@ def save_fpl_lineup(payload: dict, config: WebConfig) -> dict:
 
     state = lineup_state.parse(payload)
     lineup_state.save(state, config.fpl_lineup_state_path)
+    _invalidate_fpl_status_cache()
     return {"status": "SAVED", "players": len(state.players)}
 
 
@@ -2493,6 +2513,7 @@ def save_fpl_phase2_input(payload: dict, config: WebConfig) -> dict:
     data = phase2.parse_input(payload)
     plan = phase2.as_payload(phase2.build_plan(data))
     _save_validated_json(config.fpl_phase2_input_path, payload)
+    _invalidate_fpl_status_cache()
     return {"status": "SAVED", "plan": plan}
 
 
@@ -2502,6 +2523,7 @@ def save_fpl_phase3_input(payload: dict, config: WebConfig) -> dict:
     data = phase3.parse_input(payload)
     plan = phase3.build_plan(data)
     _save_validated_json(config.fpl_phase3_input_path, payload)
+    _invalidate_fpl_status_cache()
     return {"status": "SAVED", "plan": plan}
 
 
@@ -2857,15 +2879,23 @@ def _lms_current_gameweek(config: WebConfig, known_teams: set[str]):
     from .sources.registry import SourceNotApprovedError
     from .sources.teams import resolve as resolve_team_name
 
+    start_date = _load_lms_start_date(config.lms_competition_path)
     cached = None
     if config.lms_gameweek_path.exists():
         try:
             cached = lms_mod.load_gameweek(config.lms_gameweek_path)
         except (ValueError, KeyError, OSError):
             cached = None
+    # A cached manual slate is useful only when it belongs to this
+    # competition. Without this guard, a stale GW4 cache can overrule a
+    # new competition explicitly scheduled to start in GW5 whenever the
+    # live fixture request is unavailable.
+    if cached and start_date and (
+        cached.deadline_at is None or cached.deadline_at.date() < start_date
+    ):
+        cached = None
     fallback = [cached] if cached else []
 
-    start_date = _load_lms_start_date(config.lms_competition_path)
     api_key = get_key("FOOTBALL_DATA_ORG_KEY")
     if not api_key:
         note = (
@@ -3207,7 +3237,9 @@ def _build_app_payload(config: WebConfig) -> dict:
     rnd = load_round(_active_round_path(config))
     state = load_ui_state(config.ui_state_path)
     registry = load_registry(config.registry_path)
-    activity = _activity_payload(config.event_log_path)
+    # The dashboard is a decision surface for the active Super 6 round.
+    # Older-round audit history belongs in the log, not beside current picks.
+    activity = _activity_payload(config.event_log_path, round_number=rnd.round_number)
     sources = [asdict(record) for _, record in sorted(registry.items())]
     from .transparency import model_summary, performance_summary
 
@@ -3248,7 +3280,9 @@ def _build_app_payload(config: WebConfig) -> dict:
     return payload
 
 
-def _activity_payload(path: Path, limit: int = 100) -> list[dict]:
+def _activity_payload(
+    path: Path, limit: int = 100, round_number: int | None = None,
+) -> list[dict]:
     """Keep routine market polling from evicting every material event.
 
     MARKET_SNAPSHOT is intentionally a high-volume audit record (and is
@@ -3259,6 +3293,8 @@ def _activity_payload(path: Path, limit: int = 100) -> list[dict]:
     everything material, then restore chronological display order.
     """
     recorded = events.load(path)
+    if round_number is not None:
+        recorded = [event for event in recorded if event.round_number == round_number]
     routine = [event for event in recorded if event.event_type == "MARKET_SNAPSHOT"][-limit:]
     material = [event for event in recorded if event.event_type != "MARKET_SNAPSHOT"][-limit:]
     return [
@@ -3291,6 +3327,8 @@ class _InFlightBuild:
 # result computed before that request even arrived.
 _APP_PAYLOAD_INFLIGHT_LOCK = RLock()
 _APP_PAYLOAD_INFLIGHT: _InFlightBuild | None = None
+_APP_PAYLOAD_CACHE: dict[WebConfig, tuple[float, dict]] = {}
+_APP_PAYLOAD_CACHE_SECONDS = 15.0
 # Below the UI's 30s abort, but well above a normal build (~2-4s once the
 # corpus fit is warm) — a log line at this threshold is a lead indicator of
 # the next timeout, with the one thing earlier incidents couldn't show:
@@ -3300,6 +3338,10 @@ _SLOW_BUILD_WARN_SECONDS = 8.0
 
 def app_payload(config: WebConfig) -> dict:
     global _APP_PAYLOAD_INFLIGHT
+    with _APP_PAYLOAD_INFLIGHT_LOCK:
+        cached = _APP_PAYLOAD_CACHE.get(config)
+        if cached is not None and time.monotonic() - cached[0] < _APP_PAYLOAD_CACHE_SECONDS:
+            return cached[1]
     with _APP_PAYLOAD_INFLIGHT_LOCK:
         inflight = _APP_PAYLOAD_INFLIGHT
         if inflight is not None:
@@ -3318,6 +3360,9 @@ def app_payload(config: WebConfig) -> dict:
     started = time.monotonic()
     try:
         inflight.result = _build_app_payload(config)
+        with _APP_PAYLOAD_INFLIGHT_LOCK:
+            _APP_PAYLOAD_CACHE.clear()
+            _APP_PAYLOAD_CACHE[config] = (time.monotonic(), inflight.result)
     except BaseException as exc:
         inflight.error = exc
         raise

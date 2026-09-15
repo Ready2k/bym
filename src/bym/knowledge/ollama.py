@@ -249,42 +249,44 @@ class OllamaClaimExtractor:
             ],
         }
 
-        try:
-            response = self._session.post(
-                f"{self.config.base_url.rstrip('/')}/api/chat",
-                json=payload,
-                timeout=self.config.timeout_seconds,
-            )
-        except requests.Timeout as exc:
-            return self._fail(FailureKind.TIMEOUT, str(exc), provenance)
-        except requests.ConnectionError as exc:
-            return self._fail(FailureKind.HOST_UNREACHABLE, str(exc), provenance)
-        except requests.RequestException as exc:
-            return self._fail(FailureKind.HTTP_ERROR, str(exc), provenance)
+        # A local model can occasionally complete a request with no tokens
+        # while it is warming.  Retry that one narrow, harmless condition
+        # once; network and schema failures remain immediate and visible.
+        content = ""
+        body = {}
+        for attempt in range(2):
+            try:
+                response = self._session.post(
+                    f"{self.config.base_url.rstrip('/')}/api/chat",
+                    json=payload,
+                    timeout=self.config.timeout_seconds,
+                )
+            except requests.Timeout as exc:
+                return self._fail(FailureKind.TIMEOUT, str(exc), provenance)
+            except requests.ConnectionError as exc:
+                return self._fail(FailureKind.HOST_UNREACHABLE, str(exc), provenance)
+            except requests.RequestException as exc:
+                return self._fail(FailureKind.HTTP_ERROR, str(exc), provenance)
 
-        if response.status_code == 404:
-            return self._fail(
-                FailureKind.MODEL_UNAVAILABLE,
-                f"model '{self.config.model}' not found on {self.config.host}",
-                provenance,
-            )
-        if response.status_code >= 400:
-            return self._fail(
-                FailureKind.HTTP_ERROR,
-                f"HTTP {response.status_code}",
-                provenance,
-            )
-
-        try:
-            body = response.json()
-        except ValueError as exc:
-            return self._fail(FailureKind.MALFORMED_JSON, str(exc), provenance)
-
-        provenance.model_digest = body.get("model_digest") or body.get("digest")
-        content = (body.get("message") or {}).get("content", "")
+            if response.status_code == 404:
+                return self._fail(
+                    FailureKind.MODEL_UNAVAILABLE,
+                    f"model '{self.config.model}' not found on {self.config.host}",
+                    provenance,
+                )
+            if response.status_code >= 400:
+                return self._fail(FailureKind.HTTP_ERROR, f"HTTP {response.status_code}", provenance)
+            try:
+                body = response.json()
+            except ValueError as exc:
+                return self._fail(FailureKind.MALFORMED_JSON, str(exc), provenance)
+            provenance.model_digest = body.get("model_digest") or body.get("digest")
+            content = (body.get("message") or {}).get("content", "")
+            if content.strip() or attempt:
+                break
         if not content.strip():
             return self._fail(
-                FailureKind.EMPTY_RESULT, "empty model response", provenance
+                FailureKind.EMPTY_RESULT, "empty model response after one retry", provenance
             )
 
         try:

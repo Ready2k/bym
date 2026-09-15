@@ -23,7 +23,6 @@ LOG_FILE="$RUNTIME_DIR/bym-ui.log"
 WORKER_PID_FILE="$RUNTIME_DIR/bym-worker.pid"
 WORKER_LOG_FILE="$RUNTIME_DIR/bym-worker.log"
 PORT="${BYM_PORT:-8000}"
-ROUND_FILE="${BYM_ROUND:-$ROOT_DIR/rounds/2026_27_round_01.json}"
 DATA_DIR="${BYM_DATA:-$ROOT_DIR/data}"
 # Same files the CLI defaults to. A separate bym-ui.db / -submissions
 # pair used to live here, which meant `bym readiness` and every other
@@ -39,6 +38,25 @@ if [[ -x "$ROOT_DIR/.venv/bin/python" ]]; then
   PYTHON="$ROOT_DIR/.venv/bin/python"
 else
   PYTHON="${PYTHON:-python3}"
+fi
+
+# The round passed to `serve` is only the bootstrap fallback: the browser can
+# subsequently select another round and persists that selection in ui_state.
+# Honour that persisted choice after a reboot instead of silently reverting
+# the service process to Round 1.
+if [[ -n "${BYM_ROUND:-}" ]]; then
+  ROUND_FILE="$BYM_ROUND"
+else
+  ACTIVE_ROUND="$($PYTHON -c '
+import json
+from pathlib import Path
+try:
+    candidate = Path(json.loads(Path("data/ui_state.json").read_text()).get("active_round_path", ""))
+    print(candidate if candidate.is_file() else "")
+except (OSError, ValueError, TypeError):
+    print("")
+' 2>/dev/null || true)"
+  ROUND_FILE="${ACTIVE_ROUND:-$ROOT_DIR/rounds/2026_27_round_01.json}"
 fi
 
 usage() {
@@ -99,6 +117,11 @@ start_ui() {
     echo "Beat Your Mates UI did not start. See $LOG_FILE" >&2
     return 1
   fi
+  # Warm the expensive, local-only dashboard payload once at startup. The
+  # server caches that result briefly, so the first browser request after a
+  # reboot is responsive instead of paying the model/FPL calculation cost.
+  curl -fsS --max-time 90 "http://127.0.0.1:$PORT/api/app" >/dev/null 2>&1 || \
+    echo "Beat Your Mates UI started, but dashboard warm-up did not finish; see $LOG_FILE" >&2
   echo "Beat Your Mates UI started (PID $pid): http://127.0.0.1:$PORT"
 }
 

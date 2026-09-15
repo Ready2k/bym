@@ -291,6 +291,27 @@ def test_empty_result():
     assert extractor.last_failure.kind == FailureKind.EMPTY_RESULT
 
 
+def test_empty_result_is_retried_once_before_failing():
+    class Responses:
+        def __init__(self):
+            self.responses = [
+                FakeResponse(200, {"message": {"content": " "}}),
+                chat_response([VALID_CLAIM]),
+            ]
+            self.calls = []
+
+        def post(self, url, json=None, timeout=None):
+            self.calls.append(url)
+            return self.responses.pop(0)
+
+    session = Responses()
+    extractor = OllamaClaimExtractor(CONFIG, session)
+
+    assert len(extractor.extract_claims(evidence())) == 1
+    assert len(session.calls) == 2
+    assert extractor.last_failure is None
+
+
 def test_missing_claims_array():
     extractor = OllamaClaimExtractor(
         CONFIG, FakeSession(FakeResponse(200, {"message": {"content": "{}"}}))

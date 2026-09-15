@@ -376,9 +376,8 @@ def _layer_credentials(web_config=None) -> dict:
     each layer reports "skipped: no key" as a structured event instead of
     the loop silently doing less than it appears to.
     """
-    import os
-
     from .knowledge.config import build_extractor, from_env
+    from .secrets import get_key
 
     # `bym tick` is the worker behind rounds configured in the browser, so
     # it must honour the extractor the browser saved.  Previously it read
@@ -392,8 +391,11 @@ def _layer_credentials(web_config=None) -> dict:
     else:
         config = from_env()
     return {
-        "availability_key": os.environ.get("API_FOOTBALL_KEY"),
-        "tavily_key": os.environ.get("TAVILY_API_KEY"),
+        # Secrets saved through the dashboard are kept in BYM's key store,
+        # not necessarily inherited by launchd.  Reading only os.environ
+        # made the always-on worker silently skip live lineups after login.
+        "availability_key": get_key("API_FOOTBALL_KEY"),
+        "tavily_key": get_key("TAVILY_API_KEY"),
         "extractor": build_extractor(config),
         "extractor_mode": config.mode,
     }

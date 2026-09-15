@@ -101,6 +101,7 @@ export function loadApp(appData = null) {
     ;globalThis.__harness = {
       set(data) { appData = data; },
       setActivityFilter(filter) { activityFilter = filter; },
+      setLmsNewCompetition(value) { lmsNewCompetition = value; },
       get() { return appData; },
       fns: { ${EXPOSED.join(", ")} },
     };
@@ -141,6 +142,7 @@ export function loadApp(appData = null) {
     ...harness.fns,
     __setAppData: harness.set,
     __setActivityFilter: harness.setActivityFilter,
+    __setLmsNewCompetition: harness.setLmsNewCompetition,
     __context: context,
   };
 }

@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 
 from bym import db
-from bym.availability import worker as avail_worker
+from bym.availability import bbc_live, worker as avail_worker
 from bym.availability.model import ClaimStatus, EventType, LineupKind
 from bym.availability import store
 from bym.round import Fixture, Round
@@ -48,6 +48,12 @@ def approved(tmp_path):
     reg.save_registry(reg.load_registry(path), path)
     reg.approve("api_football", path=path)
     return path
+
+
+@pytest.fixture(autouse=True)
+def no_live_bbc_requests(monkeypatch):
+    """This module is intentionally offline; BBC adapter tests live elsewhere."""
+    monkeypatch.setattr(bbc_live, "fetch_confirmed_xis", lambda teams: [])
 
 
 # ---- registry gating ----------------------------------------------------

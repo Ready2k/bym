@@ -179,24 +179,28 @@ def research(
         failure = getattr(extractor, "last_failure", None)
         if failure is not None:
             result.extraction_failures += 1
-            result.events.append(
-                ev.make_event(
-                    ev.EventType.KNOWLEDGE_EXTRACTION_FAILED,
-                    ev.Severity.INFORMATIONAL,
-                    f"Claim extraction failed ({failure.kind}) for "
-                    f"{document.origin_domain}. Evidence retained; no "
-                    "candidate claims. Forecasting is unaffected.",
-                    round_number=round_number,
-                    home_team=home_team,
-                    away_team=away_team,
-                    detail={
-                        "failure_kind": failure.kind,
-                        "detail": failure.detail[:300],
-                        "source_url": document.url,
-                    },
-                    now=now,
+            # An empty Ollama completion is retried in the extractor. If it
+            # remains empty, retain evidence and provenance but do not turn a
+            # harmless absence of claims into an activity-feed warning.
+            if failure.kind != "EMPTY_RESULT":
+                result.events.append(
+                    ev.make_event(
+                        ev.EventType.KNOWLEDGE_EXTRACTION_FAILED,
+                        ev.Severity.INFORMATIONAL,
+                        f"Claim extraction failed ({failure.kind}) for "
+                        f"{document.origin_domain}. Evidence retained; no "
+                        "candidate claims. Forecasting is unaffected.",
+                        round_number=round_number,
+                        home_team=home_team,
+                        away_team=away_team,
+                        detail={
+                            "failure_kind": failure.kind,
+                            "detail": failure.detail[:300],
+                            "source_url": document.url,
+                        },
+                        now=now,
+                    )
                 )
-            )
 
         for claim in outcome.all_claims:
             store.record_claim(

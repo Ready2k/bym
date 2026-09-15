@@ -14,6 +14,7 @@ let opponentEntryName = "";
 let lmsEntrant = "";
 let lmsPreview = "";
 let lmsGraphWeek = "";
+let lmsNewCompetition = false;
 let appLoadController;
 let lmsReplay = { data: null, season: null, usedClubs: [], history: [], suggestedHistory: [], selectedTeam: "", revealed: false, eliminated: false };
 let lastLoadAt = 0;
@@ -895,7 +896,10 @@ function lmsView() {
     : "";
   const setupSection = `<details class="disclosure"><summary>${setupSummary}</summary><form id="lms-gameweek-form" class="form-card">${setupNote}<label>Gameweek number<input required name="gameweek" type="number" min="1" value="${gw ? gw.number : ""}"></label><label>Fixtures — one per line, "Home vs Away"<textarea required name="fixtures" rows="10" placeholder="Arsenal vs Everton">${gw ? gw.fixtures.map((f) => `${f.home} vs ${f.away}`).join("\n") : ""}</textarea></label><div class="form-actions"><button class="button" type="submit">Save gameweek fixtures</button></div></form></details>`;
 
-  const historySection = `<section class="section-heading"><div><p class="eyebrow">Entrants</p><h2>Survival status</h2></div><button class="plain-button" type="button" data-lms-reset>Start new competition</button></section><div class="stat-table-card"><table><thead><tr><th>Entrant</th><th>Status</th><th>Clubs used</th><th>Last result</th></tr></thead><tbody>${lmsHistoryRows(entrants)}</tbody></table></div><p class="subtitle">${LMS_AI_ENTRANT} plays alongside you automatically, always taking bym's own recommendation — a running check on whether following the tool beats your own picks.</p>`;
+  const resetControl = lmsNewCompetition
+    ? `<form id="lms-reset-form" class="form-card"><p class="eyebrow">New competition</p><h3>Choose the first gameweek</h3><p class="subtitle">Select the date of the first fixtures to count. LMS will refresh and begin from that gameweek, skipping any earlier fixtures.</p><div class="form-grid"><label>Season start date<input required name="start_date" type="date"></label><label>Previous winner <input name="winner" maxlength="60" placeholder="Optional"></label></div><div class="form-actions"><button class="button secondary-button" type="button" data-lms-reset-cancel>Cancel</button><button class="button" type="submit">Start competition</button></div></form>`
+    : `<button class="plain-button" type="button" data-lms-reset>Start new competition</button>`;
+  const historySection = `<section class="section-heading"><div><p class="eyebrow">Entrants</p><h2>Survival status</h2></div>${lmsNewCompetition ? "" : resetControl}</section>${lmsNewCompetition ? resetControl : ""}<div class="stat-table-card"><table><thead><tr><th>Entrant</th><th>Status</th><th>Clubs used</th><th>Last result</th></tr></thead><tbody>${lmsHistoryRows(entrants)}</tbody></table></div><p class="subtitle">${LMS_AI_ENTRANT} plays alongside you automatically, always taking bym's own recommendation — a running check on whether following the tool beats your own picks.</p>`;
 
   const archive = lms.archive || [];
   const startDate = lms.competition?.start_date;
@@ -1780,18 +1784,19 @@ async function copyPicks() {
 
 function toast(message) { const node = $("#toast"); node.textContent = message; node.hidden = false; setTimeout(() => { node.hidden = true; }, 4200); }
 
-async function loadApp() {
+async function loadApp({ retryAfterTimeout = true } = {}) {
   $("#error").hidden = true;
   const initialLoad = !appData;
   const loading = $("#loading");
   const loadingCopy = $("#loading-copy");
   if (initialLoad) loading.hidden = false;
   appLoadController?.abort();
-  appLoadController = new AbortController();
+  const controller = new AbortController();
+  appLoadController = controller;
   const slowNotice = setTimeout(() => {
     loadingCopy.textContent = "Building the local forecast model. The first load after a restart can take a few seconds.";
   }, 2500);
-  const timeout = setTimeout(() => appLoadController.abort(), 30000);
+  const timeout = setTimeout(() => controller.abort(), 30000);
   try {
     const response = await fetch("/api/app", { cache: "no-store", signal: appLoadController.signal });
     const payload = await response.json();
@@ -1804,16 +1809,30 @@ async function loadApp() {
     $("#app").hidden = false;
     renderPage();
   } catch (error) {
+    // A newer load deliberately cancels this one. It must not replace the
+    // newer load's spinner with a spurious timeout error.
+    if (error.name === "AbortError" && appLoadController !== controller) return;
+    // Cancelling fetch does not cancel the server-side build. A slow first
+    // request therefore commonly finishes just after this client-side limit;
+    // retry once so the next request can collect that completed (or still
+    // coalesced) build instead of making the user recover it manually.
+    if (error.name === "AbortError" && retryAfterTimeout) {
+      loadingCopy.textContent = "The forecast is still building. Retrying once…";
+      setTimeout(() => {
+        if (!appLoadController) loadApp({ retryAfterTimeout: false });
+      }, 500);
+      return;
+    }
     loading.hidden = true;
     const message = error.name === "AbortError"
-      ? "The forecast took longer than 30 seconds to load. Check that the local service is running, then try again."
+      ? "The forecast took longer than one minute to load. Check that the local service is running, then try again."
       : `The decision centre could not load: ${error.message}`;
     $("#error").innerHTML = `<p>${escapeHtml(message)}</p><button class="button" data-action="retry-load">Try again</button>`;
     $("#error").hidden = false;
   } finally {
     clearTimeout(slowNotice);
     clearTimeout(timeout);
-    appLoadController = undefined;
+    if (appLoadController === controller) appLoadController = undefined;
   }
 }
 
@@ -2059,21 +2078,13 @@ document.addEventListener("click", async (event) => {
   }
   const lmsReset = event.target.closest("[data-lms-reset]");
   if (lmsReset) {
-    // bym commonly tracks only the one person running it, not the whole
-    // pool, so it cannot infer who actually won — asked here rather than
-    // guessed from whichever tracked entrant is still alive.
-    const winnerInput = prompt("Who won this competition? (optional — leave blank if you don't know)");
-    if (winnerInput === null) return;
-    const winner = winnerInput.trim();
-    const startDateInput = prompt("When should the new competition start? Use YYYY-MM-DD (leave blank to use the next available fixtures).", "");
-    if (startDateInput === null) return;
-    const start_date = startDateInput.trim();
-    if (!confirm("Start a brand new Last Man Standing competition? Every entrant returns to alive with no clubs used. This competition's picks are archived, not deleted.")) return;
-    try {
-      appData.lms = await post("/api/lms/reset", { winner, start_date });
-      toast(start_date ? `New competition starts on ${start_date}.` : (winner ? `New competition started — ${winner} recorded as the winner.` : "New competition started — every entrant is back in."));
-      renderPage();
-    } catch (error) { toast(error.message); }
+    lmsNewCompetition = true;
+    renderPage();
+    return;
+  }
+  if (event.target.closest("[data-lms-reset-cancel]")) {
+    lmsNewCompetition = false;
+    renderPage();
     return;
   }
   const lmsResult = event.target.closest("[data-lms-result]");
@@ -2376,6 +2387,17 @@ document.addEventListener("submit", async (event) => {
       appData.lms = await post("/api/lms/gameweek", { gameweek: Number(form.elements.gameweek.value), fixtures });
       toast("Gameweek fixtures saved.");
       renderPage();
+    } else if (form.id === "lms-reset-form") {
+      const start_date = form.elements.start_date.value;
+      const winner = form.elements.winner.value.trim();
+      if (!confirm("Start a brand new Last Man Standing competition? Every entrant returns to alive with no clubs used. This competition's picks are archived, not deleted.")) return;
+      appData.lms = await post("/api/lms/reset", { winner, start_date });
+      lmsNewCompetition = false;
+      lmsPreview = "";
+      lmsGraphWeek = "";
+      const gameweek = appData.lms.gameweek?.number;
+      toast(gameweek ? `New competition starts in GW${gameweek}. Fixtures and recommendations refreshed.` : "New competition saved. No fixtures are available from that date yet.");
+      renderPage();
     } else if (form.id === "lms-replay-form") {
       const season = Number(form.elements.season.value);
       lmsReplay = { data: null, season, usedClubs: [], history: [], suggestedHistory: [], selectedTeam: "", revealed: false, eliminated: false };
@@ -2406,6 +2428,9 @@ function isUserEditing() {
 
 function backgroundRefresh() {
   if (document.visibilityState !== "visible") return;
+  // The initial load is already in progress. A visibility event during page
+  // startup must not abort it and create a competing duplicate request.
+  if (!appData) return;
   if (isUserEditing()) return;
   loadApp();
 }

@@ -11,6 +11,7 @@ from bym.knowledge import worker as knowledge_worker
 from bym.model import dixon_coles
 from bym.sources import pipeline
 from bym.sources.odds_api import BookmakerOdds, EventOdds
+from bym.web import WebConfig
 
 from test_dixon_coles import synthetic_matches
 
@@ -51,6 +52,20 @@ def round_path(tmp_path):
     path = tmp_path / "round.json"
     path.write_text(ROUND_JSON)
     return path
+
+
+@pytest.fixture(autouse=True)
+def isolate_refresh_and_notify(monkeypatch, tmp_path):
+    """Never let a worker test fall through to the running app's files."""
+    config = WebConfig(
+        ui_state_path=tmp_path / "ui_state.json",
+        event_log_path=tmp_path / "activity.jsonl",
+        database_path=tmp_path / "s.db",
+        submissions_path=tmp_path / "submissions.json",
+        prediction_history_path=tmp_path / "prediction_history.json",
+    )
+    monkeypatch.setattr("bym.web.WebConfig", lambda: config)
+    return config
 
 
 def feed(prices):

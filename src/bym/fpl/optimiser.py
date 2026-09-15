@@ -50,6 +50,8 @@ frozen deliberately rather than guessed.
 
 from __future__ import annotations
 
+import os
+import shutil
 from dataclasses import dataclass
 
 import pulp
@@ -128,6 +130,26 @@ class _NominalSolution:
 
 def _lp_status_name(status: int) -> str:
     return pulp.LpStatus[status]
+
+
+def _cbc_solver() -> pulp.LpSolver:
+    """Return CBC, preferring a native system install when one exists.
+
+    PuLP ships an x86_64 CBC binary on macOS.  That binary cannot run on
+    Apple Silicon, whereas Homebrew installs a native executable in one of
+    the locations below.  Keep PuLP's bundled default as the fallback for
+    Linux containers and other platforms where it is usable.
+    """
+    candidates = (
+        os.environ.get("BYM_CBC_PATH"),
+        shutil.which("cbc"),
+        "/opt/homebrew/bin/cbc",
+        "/usr/local/bin/cbc",
+    )
+    path = next((candidate for candidate in candidates if candidate and os.access(candidate, os.X_OK)), None)
+    if path:
+        return pulp.COIN_CMD(msg=False, path=path)
+    return pulp.PULP_CBC_CMD(msg=False)
 
 
 def _as_contingency(pid: int, by_id: dict[int, OptimiserCandidate]) -> autosub.ContingencyPlayer:
@@ -209,7 +231,7 @@ def _solve_once(
         objective = objective - TRANSFER_HIT_COST * paid_transfers
     prob += objective
 
-    status = prob.solve(pulp.PULP_CBC_CMD(msg=False))
+    status = prob.solve(_cbc_solver())
     if _lp_status_name(status) != "Optimal":
         return None
 
