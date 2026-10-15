@@ -31,12 +31,21 @@ already produced.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Mapping
+from typing import Mapping, Sequence
 
 import numpy as np
 
 from . import opponent_intelligence as oi
-from .league import OpponentProfile, ScorelineScenario, StrategyCandidate, OpponentRound
+from .league import (
+    LeagueStanding,
+    OpponentProfile,
+    OpponentRound,
+    Scoreline,
+    ScorelineScenario,
+    StrategyCandidate,
+    StrategyRecommendation,
+    recommend_strategy,
+)
 from .recommend import RoundRecommendation
 
 DEFAULT_SCENARIOS = 2000
@@ -45,6 +54,31 @@ DEFAULT_SCENARIOS = 2000
 # candidates that are statistically tied. The determinism fix in v1.0.1
 # exists because varying output was mistaken for a real change once.
 DEFAULT_SEED = 20260808
+
+
+@dataclass(frozen=True)
+class Phase3StrategyResult:
+    """The complete, recordable output of the Super 6 Phase 3 arm.
+
+    ``picks`` is always a valid six-scoreline tuple.  The arm therefore has
+    a safe prospective behaviour even when the league/opponent inputs are
+    not available: it records the frozen recommendation's MAX_EV picks and
+    explains why strategic evaluation was not possible.
+    """
+
+    picks: tuple[Scoreline, ...]
+    selected_candidate: str
+    status: str
+    reason: str
+    simulations: int = 0
+    finish_first_probability: float | None = None
+    expected_round_points: float | None = None
+    recommendation: StrategyRecommendation | None = None
+
+    @property
+    def fallback(self) -> bool:
+        """Whether the arm had to fall back because strategy was unavailable."""
+        return self.status == "FALLBACK_MAX_EV"
 
 
 def noise_floor(simulations: int, sigmas: float = 2.0) -> float:
@@ -76,6 +110,121 @@ def preferred(evaluations, simulations: int, baseline: str = "MAX_EV"):
     best = max(evaluations, key=lambda e: e.finish_first_probability)
     gain = best.finish_first_probability - scored[baseline].finish_first_probability
     return best if gain > floor else scored[baseline]
+
+
+def generate_phase3_picks(
+    recommendation: RoundRecommendation,
+    *,
+    standings: Sequence[LeagueStanding] = (),
+    round_picks: Sequence[OpponentRound] = (),
+    participant: str = "You",
+    season: int,
+    round_number: int,
+    simulations: int = DEFAULT_SCENARIOS,
+    seed: int = DEFAULT_SEED,
+    max_candidates: int = 6,
+) -> Phase3StrategyResult:
+    """Generate the deterministic prospective ``PHASE3_STRATEGY`` arm.
+
+    Contract:
+
+    * the baseline is the supplied model recommendation (``MAX_EV``);
+    * strategic candidates are generated only from the current round's
+      imported opponent picks and the supplied standings;
+    * scenarios come from the recommendation's score matrices with the
+      fixed ``seed``;
+    * a deviation is accepted only when it beats MAX_EV by more than the
+      Monte Carlo noise floor; and
+    * incomplete/invalid strategy inputs return MAX_EV with a reason rather
+      than preventing the prospective round from being recorded.
+
+    This function deliberately does not write the ledger.  Its returned
+    ``picks`` can be passed directly to ``prospective.record_picks`` by the
+    parent recording flow, keeping Phase 3 independent of Phase 2 and the
+    market arm.
+    """
+    if simulations < 1:
+        raise ValueError("simulations must be positive")
+    if max_candidates < 1:
+        raise ValueError("max_candidates must be positive")
+
+    baseline = tuple(
+        (fixture.pick_home, fixture.pick_away)
+        for fixture in recommendation.fixtures
+    )
+    if len(baseline) != 6:
+        raise ValueError("Phase 3 requires a six-fixture recommendation")
+
+    def fallback(reason: str) -> Phase3StrategyResult:
+        # StrategyCandidate validates the same six-scoreline contract used by
+        # the league evaluator, so a parent cannot accidentally record a
+        # malformed fallback.
+        picks = StrategyCandidate(name="MAX_EV", picks=baseline).picks
+        return Phase3StrategyResult(
+            picks=picks,
+            selected_candidate="MAX_EV",
+            status="FALLBACK_MAX_EV",
+            reason=reason,
+        )
+
+    if not participant.strip():
+        return fallback("strategy unavailable: participant name is empty")
+    if not standings:
+        return fallback("strategy unavailable: no league standings supplied")
+    if simulations < 100:
+        return fallback("strategy unavailable: at least 100 simulations are required")
+
+    try:
+        candidates = build_candidates(
+            recommendation,
+            [
+                record
+                for record in round_picks
+                if record.season == season and record.round_number == round_number
+            ],
+            max_candidates=max_candidates,
+        )
+        scenarios = simulate_scenarios(
+            recommendation, count=simulations, seed=seed
+        )
+        strategic = recommend_strategy(
+            standings,
+            round_picks,
+            candidates,
+            scenarios,
+            participant=participant,
+            season=season,
+            round_number=round_number,
+            minimum_scenarios=100,
+        )
+    except (AttributeError, KeyError, IndexError, TypeError, ValueError) as exc:
+        return fallback(f"strategy unavailable: {exc}")
+
+    if strategic is None:
+        return fallback(
+            "strategy unavailable: standings or opponent picks do not cover "
+            "the complete current round"
+        )
+
+    evaluations = (strategic.recommended, *strategic.alternatives)
+    chosen = preferred(evaluations, simulations)
+    by_name = {candidate.name: candidate for candidate in candidates}
+    selected = by_name[chosen.name]
+    status = "MAX_EV" if chosen.name == "MAX_EV" else "STRATEGY"
+    reason = (
+        f"Selected {chosen.name} from {chosen.simulations} deterministic "
+        "scoreline simulations; deviations must clear the noise floor."
+    )
+    return Phase3StrategyResult(
+        picks=selected.picks,
+        selected_candidate=chosen.name,
+        status=status,
+        reason=reason,
+        simulations=chosen.simulations,
+        finish_first_probability=chosen.finish_first_probability,
+        expected_round_points=chosen.expected_round_points,
+        recommendation=strategic,
+    )
 
 
 @dataclass(frozen=True)

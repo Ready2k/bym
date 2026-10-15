@@ -18,8 +18,8 @@ frozen comparison.
 | `PHASE1_MODEL_V1` | Frozen quantitative core, pinned to `config.FROZEN_PHASE1_V1` | Round 1 |
 | `MARKET_AVAILABLE` | Favourite from the odds recorded at prediction time | Round 1 |
 | `SUBMITTED` | What was actually entered into Super 6 | Round 1 |
-| `PHASE2_AGENT` | Always-on intelligence layer | Phase 2 |
-| `PHASE3_STRATEGY` | Opponent-aware strategic picks | Phase 3 |
+| `PHASE2_AGENT` | Validated availability overlay over the frozen model | Round 10 onward |
+| `PHASE3_STRATEGY` | Opponent-aware strategy, with explicit MAX_EV fallback when evidence is incomplete | Round 10 onward |
 
 `MARKET_AVAILABLE` is *exact* here, not the Friday-price proxy used in
 backtesting: the odds in the round file existed before the deadline by
@@ -39,6 +39,13 @@ Before the deadline, with odds filled into the round file:
 ```bash
 bym record --round rounds/2026_27_round_01.json --seasons 2021 2026 --data data --season 2026
 ```
+
+The recording command now also writes separate `PHASE2_AGENT` and
+`PHASE3_STRATEGY` rows. Phase 2 consumes only validated availability events
+already persisted in the local database. Phase 3 consumes recorded opponent
+history and settled local results; when those inputs are incomplete it records
+an explicit `FALLBACK_MAX_EV` outcome rather than claiming a strategic edge.
+Neither arm backfills earlier rounds.
 
 Then, once picks are actually entered in Super 6, record what was
 submitted (which may differ from the recommendation — that difference is

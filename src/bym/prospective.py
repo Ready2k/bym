@@ -11,8 +11,10 @@ frozen comparison:
     PHASE1_MODEL_V1   the frozen quantitative core (config.FROZEN_PHASE1_V1)
     MARKET_AVAILABLE  favourite from the odds entered at prediction time
     SUBMITTED         what the user actually entered into Super 6
-    PHASE2_AGENT      (later) always-on intelligence layer
-    PHASE3_STRATEGY   (later) opponent-aware strategic picks
+    PHASE2_AGENT      validated availability overlay, from the next
+                      unrecorded round onward
+    PHASE3_STRATEGY   opponent-aware strategic picks, from the next
+                      unrecorded round onward (with explicit fallback)
 
 Prospectively, MARKET_AVAILABLE is *exact* rather than the Friday-price
 proxy used in backtesting: the odds recorded in the round file are, by
@@ -27,6 +29,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
+from math import isfinite
 from pathlib import Path
 
 import pandas as pd
@@ -138,9 +141,36 @@ def save_ledger(ledger: pd.DataFrame, path: Path) -> None:
 def market_pick(odds: tuple[float, float, float]) -> tuple[int, int]:
     """Favourite result from odds, with the fixed scoreline convention
     used throughout (H->2-1, D->1-1, A->1-2)."""
+    if len(odds) != 3 or any(
+        not isinstance(o, (int, float)) or not isfinite(o) or o <= 1.0
+        for o in odds
+    ):
+        raise ValueError(
+            "market odds must be three finite decimal prices greater than 1.0"
+        )
     inv = [1.0 / o for o in odds]
     result = "HDA"[inv.index(max(inv))]
     return FAVOURITE_SCORELINES[result]
+
+
+def market_picks(
+    odds: list[tuple[float, float, float] | None],
+) -> tuple[list[tuple[int, int]] | None, list[int]]:
+    """Build the all-or-nothing MARKET_AVAILABLE picks for a round.
+
+    A market benchmark is only comparable when it has a price for every
+    fixture.  Return the missing fixture indexes separately so callers can
+    report a precise skip without recording a partial arm.  Validation is
+    deliberately performed before any ledger write.
+    """
+    missing = [i for i, fixture_odds in enumerate(odds) if fixture_odds is None]
+    if missing:
+        return None, missing
+    try:
+        picks = [market_pick(fixture_odds) for fixture_odds in odds]
+    except ValueError as exc:
+        raise ValueError(f"invalid market odds: {exc}") from exc
+    return picks, []
 
 
 def already_recorded(ledger: pd.DataFrame, season: int, rnd: int, arm: str) -> bool:

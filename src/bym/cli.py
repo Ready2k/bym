@@ -1084,7 +1084,18 @@ def _acquire_odds(rnd, args):
     try:
         acquired = acquire_round_odds(rnd, api_key)
     except SourceNotApprovedError as exc:
-        print(f"{exc}", file=sys.stderr)
+        print(f"Could not acquire MARKET_AVAILABLE odds: {exc}", file=sys.stderr)
+        return rnd, None
+    except Exception as exc:
+        # A requested market benchmark must not make the quantitative arm
+        # disappear, but a provider/network/quota failure must be visible.
+        # The caller will skip MARKET_AVAILABLE and preserve the round file
+        # and any already-recorded prospective rows unchanged.
+        print(
+            f"Could not acquire MARKET_AVAILABLE odds: "
+            f"{type(exc).__name__}: {exc}",
+            file=sys.stderr,
+        )
         return rnd, None
 
     print(
@@ -1151,14 +1162,22 @@ def cmd_record(args) -> int:
     from .prospective import (
         FROZEN_ARM,
         MARKET_ARM,
+        PHASE2_ARM,
+        PHASE3_ARM,
         SUBMITTED_ARM,
+        already_recorded,
         load_ledger,
-        market_pick,
+        market_picks,
         record_picks,
         save_ledger,
     )
     from .recommend import recommend_round
     from .round import load_round, resolve_round_teams
+    from . import db as db_mod
+    from .availability import store as availability_store
+    from . import phase2, strategy
+    from .league import league_standings, load_opponent_history
+    from .web import load_ui_state, recorded_results
 
     rnd = load_round(Path(args.round))
     if getattr(args, "fetch_odds", False):
@@ -1192,22 +1211,93 @@ def cmd_record(args) -> int:
     router = _fit_router(matches, FROZEN_PHASE1_V1.xi, FROZEN_PHASE1_V1)
     rec = recommend_round(router, rnd, FROZEN_PHASE1_V1)
 
-    ledger = record_picks(
-        ledger, args.season, rnd.round_number, fixtures, FROZEN_ARM,
-        [(f.pick_home, f.pick_away) for f in rec.fixtures],
-    )
-    print(f"Recorded {FROZEN_ARM}: " + " ".join(f.pick for f in rec.fixtures))
-
-    if all(f.odds is not None for f in rnd.fixtures):
-        picks = [market_pick(f.odds) for f in rnd.fixtures]
-        ledger = record_picks(
-            ledger, args.season, rnd.round_number, fixtures, MARKET_ARM, picks
-        )
-        print(f"Recorded {MARKET_ARM}: " + " ".join(f"{h}-{a}" for h, a in picks))
-    else:
+    if already_recorded(ledger, args.season, rnd.round_number, FROZEN_ARM):
         print(
-            f"Skipped {MARKET_ARM}: not every fixture has odds. Add "
-            '"odds": [H, D, A] to each fixture to track the benchmark.',
+            f"Skipped {FROZEN_ARM}: already recorded for this round "
+            "(append-only; useful when retrying market acquisition)."
+        )
+    else:
+        ledger = record_picks(
+            ledger, args.season, rnd.round_number, fixtures, FROZEN_ARM,
+            [(f.pick_home, f.pick_away) for f in rec.fixtures],
+        )
+        print(f"Recorded {FROZEN_ARM}: " + " ".join(f.pick for f in rec.fixtures))
+
+    # Phase 2 is a conservative, deterministic overlay. It consumes only
+    # reconciled availability events already persisted before the deadline;
+    # it never asks an LLM for probabilities or scorelines.
+    with db_mod.connect(Path(getattr(args, "db", "data/bym.db"))) as conn:
+        findings = {
+            fixture: availability_store.events_for_fixture(conn, *fixture)
+            for fixture in fixtures
+        }
+    phase2_picks = phase2.picks_for_round(rec, findings)
+    if already_recorded(ledger, args.season, rnd.round_number, PHASE2_ARM):
+        print(f"Skipped {PHASE2_ARM}: already recorded for this round (append-only).")
+    else:
+        ledger = record_picks(
+            ledger, args.season, rnd.round_number, fixtures, PHASE2_ARM, phase2_picks
+        )
+        print(f"Recorded {PHASE2_ARM}: " + " ".join(f"{h}-{a}" for h, a in phase2_picks))
+
+    # Phase 3 uses only the local opponent history and settled UI results. If
+    # the league evidence is incomplete, the strategy module records an
+    # explicit MAX_EV fallback rather than fabricating a strategic edge.
+    history = list(load_opponent_history(Path(
+        getattr(args, "opponent_history", "data/opponent_history.json")
+    )))
+    ui_state = load_ui_state(Path(getattr(args, "ui_state", "data/ui_state.json")))
+    results = recorded_results(ui_state)
+    season_history = [item for item in history if item.season == args.season]
+    season_results = {key: value for key, value in results.items() if key[0] == args.season}
+    standings = league_standings(season_history, season_results)
+    player = getattr(args, "participant", None) or ui_state.get("player_name", "You")
+    if player and not any(row.participant == player for row in standings):
+        from .league import LeagueStanding
+        standings = (*standings, LeagueStanding(player, 1, 0, 0, 0, 0))
+    phase3_result = strategy.generate_phase3_picks(
+        rec,
+        standings=standings,
+        round_picks=history,
+        participant=player,
+        season=args.season,
+        round_number=rnd.round_number,
+        simulations=getattr(args, "strategy_simulations", 2000),
+    )
+    if already_recorded(ledger, args.season, rnd.round_number, PHASE3_ARM):
+        print(f"Skipped {PHASE3_ARM}: already recorded for this round (append-only).")
+    else:
+        ledger = record_picks(
+            ledger, args.season, rnd.round_number, fixtures, PHASE3_ARM,
+            phase3_result.picks,
+        )
+        print(
+            f"Recorded {PHASE3_ARM} ({phase3_result.status}): "
+            + " ".join(f"{h}-{a}" for h, a in phase3_result.picks)
+        )
+
+    picks, missing = market_picks([f.odds for f in rnd.fixtures])
+    if picks is not None:
+        if already_recorded(ledger, args.season, rnd.round_number, MARKET_ARM):
+            print(
+                f"Skipped {MARKET_ARM}: already recorded for this round "
+                "(append-only)."
+            )
+        else:
+            ledger = record_picks(
+                ledger, args.season, rnd.round_number, fixtures, MARKET_ARM, picks
+            )
+            print(f"Recorded {MARKET_ARM}: " + " ".join(f"{h}-{a}" for h, a in picks))
+    else:
+        labels = ", ".join(
+            f"#{i + 1} {rnd.fixtures[i].home} v {rnd.fixtures[i].away}"
+            for i in missing
+        )
+        print(
+            f"Skipped {MARKET_ARM}: no complete odds set; missing/unusable "
+            f"fixtures: {labels}. "
+            "Use --fetch-odds with complete live coverage or add odds to "
+            'every fixture before recording.',
             file=sys.stderr,
         )
 
@@ -1978,6 +2068,23 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--round", required=True, help="round JSON file (§9.1)")
     p.add_argument("--season", type=int, default=2026)
     p.add_argument("--ledger", default="results/prospective_ledger.csv")
+    p.add_argument("--db", default="data/bym.db", help="availability database")
+    p.add_argument(
+        "--opponent-history", default="data/opponent_history.json",
+        help="recorded opponent picks used by Phase 3",
+    )
+    p.add_argument(
+        "--ui-state", default="data/ui_state.json",
+        help="local results/player state used by Phase 3",
+    )
+    p.add_argument(
+        "--participant", default=None,
+        help="your participant name for Phase 3 (defaults to UI state)",
+    )
+    p.add_argument(
+        "--strategy-simulations", type=int, default=2000,
+        help="Phase 3 Monte Carlo simulations (default: 2000)",
+    )
     p.add_argument(
         "--submitted", nargs="+", metavar="H-A",
         help="six scores you actually entered in Super 6, e.g. 2-0 1-0 ...",

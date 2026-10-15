@@ -58,6 +58,74 @@ def test_max_ev_is_always_offered_as_a_candidate(recommendation):
     )
 
 
+def test_phase3_falls_back_to_max_ev_without_opponent_evidence(recommendation):
+    result = strategy.generate_phase3_picks(
+        recommendation,
+        season=2026,
+        round_number=1,
+    )
+
+    assert result.fallback is True
+    assert result.status == "FALLBACK_MAX_EV"
+    assert result.selected_candidate == "MAX_EV"
+    assert result.picks == tuple(
+        (fixture.pick_home, fixture.pick_away)
+        for fixture in recommendation.fixtures
+    )
+    assert "no league standings" in result.reason
+
+
+def test_phase3_is_reproducible_and_returns_recordable_picks(recommendation):
+    baseline = tuple((f.pick_home, f.pick_away) for f in recommendation.fixtures)
+    rival = OpponentRound("Twin", 2026, 1, baseline, "test")
+    standings = [_standing("You"), _standing("Twin")]
+
+    first = strategy.generate_phase3_picks(
+        recommendation,
+        standings=standings,
+        round_picks=[rival],
+        participant="You",
+        season=2026,
+        round_number=1,
+        simulations=200,
+        seed=17,
+    )
+    second = strategy.generate_phase3_picks(
+        recommendation,
+        standings=standings,
+        round_picks=[rival],
+        participant="You",
+        season=2026,
+        round_number=1,
+        simulations=200,
+        seed=17,
+    )
+
+    assert first.fallback is False
+    assert first.status == "MAX_EV"
+    assert first.simulations == 200
+    assert len(first.picks) == 6
+    assert first.picks == second.picks
+    assert first.selected_candidate == second.selected_candidate
+
+
+def test_phase3_falls_back_when_opponent_round_is_incomplete(recommendation):
+    result = strategy.generate_phase3_picks(
+        recommendation,
+        standings=[_standing("You"), _standing("Twin")],
+        round_picks=[],
+        season=2026,
+        round_number=1,
+    )
+
+    assert result.fallback
+    assert result.picks == tuple(
+        (fixture.pick_home, fixture.pick_away)
+        for fixture in recommendation.fixtures
+    )
+    assert "complete current round" in result.reason
+
+
 def test_deviations_prefer_fixtures_where_the_field_is_crowded(recommendation):
     """Separation is only worth buying where rivals are concentrated."""
     crowded_index = 3
