@@ -14,7 +14,7 @@ services:
     build: .
     command: >
       bym serve
-      --round rounds/round_01.json
+      --round rounds/2026_27_round_01.json
       --data data
       --db data/bym.db
       --submissions data/submissions.json

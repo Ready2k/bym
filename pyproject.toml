@@ -9,7 +9,7 @@ dependencies = [
     "scipy>=1.14",
     "pandas>=2.2",
     "requests>=2.32",
-    "pulp>=2.8",
+    "pulp>=2.8,<4",
 ]
 
 [project.scripts]
@@ -24,6 +24,7 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/bym"]
+
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

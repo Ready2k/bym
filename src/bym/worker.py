@@ -46,6 +46,24 @@ TAVILY_FREE_TIER_MONTHLY_CREDITS = 1000
 KNOWLEDGE_DEGRADE_AT = 0.20
 
 
+def _resolve_scheduled_round_path(round_path: str, web_config) -> Path:
+    """Resolve a scheduled round path across copied deployments.
+
+    Older jobs stored the absolute path from the laptop that created them.
+    When the database is moved to a NAS, retain the filename but resolve it
+    against the active deployment's rounds directory.
+    """
+    candidate = Path(round_path)
+    if candidate.exists():
+        return candidate
+
+    configured_round = getattr(web_config, "round_path", Path("rounds/2026_27_round_01.json"))
+    relocated = Path(configured_round).parent / candidate.name
+    if relocated.exists():
+        return relocated
+    return candidate
+
+
 @dataclass
 class PollOutcome:
     round_number: int
@@ -493,7 +511,7 @@ def run_due_jobs(
             scheduler.complete_job(conn, job.id, None)
             continue
         try:
-            rnd = load_round(Path(job.round_path))
+            rnd = load_round(_resolve_scheduled_round_path(job.round_path, web_config))
             # The scheduler stored a path, so the file is re-read on every
             # poll and its names have never been through resolution. This
             # runs unattended, so an unresolved club would reforecast from

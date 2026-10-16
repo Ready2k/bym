@@ -1794,9 +1794,12 @@ async function loadApp({ retryAfterTimeout = true } = {}) {
   const controller = new AbortController();
   appLoadController = controller;
   const slowNotice = setTimeout(() => {
-    loadingCopy.textContent = "Building the local forecast model. The first load after a restart can take a few seconds.";
+    loadingCopy.textContent = "Building the local forecast model. The first load after a restart can take a few minutes on a low-power home server.";
   }, 2500);
-  const timeout = setTimeout(() => controller.abort(), 30000);
+  // The full dashboard also prepares the FPL optimisation payload.  On a
+  // low-power NAS this can take several minutes on a cold start; aborting at
+  // 30s leaves the user with a false error even though the server is healthy.
+  const timeout = setTimeout(() => controller.abort(), 5 * 60 * 1000);
   try {
     const response = await fetch("/api/app", { cache: "no-store", signal: appLoadController.signal });
     const payload = await response.json();

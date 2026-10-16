@@ -300,6 +300,20 @@ def test_restart_continues_scheduled_polling(monkeypatch, tmp_path, router):
         assert scheduler.get_job(conn, 1).status == "PENDING"  # rescheduled
 
 
+def test_restart_relocates_legacy_absolute_round_path(tmp_path):
+    round_dir = tmp_path / "rounds"
+    round_dir.mkdir()
+    round_path = round_dir / "round.json"
+    round_path.write_text(ROUND_JSON)
+    config = WebConfig(round_path=round_dir / "bootstrap.json")
+
+    resolved = worker._resolve_scheduled_round_path(
+        "/Users/jamescregeen/bym/rounds/round.json", config
+    )
+
+    assert resolved == round_path
+
+
 def test_polling_stops_after_deadline(monkeypatch, tmp_path, router):
     db = tmp_path / "sched.db"
     round_path = write_round(tmp_path)

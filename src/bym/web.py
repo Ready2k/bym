@@ -226,7 +226,21 @@ def _active_round_path(config: WebConfig) -> Path:
     reader disagreeing about which file is current is a bug.
     """
     stored = load_ui_state(config.ui_state_path).get("active_round_path")
-    return Path(stored) if stored else config.round_path
+    if not stored:
+        return config.round_path
+
+    candidate = Path(stored)
+    if candidate.exists():
+        return candidate
+
+    # UI state is intentionally portable between a laptop checkout and a
+    # container/NAS deployment.  Older state files stored an absolute source
+    # path, so recover by matching the retained filename in this deployment's
+    # rounds directory rather than treating the app as a first-run install.
+    relocated = config.round_path.parent / candidate.name
+    if relocated.exists():
+        return relocated
+    return candidate
 
 
 def _round_key(rnd: Round) -> str:

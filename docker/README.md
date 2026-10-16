@@ -1,5 +1,22 @@
 # Running on a NAS with Docker Compose
 
+The DS920+ is a suitable host for this deployment: its x86_64 CPU is
+compatible with the Python base image, and Container Manager provides Docker
+Compose. Keep this stack in its own shared-folder directory, for example
+`/volume1/docker/bym`, rather than mixing it with unrelated containers.
+
+The first deployment can be done from Synology Container Manager by creating
+a project from this directory and choosing **Build** followed by **Start**.
+The equivalent SSH command, when Docker Compose is available on `PATH`, is:
+
+```bash
+cd /volume1/docker/bym
+docker compose up -d --build
+```
+
+The Compose file uses `rounds/2026_27_round_01.json` as its bootstrap round;
+the browser can create or switch rounds after startup.
+
 Two containers share one image: `web` (the decision UI, port 8000) and
 `worker` (an always-on `bym tick` loop that polls approved sources and
 reforecasts). They share a database on purpose — round scheduling only
